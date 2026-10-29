@@ -23,6 +23,7 @@ interface NoteListProps {
   onDeleteNote: (id: string) => void;
   onOpenSidebar: () => void;
   onRequestCreateSubfolder?: (parentId: string) => void;
+  onDropFiles?: (files: FileList) => void;
 }
 
 export const NoteList: React.FC<NoteListProps> = ({
@@ -35,8 +36,10 @@ export const NoteList: React.FC<NoteListProps> = ({
   onDeleteNote,
   onOpenSidebar,
   onRequestCreateSubfolder,
+  onDropFiles,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [isDragOverList, setIsDragOverList] = useState(false);
 
   // 현재 활성화된 프로젝트 정보 및 하위 폴더 ID 목록
   const currentProject = projects.find((p) => p.id === activeProjectId);
@@ -79,7 +82,29 @@ export const NoteList: React.FC<NoteListProps> = ({
   };
 
   return (
-    <div className="w-full md:w-80 lg:w-96 bg-slate-900 border-r border-slate-800 flex flex-col h-full shrink-0">
+    <div 
+      className={`w-full md:w-80 lg:w-96 bg-slate-900 border-r border-slate-800 flex flex-col h-full shrink-0 transition-colors ${
+        isDragOverList ? 'ring-2 ring-indigo-500 ring-inset bg-indigo-950/20' : ''
+      }`}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOverList(true);
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOverList(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOverList(false);
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0 && onDropFiles) {
+          onDropFiles(e.dataTransfer.files);
+        }
+      }}
+    >
       {/* 상단 헤더 & 모바일 햄버거 & 새 메모 버튼 */}
       <div className="p-3.5 border-b border-slate-800 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 truncate">

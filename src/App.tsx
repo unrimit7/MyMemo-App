@@ -18,6 +18,7 @@ import { NoteList } from './components/NoteList';
 import { NoteEditor } from './components/NoteEditor';
 import { SettingsModal } from './components/SettingsModal';
 import { ConfirmModal } from './components/ConfirmModal';
+import { processFileForNote } from './utils/file';
 
 interface DeleteConfirmState {
   isOpen: boolean;
@@ -204,6 +205,51 @@ export function App() {
 
     if (gitHubConfig?.isConnected) {
       setTimeout(() => runSync(true), 1500);
+    }
+  };
+
+  // 특정 폴더로 파일 드롭 시 새 메모 자동 생성 핸들러
+  const handleDropFilesToProject = async (projectId: string, files: FileList) => {
+    let targetProjId = projectId;
+    if (targetProjId === 'ALL') {
+      targetProjId = projects[0]?.id || 'proj-default';
+    }
+
+    const currentProj = projects.find((p) => p.id === targetProjId);
+    const isLocalOnly = currentProj?.isLocalOnly || false;
+
+    const createdNotes: Note[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const processed = await processFileForNote(file);
+
+      const newNote: Note = {
+        id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        projectId: targetProjId,
+        title: processed.title,
+        content: processed.content,
+        isLocalOnly,
+        syncStatus: isLocalOnly ? 'local_only' : 'pending',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      await saveNote(newNote);
+      createdNotes.push(newNote);
+    }
+
+    if (createdNotes.length > 0) {
+      setNotes((prev) => [...createdNotes, ...prev]);
+      setActiveProjectId(targetProjId);
+      setActiveNoteId(createdNotes[0].id);
+      setMobileScreen('editor');
+      setSyncToast(`${createdNotes.length}개의 파일이 새 메모로 등록되었습니다!`);
+      setTimeout(() => setSyncToast(null), 3500);
+
+      if (gitHubConfig?.isConnected && !isLocalOnly) {
+        setTimeout(() => runSync(true), 2000);
+      }
     }
   };
 
@@ -414,6 +460,7 @@ export function App() {
         canInstall={!!deferredPrompt}
         onInstallApp={handleInstallApp}
         externalAddTarget={externalAddTarget}
+        onDropFilesToProject={handleDropFilesToProject}
       />
 
       {/* 2단: 메모 목록 (소주제 목록) */}
@@ -434,6 +481,7 @@ export function App() {
             setExternalAddTarget({ parentId, key: Date.now() });
             setIsSidebarOpenMobile(true);
           }}
+          onDropFiles={(files) => handleDropFilesToProject(activeProjectId, files)}
         />
       </div>
 

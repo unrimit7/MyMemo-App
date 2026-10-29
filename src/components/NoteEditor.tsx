@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import type { Note, Project } from '../types';
 import { marked } from 'marked';
 import { compressImageToDataUrl } from '../utils/image';
+import { processFileForNote } from '../utils/file';
 import { 
   Lock, 
   Unlock, 
@@ -215,6 +216,44 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     }
   };
 
+  // 3. 에디터 본문 드래그 앤 드롭 핸들러
+  const [isDragOverEditor, setIsDragOverEditor] = useState(false);
+
+  const handleEditorDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOverEditor(false);
+
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      setIsProcessingImage(true);
+      try {
+        const processed = await processFileForNote(file);
+        const textarea = textareaRef.current;
+        const insertText = `\n\n${processed.content}\n\n`;
+
+        if (!textarea) {
+          const newContent = `${localContent}${insertText}`;
+          setLocalContent(newContent);
+          onUpdateNote({ content: newContent });
+        } else {
+          const start = textarea.selectionStart;
+          const end = textarea.selectionEnd;
+          const newContent = localContent.substring(0, start) + insertText + localContent.substring(end);
+          setLocalContent(newContent);
+          onUpdateNote({ content: newContent });
+        }
+      } catch (err) {
+        console.error('파일 드롭 처리 실패:', err);
+      } finally {
+        setIsProcessingImage(false);
+      }
+    }
+  };
+
   const renderMarkdown = (content: string) => {
     try {
       return { __html: marked.parse(content || '') as string };
@@ -224,7 +263,22 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-950 overflow-hidden">
+    <div 
+      className={`flex-1 flex flex-col h-full bg-slate-950 overflow-hidden transition-all ${
+        isDragOverEditor ? 'ring-2 ring-indigo-500 ring-inset bg-indigo-950/20' : ''
+      }`}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOverEditor(true);
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOverEditor(false);
+      }}
+      onDrop={handleEditorDrop}
+    >
       {/* 숨겨진 파일 선택 인풋 */}
       <input
         type="file"

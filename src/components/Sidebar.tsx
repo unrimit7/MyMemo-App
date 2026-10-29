@@ -33,6 +33,7 @@ interface SidebarProps {
   onInstallApp?: () => void;
   canInstall?: boolean;
   externalAddTarget?: { parentId: string | null; key: number } | null;
+  onDropFilesToProject?: (projectId: string, files: FileList) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -52,7 +53,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onInstallApp,
   canInstall,
   externalAddTarget,
+  onDropFilesToProject,
 }) => {
+  // 드래그 오버 중인 폴더 ID
+  const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
+
   // 새 폴더 모달/인라인 상태
   const [addingTarget, setAddingTarget] = useState<{ parentId: string | null; isOpen: boolean }>({
     parentId: null,
@@ -158,13 +163,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const count = noteCounts[project.id] || 0;
     const canHaveSubfolder = depth < 2;
 
+    const isDragOver = dragOverFolderId === project.id;
+
     return (
-      <div key={project.id} className="flex flex-col select-none">
+      <div 
+        key={project.id} 
+        className="flex flex-col select-none"
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setDragOverFolderId(project.id);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (dragOverFolderId === project.id) setDragOverFolderId(null);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setDragOverFolderId(null);
+          if (e.dataTransfer.files && e.dataTransfer.files.length > 0 && onDropFilesToProject) {
+            onDropFilesToProject(project.id, e.dataTransfer.files);
+          }
+        }}
+      >
         <div
           className={`group flex items-center justify-between rounded-lg text-sm transition-all pr-1.5 ${
-            isSelected
-              ? 'bg-slate-800 text-white font-medium shadow-sm'
-              : 'text-slate-300 hover:bg-slate-900/80 hover:text-slate-100'
+            isDragOver
+              ? 'bg-indigo-600/30 border-2 border-dashed border-indigo-400 text-white font-bold'
+              : isSelected
+                ? 'bg-slate-800 text-white font-medium shadow-sm'
+                : 'text-slate-300 hover:bg-slate-900/80 hover:text-slate-100'
           }`}
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
         >
