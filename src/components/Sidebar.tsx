@@ -353,16 +353,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         flex flex-col h-full transition-transform duration-200 ease-in-out
         ${isOpenMobile ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
       `}>
-        {/* 상단 로고 */}
+        {/* 상단 타이틀 */}
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-slate-900 border border-slate-700/80 flex items-center justify-center text-xl shadow-lg shadow-sky-500/10">
-              <span className="select-none leading-none">👼</span>
-            </div>
-            <div>
-              <h1 className="font-bold text-slate-100 text-base leading-tight">MyMemo</h1>
-              <p className="text-xs text-slate-400">계층형 폴더 & Private Sync</p>
-            </div>
+          <div>
+            <h1 className="font-bold text-slate-100 text-base leading-tight">MyMemo</h1>
+            <p className="text-xs text-slate-400">계층형 폴더 & Private Sync</p>
           </div>
           <button 
             onClick={onCloseMobile}
