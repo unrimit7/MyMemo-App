@@ -356,8 +356,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* 상단 로고 */}
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-500/20">
-              M
+            <div className="w-8 h-8 rounded-xl bg-slate-900 border border-slate-700/80 flex items-center justify-center text-xl shadow-lg shadow-sky-500/10">
+              <span className="select-none leading-none">👼</span>
             </div>
             <div>
               <h1 className="font-bold text-slate-100 text-base leading-tight">MyMemo</h1>
