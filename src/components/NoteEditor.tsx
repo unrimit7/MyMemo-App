@@ -20,7 +20,8 @@ import {
   Image as ImageIcon,
   AlertTriangle,
   Folder,
-  Loader2
+  Loader2,
+  Trash2
 } from 'lucide-react';
 
 interface NoteEditorProps {
@@ -28,6 +29,7 @@ interface NoteEditorProps {
   projects: Project[];
   onUpdateNote: (updated: Partial<Note>) => void;
   onBackToList: () => void;
+  onDeleteNote?: (id: string) => void;
 }
 
 export const NoteEditor: React.FC<NoteEditorProps> = ({
@@ -35,6 +37,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   projects,
   onUpdateNote,
   onBackToList,
+  onDeleteNote,
 }) => {
   const [viewMode, setViewMode] = useState<'edit' | 'preview' | 'split'>('edit');
   const [isProcessingImage, setIsProcessingImage] = useState(false);
@@ -289,6 +292,17 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               <Columns size={13} />
             </button>
           </div>
+
+          {/* 메모 삭제 버튼 */}
+          {onDeleteNote && (
+            <button
+              onClick={() => onDeleteNote(note.id)}
+              className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-900 border border-slate-800 rounded-lg transition-colors"
+              title="현재 메모 삭제"
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
         </div>
       </div>
 

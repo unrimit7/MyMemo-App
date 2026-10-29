@@ -1,5 +1,5 @@
 import type { GitHubConfig, Note, Project, SyncSummary } from '../types';
-import { saveNote, getAllNotes, getAllProjects, saveProject } from './db';
+import { saveNote, getAllNotes, getAllProjects, saveProject, getDeletedRemotePaths, clearDeletedRemotePaths } from './db';
 
 // UTF-8 안전한 Base64 인코딩/디코딩 (한글 및 이모지 깨짐 방지)
 export function utf8ToBase64(str: string): string {
@@ -150,6 +150,30 @@ export async function uploadFileToGitHub(
   }
 }
 
+// 2-2. 파일 삭제
+export async function deleteFileFromGitHub(
+  config: GitHubConfig,
+  path: string,
+  sha: string,
+  commitMessage: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${path}`;
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: getHeaders(config.token),
+      body: JSON.stringify({
+        message: commitMessage,
+        sha,
+        branch: config.branch || 'main',
+      }),
+    });
+    return { success: res.ok };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
 // 3. GitHub 전체 동기화 실행
 export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary> {
   const summary: SyncSummary = {
@@ -192,6 +216,25 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
   );
 
   const remoteFileMap = new Map(remoteFiles.map((f) => [f.path, f]));
+
+  // 1-2) 사용자가 로컬에서 삭제한 파일들을 GitHub 원격에서도 삭제
+  const pendingDeletes = await getDeletedRemotePaths();
+  const deletedSuccessPaths: string[] = [];
+  for (const delPath of pendingDeletes) {
+    const remoteTarget = remoteFileMap.get(delPath);
+    if (remoteTarget) {
+      const delRes = await deleteFileFromGitHub(config, delPath, remoteTarget.sha, `Delete note: ${delPath}`);
+      if (delRes.success) {
+        deletedSuccessPaths.push(delPath);
+        remoteFileMap.delete(delPath);
+      }
+    } else {
+      deletedSuccessPaths.push(delPath);
+    }
+  }
+  if (deletedSuccessPaths.length > 0) {
+    await clearDeletedRemotePaths(deletedSuccessPaths);
+  }
 
   // 2) 로컬 메모들을 GitHub로 업로드 (단, isLocalOnly 또는 상위 폴더가 로컬 전용이면 제외!)
   for (const note of notes) {

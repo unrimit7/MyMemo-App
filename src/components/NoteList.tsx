@@ -191,9 +191,7 @@ export const NoteList: React.FC<NoteListProps> = ({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (confirm(`'${note.title || '이 메모'}'를 삭제하시겠습니까?`)) {
-                        onDeleteNote(note.id);
-                      }
+                      onDeleteNote(note.id);
                     }}
                     className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 p-1 rounded transition-opacity"
                     title="메모 삭제"

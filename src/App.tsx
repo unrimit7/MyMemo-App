@@ -9,13 +9,24 @@ import {
   saveNote, 
   deleteNote, 
   getGitHubConfig, 
-  saveGitHubConfig 
+  saveGitHubConfig,
+  trackDeletedRemotePath
 } from './services/db';
 import { syncWithGitHub } from './services/github';
 import { Sidebar } from './components/Sidebar';
 import { NoteList } from './components/NoteList';
 import { NoteEditor } from './components/NoteEditor';
 import { SettingsModal } from './components/SettingsModal';
+import { ConfirmModal } from './components/ConfirmModal';
+
+interface DeleteConfirmState {
+  isOpen: boolean;
+  type: 'note' | 'project';
+  id: string;
+  title: string;
+  message: string;
+  subMessage?: string;
+}
 
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -32,6 +43,15 @@ export function App() {
   // 모바일 화면 뷰 모드 ('list' 또는 'editor')
   const [mobileScreen, setMobileScreen] = useState<'list' | 'editor'>('list');
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  // 삭제 확인 모달 상태
+  const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState>({
+    isOpen: false,
+    type: 'note',
+    id: '',
+    title: '',
+    message: '',
+  });
 
   const autoSyncTimerRef = useRef<any>(null);
   const isSyncingRef = useRef(false);
@@ -115,7 +135,6 @@ export function App() {
         setActiveNoteId(loadedNotes[0].id);
       }
 
-      // 설정이 연결되어 있다면 앱 켜질 때 자동 동기화
       if (config && config.isConnected) {
         runSync(true, config);
       }
@@ -124,7 +143,7 @@ export function App() {
     initApp();
   }, []);
 
-  // 2. 화면으로 복귀할 때 (모바일에서 화면 켜거나 다른 앱 다녀왔을 때) 자동 동기화
+  // 2. 화면으로 복귀할 때 자동 동기화
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && gitHubConfig?.isConnected) {
@@ -149,7 +168,7 @@ export function App() {
     return notes.find((n) => n.id === activeNoteId) || null;
   }, [notes, activeNoteId]);
 
-  // 프로젝트(폴더) 추가 핸들러 (상위 parentId 지원)
+  // 프로젝트(폴더) 추가 핸들러
   const handleCreateProject = async (name: string, isLocalOnly: boolean, parentId?: string | null) => {
     const newProject: Project = {
       id: `proj-${Date.now()}`,
@@ -163,28 +182,109 @@ export function App() {
     setActiveProjectId(newProject.id);
   };
 
-  // 프로젝트 삭제 핸들러 (하위 폴더들도 함께 정리)
-  const handleDeleteProject = async (id: string) => {
-    // 자식 ID 수집 함수
-    const getAllDescendantIds = (rootId: string): string[] => {
+  // 폴더 삭제 요청 (팝업 열기)
+  const requestDeleteProject = (id: string) => {
+    const targetProject = projects.find((p) => p.id === id);
+    if (!targetProject) return;
+
+    // 자식 폴더 ID 수집
+    const getDescendants = (rootId: string): string[] => {
       const children = projects.filter((p) => p.parentId === rootId);
       let ids = children.map((c) => c.id);
       for (const child of children) {
-        ids = ids.concat(getAllDescendantIds(child.id));
+        ids = ids.concat(getDescendants(child.id));
       }
       return ids;
     };
+    const allFamilyIds = [id, ...getDescendants(id)];
+    const affectedNoteCount = notes.filter((n) => allFamilyIds.includes(n.projectId)).length;
 
-    const targetIds = [id, ...getAllDescendantIds(id)];
+    setDeleteConfirm({
+      isOpen: true,
+      type: 'project',
+      id,
+      title: '폴더 삭제 확인',
+      message: `'${targetProject.name}' 폴더를 정말 삭제하시겠습니까?`,
+      subMessage: affectedNoteCount > 0 
+        ? `포함된 하위 폴더 및 ${affectedNoteCount}개의 메모가 함께 영구 삭제됩니다.` 
+        : '비어 있는 폴더입니다.',
+    });
+  };
 
-    for (const projId of targetIds) {
-      await deleteProject(projId);
-    }
+  // 메모 삭제 요청 (팝업 열기)
+  const requestDeleteNote = (id: string) => {
+    const targetNote = notes.find((n) => n.id === id);
+    if (!targetNote) return;
 
-    setProjects((prev) => prev.filter((p) => !targetIds.includes(p.id)));
-    setNotes((prev) => prev.filter((n) => !targetIds.includes(n.projectId)));
-    if (targetIds.includes(activeProjectId)) {
-      setActiveProjectId('ALL');
+    setDeleteConfirm({
+      isOpen: true,
+      type: 'note',
+      id,
+      title: '메모 삭제 확인',
+      message: `'${targetNote.title || '제목 없는 메모'}'를 정말 삭제하시겠습니까?`,
+      subMessage: targetNote.isLocalOnly 
+        ? '이 기기에 보관된 메모가 영구 삭제됩니다.'
+        : 'GitHub에 동기화된 메모도 함께 삭제됩니다.',
+    });
+  };
+
+  // 삭제 최종 실행 (ConfirmModal에서 확인 클릭 시)
+  const handleConfirmDelete = async () => {
+    const { type, id } = deleteConfirm;
+    setDeleteConfirm((prev) => ({ ...prev, isOpen: false }));
+
+    if (type === 'note') {
+      const targetNote = notes.find((n) => n.id === id);
+      if (targetNote && targetNote.githubPath && !targetNote.isLocalOnly) {
+        await trackDeletedRemotePath(targetNote.githubPath);
+      }
+      await deleteNote(id);
+      const remaining = notes.filter((n) => n.id !== id);
+      setNotes(remaining);
+      if (activeNoteId === id) {
+        setActiveNoteId(remaining[0]?.id || null);
+        if (remaining.length === 0) {
+          setMobileScreen('list');
+        }
+      }
+      // GitHub 자동 삭제 동기화 예약
+      if (gitHubConfig?.isConnected) {
+        setTimeout(() => runSync(true), 1500);
+      }
+    } else if (type === 'project') {
+      const getDescendants = (rootId: string): string[] => {
+        const children = projects.filter((p) => p.parentId === rootId);
+        let ids = children.map((c) => c.id);
+        for (const child of children) {
+          ids = ids.concat(getDescendants(child.id));
+        }
+        return ids;
+      };
+
+      const targetIds = [id, ...getDescendants(id)];
+
+      // 속한 메모들의 원격 경로 추적
+      const notesToDelete = notes.filter((n) => targetIds.includes(n.projectId));
+      for (const n of notesToDelete) {
+        if (n.githubPath && !n.isLocalOnly) {
+          await trackDeletedRemotePath(n.githubPath);
+        }
+      }
+
+      for (const projId of targetIds) {
+        await deleteProject(projId);
+      }
+
+      setProjects((prev) => prev.filter((p) => !targetIds.includes(p.id)));
+      setNotes((prev) => prev.filter((n) => !targetIds.includes(n.projectId)));
+      if (targetIds.includes(activeProjectId)) {
+        setActiveProjectId('ALL');
+      }
+
+      // GitHub 자동 삭제 동기화 예약
+      if (gitHubConfig?.isConnected) {
+        setTimeout(() => runSync(true), 1500);
+      }
     }
   };
 
@@ -233,7 +333,6 @@ export function App() {
     await saveNote(updatedNote);
     setNotes((prev) => prev.map((n) => (n.id === updatedNote.id ? updatedNote : n)));
 
-    // 로컬 전용 메모가 아니고 GitHub 연결 상태라면 3.5초 뒤 자동 동기화
     if (!isLocalOnlyNow && gitHubConfig?.isConnected) {
       if (autoSyncTimerRef.current) {
         clearTimeout(autoSyncTimerRef.current);
@@ -241,19 +340,6 @@ export function App() {
       autoSyncTimerRef.current = setTimeout(() => {
         runSync(true);
       }, 3500);
-    }
-  };
-
-  // 메모 삭제 핸들러
-  const handleDeleteNote = async (id: string) => {
-    await deleteNote(id);
-    const remaining = notes.filter((n) => n.id !== id);
-    setNotes(remaining);
-    if (activeNoteId === id) {
-      setActiveNoteId(remaining[0]?.id || null);
-      if (remaining.length === 0) {
-        setMobileScreen('list');
-      }
     }
   };
 
@@ -291,7 +377,7 @@ export function App() {
         activeProjectId={activeProjectId}
         onSelectProject={setActiveProjectId}
         onCreateProject={handleCreateProject}
-        onDeleteProject={handleDeleteProject}
+        onDeleteProject={requestDeleteProject}
         noteCounts={noteCounts}
         gitHubConfig={gitHubConfig}
         onOpenSettings={() => setIsSettingsOpen(true)}
@@ -315,7 +401,7 @@ export function App() {
           activeNoteId={activeNoteId}
           onSelectNote={handleSelectNote}
           onCreateNote={handleCreateNote}
-          onDeleteNote={handleDeleteNote}
+          onDeleteNote={requestDeleteNote}
           onOpenSidebar={() => setIsSidebarOpenMobile(true)}
         />
       </div>
@@ -330,6 +416,7 @@ export function App() {
           projects={projects}
           onUpdateNote={handleUpdateNote}
           onBackToList={() => setMobileScreen('list')}
+          onDeleteNote={requestDeleteNote}
         />
       </div>
 
@@ -339,6 +426,16 @@ export function App() {
         onClose={() => setIsSettingsOpen(false)}
         config={gitHubConfig}
         onSaveConfig={handleSaveConfig}
+      />
+
+      {/* 삭제 확인 전용 모달 */}
+      <ConfirmModal
+        isOpen={deleteConfirm.isOpen}
+        title={deleteConfirm.title}
+        message={deleteConfirm.message}
+        subMessage={deleteConfirm.subMessage}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteConfirm((prev) => ({ ...prev, isOpen: false }))}
       />
     </div>
   );

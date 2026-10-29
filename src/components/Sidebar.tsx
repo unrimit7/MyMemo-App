@@ -199,9 +199,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (confirm(`'${project.name}' 폴더와 하위 메모를 모두 삭제하시겠습니까?`)) {
-                    onDeleteProject(project.id);
-                  }
+                  onDeleteProject(project.id);
                 }}
                 className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded"
                 title="삭제"

@@ -176,3 +176,26 @@ export async function saveGitHubConfig(config: GitHubConfig): Promise<void> {
   const db = await getDB();
   await db.put('settings', config, 'github_config');
 }
+
+// 원격 삭제 추적 큐
+export async function trackDeletedRemotePath(path: string): Promise<void> {
+  if (!path) return;
+  const db = await getDB();
+  const current: string[] = (await db.get('settings', 'deleted_remote_paths')) || [];
+  if (!current.includes(path)) {
+    current.push(path);
+    await db.put('settings', current, 'deleted_remote_paths');
+  }
+}
+
+export async function getDeletedRemotePaths(): Promise<string[]> {
+  const db = await getDB();
+  return (await db.get('settings', 'deleted_remote_paths')) || [];
+}
+
+export async function clearDeletedRemotePaths(pathsToRemove: string[]): Promise<void> {
+  const db = await getDB();
+  const current: string[] = (await db.get('settings', 'deleted_remote_paths')) || [];
+  const remaining = current.filter((p) => !pathsToRemove.includes(p));
+  await db.put('settings', remaining, 'deleted_remote_paths');
+}
