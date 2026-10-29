@@ -42,6 +42,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 }) => {
   const [viewMode, setViewMode] = useState<'edit' | 'preview' | 'split'>('edit');
   const [isProcessingImage, setIsProcessingImage] = useState(false);
+  const [isDragOverEditor, setIsDragOverEditor] = useState(false);
 
   // 한글 IME 조합 깨짐 방지를 위한 로컬 버퍼 상태
   const [localTitle, setLocalTitle] = useState(note?.title || '');
@@ -217,8 +218,6 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   };
 
   // 3. 에디터 본문 드래그 앤 드롭 핸들러
-  const [isDragOverEditor, setIsDragOverEditor] = useState(false);
-
   const handleEditorDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
