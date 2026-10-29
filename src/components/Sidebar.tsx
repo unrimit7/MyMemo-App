@@ -9,7 +9,8 @@ import {
   CheckCircle2, 
   AlertCircle,
   X,
-  FileText
+  FileText,
+  Download
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -25,6 +26,8 @@ interface SidebarProps {
   isSyncing: boolean;
   isOpenMobile: boolean;
   onCloseMobile: () => void;
+  onInstallApp?: () => void;
+  canInstall?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -40,6 +43,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isSyncing,
   isOpenMobile,
   onCloseMobile,
+  onInstallApp,
+  canInstall,
 }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
@@ -221,6 +226,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* 하단 동기화 및 설정 바 */}
         <div className="p-3 border-t border-slate-800 bg-slate-950/80 space-y-2">
+          {/* 기기에 앱 설치 버튼 (PWA 설치 가능할 때) */}
+          {canInstall && onInstallApp && (
+            <button
+              onClick={onInstallApp}
+              className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 transition-all shadow-sm active:scale-98"
+            >
+              <Download size={14} className="text-indigo-400" />
+              <span>이 기기에 앱 설치</span>
+            </button>
+          )}
+
           {/* 동기화 버튼 */}
           <button
             onClick={onSync}

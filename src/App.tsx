@@ -31,6 +31,25 @@ export function App() {
 
   // 모바일 화면 뷰 모드 ('list' 또는 'editor')
   const [mobileScreen, setMobileScreen] = useState<'list' | 'editor'>('list');
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  useEffect(() => {
+    const handleBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setDeferredPrompt(null);
+    }
+  };
 
   // 1. 초기 데이터 로딩
   const loadData = async () => {
@@ -220,6 +239,8 @@ export function App() {
         isSyncing={isSyncing}
         isOpenMobile={isSidebarOpenMobile}
         onCloseMobile={() => setIsSidebarOpenMobile(false)}
+        canInstall={!!deferredPrompt}
+        onInstallApp={handleInstallApp}
       />
 
       {/* 2단: 메모 목록 (소주제 목록) */}
