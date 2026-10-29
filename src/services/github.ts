@@ -1,7 +1,14 @@
 import type { GitHubConfig, Note, Project, SyncSummary } from '../types';
-import { saveNote, getAllNotes, getAllProjects, saveProject, getDeletedRemotePaths, clearDeletedRemotePaths } from './db';
+import { 
+  saveNote, 
+  getAllNotes, 
+  getAllProjects, 
+  saveProject, 
+  getDeletedRemotePaths, 
+  clearDeletedRemotePaths 
+} from './db';
 
-// UTF-8 안전한 Base64 인코딩/디코딩 (한글 및 이모지 깨짐 방지)
+// UTF-8 안전한 Base64 인코딩/디코딩
 export function utf8ToBase64(str: string): string {
   return btoa(
     encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (_, p1) =>
@@ -19,7 +26,6 @@ export function base64ToUtf8(str: string): string {
   );
 }
 
-// GitHub API 헤더 생성
 function getHeaders(token: string) {
   return {
     Authorization: `token ${token}`,
@@ -51,7 +57,7 @@ export async function testGitHubConnection(config: GitHubConfig): Promise<{ succ
   }
 }
 
-// 폴더 ID로부터 전체 계층 경로 문자열 구하기 (예: "업무/기획/디자인")
+// 폴더 ID로부터 전체 계층 경로 구하기
 export function getProjectFolderPath(projectId: string, projects: Project[]): string {
   const parts: string[] = [];
   let curr = projects.find((p) => p.id === projectId);
@@ -174,7 +180,7 @@ export async function deleteFileFromGitHub(
   }
 }
 
-// 3. GitHub 전체 동기화 실행
+// 3. GitHub 전체 동기화 실행 (가짜 충돌 방지 및 안전 알고리즘)
 export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary> {
   const summary: SyncSummary = {
     uploaded: 0,
@@ -191,7 +197,6 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
   const projects = await getAllProjects();
   const notes = await getAllNotes();
 
-  // 상위 조상 중 하나라도 isLocalOnly이면 true를 반환하는 함수
   const isChainLocalOnly = (projectId: string): boolean => {
     let curr = projects.find((p) => p.id === projectId);
     while (curr) {
@@ -217,7 +222,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
 
   const remoteFileMap = new Map(remoteFiles.map((f) => [f.path, f]));
 
-  // 1-2) 사용자가 로컬에서 삭제한 파일들을 GitHub 원격에서도 삭제
+  // 1-2) 사용자가 삭제한 파일들을 GitHub 원격에서도 삭제
   const pendingDeletes = await getDeletedRemotePaths();
   const deletedSuccessPaths: string[] = [];
   for (const delPath of pendingDeletes) {
@@ -236,7 +241,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
     await clearDeletedRemotePaths(deletedSuccessPaths);
   }
 
-  // 2) 로컬 메모들을 GitHub로 업로드 (단, isLocalOnly 또는 상위 폴더가 로컬 전용이면 제외!)
+  // 2) 로컬 메모들을 GitHub로 업로드 및 정밀 비교
   for (const note of notes) {
     if (note.isLocalOnly || isChainLocalOnly(note.projectId)) {
       summary.skippedLocalOnly++;
@@ -251,41 +256,68 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
     const serializedContent = serializeNoteToMarkdown(note, folderPath);
 
     if (remoteFile) {
-      if (note.githubSha && note.githubSha !== remoteFile.sha && note.syncStatus === 'pending') {
-        summary.conflicts++;
-        
+      // SHA가 다를 경우 실제 내용(Content) 비교
+      if (note.githubSha && note.githubSha !== remoteFile.sha) {
         const remoteContentRes = await fetch(remoteFile.url, { headers: getHeaders(config.token) });
         const remoteContentData = await remoteContentRes.json();
-        const remoteDecoded = base64ToUtf8(remoteContentData.content);
+        const remoteRaw = base64ToUtf8(remoteContentData.content);
+        const remoteParsed = parseMarkdownToNote(remoteRaw);
 
-        const conflictNote: Note = {
-          id: `note-${Date.now()}-conflict`,
-          projectId: note.projectId,
-          title: `[충돌 복사본] ${note.title}`,
-          content: remoteDecoded,
-          isLocalOnly: false,
-          syncStatus: 'conflict',
-          conflictContent: remoteDecoded,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        await saveNote(conflictNote);
+        // 실제 본문과 제목이 같으면 충돌이 아님! (Frontmatter 타임스탬프 차이일 뿐임)
+        const isContentIdentical = 
+          (remoteParsed.content || '').trim() === note.content.trim() &&
+          (remoteParsed.title || '').trim() === note.title.trim();
 
-        const upRes = await uploadFileToGitHub(
-          config,
-          expectedPath,
-          serializedContent,
-          `Update note: ${note.title} (resolved)`,
-          remoteFile.sha
-        );
-        if (upRes.success) {
-          note.githubSha = upRes.sha;
-          note.githubPath = expectedPath;
+        if (isContentIdentical) {
+          // 동일하므로 최신 SHA만 갱신
+          note.githubSha = remoteFile.sha;
           note.syncStatus = 'synced';
           await saveNote(note);
-          summary.uploaded++;
+        } else if (note.syncStatus === 'pending') {
+          // 실제 내용이 서로 다르고, 로컬도 수정 중인 진짜 충돌 발생!
+          // 단, 이미 충돌 복사본인 메모는 재충돌 사본 생성을 방지
+          if (!note.title.startsWith('[충돌 복사본]')) {
+            summary.conflicts++;
+
+            const conflictNote: Note = {
+              id: `note-${Date.now()}-conflict`,
+              projectId: note.projectId,
+              title: `[원격 버전] ${remoteParsed.title || note.title}`,
+              content: remoteParsed.content, // Frontmatter 없는 순수 본문만 저장
+              isLocalOnly: true, // 충돌 사본은 로컬에만 보관하여 루프 방지!
+              syncStatus: 'local_only',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+            await saveNote(conflictNote);
+          }
+
+          // 내 로컬 버전을 원격에 덮어써서 동기화 완료
+          const upRes = await uploadFileToGitHub(
+            config,
+            expectedPath,
+            serializedContent,
+            `Update note: ${note.title}`,
+            remoteFile.sha
+          );
+          if (upRes.success) {
+            note.githubSha = upRes.sha;
+            note.githubPath = expectedPath;
+            note.syncStatus = 'synced';
+            await saveNote(note);
+            summary.uploaded++;
+          }
+        } else {
+          // 로컬은 수정 안 했는데 원격이 바뀜 -> 원격 내용으로 로컬 업데이트
+          note.title = remoteParsed.title || note.title;
+          note.content = remoteParsed.content;
+          note.githubSha = remoteFile.sha;
+          note.syncStatus = 'synced';
+          await saveNote(note);
+          summary.downloaded++;
         }
       } else if (note.syncStatus === 'pending' || !note.githubSha) {
+        // 로컬 변경사항 업로드
         const upRes = await uploadFileToGitHub(
           config,
           expectedPath,
@@ -306,6 +338,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
       }
       remoteFileMap.delete(expectedPath);
     } else {
+      // 원격에 없는 새 메모 생성
       const upRes = await uploadFileToGitHub(
         config,
         expectedPath,
@@ -322,7 +355,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
     }
   }
 
-  // 3) 원격에만 있고 로컬에 없는 파일들을 로컬로 다운로드 및 폴더 트리 동적 생성
+  // 3) 원격에만 있고 로컬에 없는 파일들을 로컬로 다운로드
   for (const [path, remoteFile] of remoteFileMap.entries()) {
     const fileRes = await fetch(remoteFile.url, { headers: getHeaders(config.token) });
     if (!fileRes.ok) continue;
@@ -331,15 +364,12 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
     const rawContent = base64ToUtf8(fileData.content);
     const parsed = parseMarkdownToNote(rawContent);
 
-    // 경로 파싱: notes/메인폴더/하위폴더/파일명.md
     const relativePath = path.slice(notesDir.length).replace(/^\//, '');
     const segments = relativePath.split('/');
-    segments.pop(); // 파일명 제외한 폴더 세그먼트들
+    segments.pop();
 
-    // 폴더 체인 찾기 또는 순차 생성 (최대 3단계: root -> sub1 -> sub2)
     let parentId: string | null = null;
     if (segments.length === 0) {
-      // 루트 바로 아래 파일
       segments.push('빠른 메모');
     }
 
