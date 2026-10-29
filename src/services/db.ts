@@ -177,7 +177,44 @@ export async function saveGitHubConfig(config: GitHubConfig): Promise<void> {
   await db.put('settings', config, 'github_config');
 }
 
-// 원격 삭제 추적 큐
+// 원격 삭제 추적 큐 (톰스톤 시스템)
+export interface DeletedTombstone {
+  id?: string;
+  path?: string;
+  deletedAt: string;
+}
+
+export async function trackDeletedNote(id?: string, path?: string): Promise<void> {
+  if (!id && !path) return;
+  const db = await getDB();
+  const current: DeletedTombstone[] = (await db.get('settings', 'deleted_tombstones')) || [];
+  const exists = current.some((t) => (id && t.id === id) || (path && t.path === path));
+  if (!exists) {
+    current.push({ id, path, deletedAt: new Date().toISOString() });
+    await db.put('settings', current, 'deleted_tombstones');
+  }
+
+  // 하위 호환성 유지
+  if (path) {
+    await trackDeletedRemotePath(path);
+  }
+}
+
+export async function getDeletedTombstones(): Promise<DeletedTombstone[]> {
+  const db = await getDB();
+  return (await db.get('settings', 'deleted_tombstones')) || [];
+}
+
+export async function clearDeletedTombstones(itemsToRemove: { id?: string; path?: string }[]): Promise<void> {
+  const db = await getDB();
+  const current: DeletedTombstone[] = (await db.get('settings', 'deleted_tombstones')) || [];
+  const remaining = current.filter((t) => {
+    return !itemsToRemove.some((r) => (r.id && r.id === t.id) || (r.path && r.path === t.path));
+  });
+  await db.put('settings', remaining, 'deleted_tombstones');
+}
+
+// 기존 함수 하위 호환성
 export async function trackDeletedRemotePath(path: string): Promise<void> {
   if (!path) return;
   const db = await getDB();

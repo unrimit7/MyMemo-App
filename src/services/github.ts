@@ -1,11 +1,12 @@
 import type { GitHubConfig, Note, Project, SyncSummary } from '../types';
 import { 
   saveNote, 
+  deleteNote,
   getAllNotes, 
   getAllProjects, 
   saveProject, 
-  getDeletedRemotePaths, 
-  clearDeletedRemotePaths 
+  getDeletedTombstones, 
+  clearDeletedTombstones 
 } from './db';
 
 // UTF-8 안전한 Base64 인코딩/디코딩
@@ -36,6 +37,15 @@ function getHeaders(token: string) {
     Accept: 'application/vnd.github.v3+json',
     'Content-Type': 'application/json',
   };
+}
+
+// GitHub Contents API URL 안전한 인코딩 생성
+export function getContentsUrl(config: GitHubConfig, path: string): string {
+  const encodedPath = path
+    .split('/')
+    .map((seg) => encodeURIComponent(seg))
+    .join('/');
+  return `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${encodedPath}`;
 }
 
 // 1. 연결 테스트
@@ -132,7 +142,7 @@ export async function uploadFileToGitHub(
   sha?: string
 ): Promise<{ success: boolean; sha?: string; error?: string }> {
   try {
-    const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${path}`;
+    const url = getContentsUrl(config, path);
     const body: any = {
       message: commitMessage,
       content: utf8ToBase64(content),
@@ -152,7 +162,30 @@ export async function uploadFileToGitHub(
       const data = await res.json();
       return { success: true, sha: data.content?.sha };
     } else {
-      const err = await res.json();
+      // 409 Conflict 발생 시 최신 SHA를 가져와 재시도(Last-Write-Wins)
+      if (res.status === 409) {
+        try {
+          const getRes = await fetch(url, { headers: getHeaders(config.token) });
+          if (getRes.ok) {
+            const getData = await getRes.json();
+            if (getData.sha) {
+              body.sha = getData.sha;
+              const retryRes = await fetch(url, {
+                method: 'PUT',
+                headers: getHeaders(config.token),
+                body: JSON.stringify(body),
+              });
+              if (retryRes.ok) {
+                const retryData = await retryRes.json();
+                return { success: true, sha: retryData.content?.sha };
+              }
+            }
+          }
+        } catch {
+          // retry fallback
+        }
+      }
+      const err = await res.json().catch(() => ({}));
       return { success: false, error: err.message };
     }
   } catch (err: any) {
@@ -168,7 +201,7 @@ export async function deleteFileFromGitHub(
   commitMessage: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${path}`;
+    const url = getContentsUrl(config, path);
     const res = await fetch(url, {
       method: 'DELETE',
       headers: getHeaders(config.token),
@@ -184,7 +217,7 @@ export async function deleteFileFromGitHub(
   }
 }
 
-// 3. GitHub 전체 동기화 실행 (충돌 사본 남발 방지 & 내 최신 글 우선 보장)
+// 3. GitHub 전체 동기화 실행 (톰스톤 삭제 보장 & 삭제된 원격 메모 로컬 정리)
 export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary> {
   const summary: SyncSummary = {
     uploaded: 0,
@@ -226,26 +259,24 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
 
   const remoteFileMap = new Map(remoteFiles.map((f) => [f.path, f]));
 
-  // 1-2) 로컬에서 삭제된 파일들을 원격에서도 삭제
-  const pendingDeletes = await getDeletedRemotePaths();
-  const deletedSuccessPaths: string[] = [];
-  for (const delPath of pendingDeletes) {
-    const remoteTarget = remoteFileMap.get(delPath);
-    if (remoteTarget) {
-      const delRes = await deleteFileFromGitHub(config, delPath, remoteTarget.sha, `Delete note: ${delPath}`);
+  // 1-2) 톰스톤(삭제 큐) 처리: 로컬에서 삭제된 파일들을 원격에서도 확실히 제거
+  const tombstones = await getDeletedTombstones();
+  const deletedSuccessTombstones: { id?: string; path?: string }[] = [];
+
+  for (const t of tombstones) {
+    if (t.path && remoteFileMap.has(t.path)) {
+      const remoteTarget = remoteFileMap.get(t.path)!;
+      const delRes = await deleteFileFromGitHub(config, t.path, remoteTarget.sha, `Delete note: ${t.path}`);
       if (delRes.success) {
-        deletedSuccessPaths.push(delPath);
-        remoteFileMap.delete(delPath);
+        remoteFileMap.delete(t.path);
+        deletedSuccessTombstones.push(t);
       }
-    } else {
-      deletedSuccessPaths.push(delPath);
+    } else if (t.path && !remoteFileMap.has(t.path)) {
+      deletedSuccessTombstones.push(t);
     }
   }
-  if (deletedSuccessPaths.length > 0) {
-    await clearDeletedRemotePaths(deletedSuccessPaths);
-  }
 
-  // 2) 로컬 메모들을 GitHub로 업로드 (현재 기기 수정 내용이 항상 최우선!)
+  // 2) 로컬 메모들을 GitHub로 업로드
   for (const note of notes) {
     if (note.isLocalOnly || isChainLocalOnly(note.projectId)) {
       summary.skippedLocalOnly++;
@@ -254,10 +285,9 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
 
     const folderPath = getProjectFolderPath(note.projectId, projects);
     const safeTitle = (note.title || '제목없음').replace(/[\/\\:*?"<>|]/g, '_');
-    // 고유 ID를 파일명에 명확히 포함하여 제목 변경 시에도 추적
     const expectedPath = `${notesDir}/${folderPath}/${safeTitle}_${note.id.slice(-6)}.md`;
 
-    // 만약 이전에 다른 파일명(예: 이전 제목)으로 올라간 적이 있다면 이전 파일 삭제
+    // 파일명이 변경된 경우 이전 파일 삭제
     if (note.githubPath && note.githubPath !== expectedPath) {
       const oldRemote = remoteFileMap.get(note.githubPath);
       if (oldRemote) {
@@ -270,7 +300,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
     const serializedContent = serializeNoteToMarkdown(note, folderPath);
 
     if (remoteFile) {
-      // 로컬에서 수정 중(pending)이면 무조건 내 최신 내용으로 원격에 업데이트! (사본 남발 원천 차단)
+      // 원격에 파일이 이미 있는 경우
       if (note.syncStatus === 'pending' || note.githubSha !== remoteFile.sha) {
         const upRes = await uploadFileToGitHub(
           config,
@@ -292,6 +322,14 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
       }
       remoteFileMap.delete(expectedPath);
     } else {
+      // 원격에 파일이 없는 경우:
+      // ★ 핵심: 이미 이전에 동기화(synced)되었던 메모인데 원격에서 사라졌다면,
+      // 다른 기기(PC 등)에서 삭제된 것이므로 로컬에서도 함께 삭제! (되살아남/새 메모 생성 방지)
+      if (note.syncStatus === 'synced' && note.githubPath) {
+        await deleteNote(note.id);
+        continue;
+      }
+
       // 새 메모 업로드
       const upRes = await uploadFileToGitHub(
         config,
@@ -317,6 +355,19 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
     const fileData = await fileRes.json();
     const rawContent = base64ToUtf8(fileData.content);
     const parsed = parseMarkdownToNote(rawContent);
+
+    // ★ 핵심: 로컬 톰스톤(삭제 기록)에 있는 메모인지 확인!
+    const isDeletedLocally = tombstones.some(
+      (t) => (parsed.id && t.id === parsed.id) || (t.path && t.path === path)
+    );
+    if (isDeletedLocally) {
+      // 로컬에서 이미 삭제된 메모가 원격에 남아있는 경우 원격 파일도 삭제하고 다운로드하지 않음!
+      const delRes = await deleteFileFromGitHub(config, path, remoteFile.sha, `Delete tombstone note: ${path}`);
+      if (delRes.success) {
+        deletedSuccessTombstones.push({ id: parsed.id, path });
+      }
+      continue;
+    }
 
     // 이미 같은 ID를 가진 메모가 로컬에 있다면 건너뜀 (중복 생성 방지)
     if (parsed.id && notes.some((n) => n.id === parsed.id)) {
@@ -366,6 +417,11 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
 
     await saveNote(newNote);
     summary.downloaded++;
+  }
+
+  // 성공적으로 처리된 톰스톤 정리
+  if (deletedSuccessTombstones.length > 0) {
+    await clearDeletedTombstones(deletedSuccessTombstones);
   }
 
   return summary;

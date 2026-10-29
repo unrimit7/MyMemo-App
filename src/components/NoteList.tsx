@@ -10,7 +10,10 @@ import {
   CloudUpload,
   Calendar,
   Trash2,
-  FolderPlus
+  FolderPlus,
+  Folder,
+  ChevronRight,
+  ChevronLeft
 } from 'lucide-react';
 
 interface NoteListProps {
@@ -18,6 +21,8 @@ interface NoteListProps {
   projects: Project[];
   activeProjectId: string;
   activeNoteId: string | null;
+  noteCounts?: Record<string, number>;
+  onSelectProject?: (id: string) => void;
   onSelectNote: (id: string) => void;
   onCreateNote: () => void;
   onDeleteNote: (id: string) => void;
@@ -31,6 +36,8 @@ export const NoteList: React.FC<NoteListProps> = ({
   projects,
   activeProjectId,
   activeNoteId,
+  noteCounts = {},
+  onSelectProject,
   onSelectNote,
   onCreateNote,
   onDeleteNote,
@@ -41,26 +48,23 @@ export const NoteList: React.FC<NoteListProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [isDragOverList, setIsDragOverList] = useState(false);
 
-  // 현재 활성화된 프로젝트 정보 및 하위 폴더 ID 목록
+  // 현재 활성화된 프로젝트 정보 및 부모/자식 폴더
   const currentProject = projects.find((p) => p.id === activeProjectId);
-  const projectTitle = activeProjectId === 'ALL' ? '전체 메모' : currentProject?.name || '메모';
+  const parentProject = currentProject?.parentId 
+    ? projects.find((p) => p.id === currentProject.parentId) 
+    : null;
 
-  const activeFamilyIds = useMemo(() => {
+  // 현재 폴더 직속 하위 폴더 목록
+  const subprojects = useMemo(() => {
     if (activeProjectId === 'ALL') return [];
-    const getDescendants = (rootId: string): string[] => {
-      const children = projects.filter((p) => p.parentId === rootId);
-      let ids = children.map((c) => c.id);
-      for (const child of children) {
-        ids = ids.concat(getDescendants(child.id));
-      }
-      return ids;
-    };
-    return [activeProjectId, ...getDescendants(activeProjectId)];
+    return projects.filter((p) => p.parentId === activeProjectId);
   }, [activeProjectId, projects]);
 
-  // 필터링: 프로젝트(하위 포함) & 검색어
+  const projectTitle = activeProjectId === 'ALL' ? '전체 메모' : currentProject?.name || '메모';
+
+  // 필터링: 메인 폴더 접속 시 하위 폴더의 메모가 섞이지 않고 오직 직속 메모만 표시
   const filteredNotes = notes.filter((note) => {
-    const matchesProject = activeProjectId === 'ALL' || activeFamilyIds.includes(note.projectId);
+    const matchesProject = activeProjectId === 'ALL' || note.projectId === activeProjectId;
     if (!matchesProject) return false;
 
     if (!searchQuery.trim()) return true;
@@ -107,14 +111,27 @@ export const NoteList: React.FC<NoteListProps> = ({
     >
       {/* 상단 헤더 & 모바일 햄버거 & 새 메모 버튼 */}
       <div className="p-3.5 border-b border-slate-800 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 truncate">
+        <div className="flex items-center gap-1.5 truncate">
           <button
             onClick={onOpenSidebar}
-            className="md:hidden p-1.5 -ml-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"
+            className="md:hidden p-1.5 -ml-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 shrink-0"
             title="프로젝트 목록 열기"
           >
             <Menu size={20} />
           </button>
+
+          {/* 상위 폴더가 있을 경우 뒤로가기 버튼 */}
+          {parentProject && (
+            <button
+              onClick={() => onSelectProject?.(parentProject.id)}
+              className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 flex items-center gap-0.5 text-xs shrink-0"
+              title={`${parentProject.name} 폴더로 이동`}
+            >
+              <ChevronLeft size={16} />
+              <span className="truncate max-w-[70px] hidden sm:inline">{parentProject.name}</span>
+            </button>
+          )}
+
           <div className="truncate">
             <h2 className="font-semibold text-slate-100 text-sm truncate flex items-center gap-1.5">
               {currentProject?.isLocalOnly && <Lock size={13} className="text-amber-400 shrink-0" />}
@@ -161,6 +178,47 @@ export const NoteList: React.FC<NoteListProps> = ({
           />
         </div>
       </div>
+
+      {/* 하위 폴더 섹션: 메인 폴더 접속 시 안의 폴더가 나오도록 표시 */}
+      {subprojects.length > 0 && !searchQuery.trim() && (
+        <div className="p-2.5 border-b border-slate-800/80 bg-slate-950/40">
+          <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2 px-1 flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <Folder size={12} className="text-indigo-400" />
+              하위 폴더 ({subprojects.length})
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-1.5">
+            {subprojects.map((sub) => {
+              const count = noteCounts[sub.id] || 0;
+              return (
+                <button
+                  key={sub.id}
+                  onClick={() => onSelectProject?.(sub.id)}
+                  className="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-slate-800 hover:border-indigo-500/50 text-left transition-all group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    {sub.isLocalOnly ? (
+                      <Lock size={14} className="text-amber-400 shrink-0" />
+                    ) : (
+                      <Folder size={14} className="text-indigo-400 group-hover:text-indigo-300 shrink-0" />
+                    )}
+                    <span className="text-xs font-medium text-slate-200 group-hover:text-white truncate">
+                      {sub.name}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-slate-400 group-hover:text-slate-200 shrink-0">
+                    <span className="text-[11px] font-mono text-slate-500 group-hover:text-slate-400">
+                      {count}
+                    </span>
+                    <ChevronRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* 메모 목록 */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1.5">

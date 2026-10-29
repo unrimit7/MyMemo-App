@@ -10,7 +10,7 @@ import {
   deleteNote, 
   getGitHubConfig, 
   saveGitHubConfig,
-  trackDeletedRemotePath
+  trackDeletedNote
 } from './services/db';
 import { syncWithGitHub } from './services/github';
 import { Sidebar } from './components/Sidebar';
@@ -306,8 +306,8 @@ export function App() {
 
     if (type === 'note') {
       const targetNote = notes.find((n) => n.id === id);
-      if (targetNote && targetNote.githubPath && !targetNote.isLocalOnly) {
-        await trackDeletedRemotePath(targetNote.githubPath);
+      if (targetNote && !targetNote.isLocalOnly) {
+        await trackDeletedNote(targetNote.id, targetNote.githubPath);
       }
       await deleteNote(id);
       const remaining = notes.filter((n) => n.id !== id);
@@ -334,11 +334,11 @@ export function App() {
 
       const targetIds = [id, ...getDescendants(id)];
 
-      // 속한 메모들의 원격 경로 추적
+      // 속한 메모들의 원격 경로 및 ID 추적 (톰스톤 등록)
       const notesToDelete = notes.filter((n) => targetIds.includes(n.projectId));
       for (const n of notesToDelete) {
-        if (n.githubPath && !n.isLocalOnly) {
-          await trackDeletedRemotePath(n.githubPath);
+        if (!n.isLocalOnly) {
+          await trackDeletedNote(n.id, n.githubPath);
         }
       }
 
@@ -473,6 +473,8 @@ export function App() {
           projects={projects}
           activeProjectId={activeProjectId}
           activeNoteId={activeNoteId}
+          noteCounts={noteCounts}
+          onSelectProject={setActiveProjectId}
           onSelectNote={handleSelectNote}
           onCreateNote={handleCreateNote}
           onDeleteNote={requestDeleteNote}
