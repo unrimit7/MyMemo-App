@@ -12,7 +12,8 @@ import {
   FileText,
   Download,
   ChevronRight,
-  ChevronDown
+  ChevronDown,
+  Pencil
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -21,6 +22,7 @@ interface SidebarProps {
   onSelectProject: (id: string) => void;
   onCreateProject: (name: string, isLocalOnly: boolean, parentId?: string | null) => void;
   onDeleteProject: (id: string) => void;
+  onRenameProject: (id: string, newName: string) => void;
   noteCounts: Record<string, number>;
   gitHubConfig: GitHubConfig | null;
   onOpenSettings: () => void;
@@ -39,6 +41,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectProject,
   onCreateProject,
   onDeleteProject,
+  onRenameProject,
   noteCounts,
   gitHubConfig,
   onOpenSettings,
@@ -50,13 +53,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
   canInstall,
   externalAddTarget,
 }) => {
-  // 새 폴더 모달/인라인 상태: { parentId: string | null | undefined, isOpen: boolean }
+  // 새 폴더 모달/인라인 상태
   const [addingTarget, setAddingTarget] = useState<{ parentId: string | null; isOpen: boolean }>({
     parentId: null,
     isOpen: false,
   });
   const [newProjectName, setNewProjectName] = useState('');
   const [newIsLocalOnly, setNewIsLocalOnly] = useState(false);
+
+  // 폴더 이름 수정 팝업 상태
+  const [renamingTarget, setRenamingTarget] = useState<{ id: string; name: string } | null>(null);
+  const [renameInputValue, setRenameInputValue] = useState('');
 
   // 외부(NoteList)에서 하위 폴더 생성 트리거 시 폼 열기
   React.useEffect(() => {
@@ -124,7 +131,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (!newProjectName.trim()) return;
     onCreateProject(newProjectName.trim(), newIsLocalOnly, addingTarget.parentId);
     
-    // 만약 상위 폴더가 있다면 그 폴더를 자동으로 펼침
     if (addingTarget.parentId) {
       setExpandedFolders((prev) => new Set(prev).add(addingTarget.parentId!));
     }
@@ -132,6 +138,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setNewProjectName('');
     setNewIsLocalOnly(false);
     setAddingTarget({ parentId: null, isOpen: false });
+  };
+
+  const handleRenameSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!renamingTarget || !renameInputValue.trim()) return;
+    onRenameProject(renamingTarget.id, renameInputValue.trim());
+    setRenamingTarget(null);
   };
 
   const totalNotes = Object.values(noteCounts).reduce((a, b) => a + b, 0);
@@ -143,7 +156,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const isExpanded = expandedFolders.has(project.id);
     const isSelected = activeProjectId === project.id;
     const count = noteCounts[project.id] || 0;
-    const canHaveSubfolder = depth < 2; // 최대 2단계(depth=0, depth=1)까지만 하위 폴더 생성 가능
+    const canHaveSubfolder = depth < 2;
 
     return (
       <div key={project.id} className="flex flex-col select-none">
@@ -155,7 +168,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           }`}
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
         >
-          {/* 폴더 접기/펼치기 아이콘 또는 공백 */}
+          {/* 폴더 접기/펼치기 아이콘 */}
           <button
             type="button"
             onClick={(e) => toggleFolder(project.id, e)}
@@ -188,7 +201,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </span>
           </button>
 
-          {/* 상시 표시 액션: 하위 폴더 추가 (depth < 2일 때만) & 삭제 */}
+          {/* 상시 표시 액션: 하위 폴더 추가 & 이름 수정 & 삭제 */}
           <div className="flex items-center opacity-70 group-hover:opacity-100 transition-opacity gap-1 shrink-0">
             {canHaveSubfolder && (
               <button
@@ -202,6 +215,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 title={`${project.name}의 하위 폴더 추가`}
               >
                 <FolderPlus size={14} />
+              </button>
+            )}
+
+            {/* 폴더 이름 수정 버튼 (기본 폴더 제외) */}
+            {project.id !== 'proj-default' && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRenamingTarget({ id: project.id, name: project.name });
+                  setRenameInputValue(project.name);
+                }}
+                className="p-1.5 text-slate-400 hover:text-amber-300 hover:bg-slate-700/60 rounded-md transition-colors"
+                title="폴더 이름 수정"
+              >
+                <Pencil size={13} />
               </button>
             )}
 
@@ -241,6 +270,51 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className="fixed inset-0 bg-black/60 z-40 md:hidden backdrop-blur-sm"
           onClick={onCloseMobile}
         />
+      )}
+
+      {/* 폴더 이름 수정 모달 팝업 */}
+      {renamingTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+          <form 
+            onSubmit={handleRenameSubmit}
+            className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm shadow-2xl p-5 text-slate-100 space-y-4 animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                <Pencil size={18} />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-100">폴더 이름 수정</h3>
+                <p className="text-xs text-slate-400">새로운 폴더 이름을 입력하세요.</p>
+              </div>
+            </div>
+
+            <input
+              type="text"
+              value={renameInputValue}
+              onChange={(e) => setRenameInputValue(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500"
+              autoFocus
+            />
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setRenamingTarget(null)}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200"
+              >
+                취소
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl transition-all"
+              >
+                수정 완료
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
       <aside className={`

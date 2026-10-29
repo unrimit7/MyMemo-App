@@ -183,6 +183,30 @@ export function App() {
     setActiveProjectId(newProject.id);
   };
 
+  // 프로젝트(폴더) 이름 수정 핸들러
+  const handleRenameProject = async (id: string, newName: string) => {
+    const target = projects.find((p) => p.id === id);
+    if (!target || target.name === newName) return;
+
+    const updatedProject: Project = { ...target, name: newName };
+    await saveProject(updatedProject);
+    setProjects((prev) => prev.map((p) => (p.id === id ? updatedProject : p)));
+
+    const affectedNotes = notes.filter((n) => n.projectId === id);
+    for (const note of affectedNotes) {
+      if (!note.isLocalOnly) {
+        await saveNote({ ...note, syncStatus: 'pending' });
+      }
+    }
+    setNotes((prev) =>
+      prev.map((n) => (n.projectId === id && !n.isLocalOnly ? { ...n, syncStatus: 'pending' } : n))
+    );
+
+    if (gitHubConfig?.isConnected) {
+      setTimeout(() => runSync(true), 1500);
+    }
+  };
+
   // 폴더 삭제 요청 (팝업 열기)
   const requestDeleteProject = (id: string) => {
     const targetProject = projects.find((p) => p.id === id);
@@ -379,6 +403,7 @@ export function App() {
         onSelectProject={setActiveProjectId}
         onCreateProject={handleCreateProject}
         onDeleteProject={requestDeleteProject}
+        onRenameProject={handleRenameProject}
         noteCounts={noteCounts}
         gitHubConfig={gitHubConfig}
         onOpenSettings={() => setIsSettingsOpen(true)}
