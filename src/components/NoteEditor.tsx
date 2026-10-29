@@ -41,8 +41,22 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 }) => {
   const [viewMode, setViewMode] = useState<'edit' | 'preview' | 'split'>('edit');
   const [isProcessingImage, setIsProcessingImage] = useState(false);
+
+  // 한글 IME 조합 깨짐 방지를 위한 로컬 버퍼 상태
+  const [localTitle, setLocalTitle] = useState(note?.title || '');
+  const [localContent, setLocalContent] = useState(note?.content || '');
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const updateTimerRef = useRef<any>(null);
+
+  // 메모가 변경(ID 변경)될 때만 로컬 버퍼를 새 메모 내용으로 동기화
+  useEffect(() => {
+    if (note) {
+      setLocalTitle(note.title);
+      setLocalContent(note.content);
+    }
+  }, [note?.id]);
 
   // 화면 너비에 따라 기본 뷰 모드 자동 조정
   useEffect(() => {
@@ -52,6 +66,30 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       setViewMode('edit');
     }
   }, [note?.id]);
+
+  // 부모 컴포넌트에 안전하게 디바운스 업데이트 전송
+  const debouncedSyncToParent = (updatedFields: Partial<Note>) => {
+    if (updateTimerRef.current) {
+      clearTimeout(updateTimerRef.current);
+    }
+    updateTimerRef.current = setTimeout(() => {
+      onUpdateNote(updatedFields);
+    }, 250);
+  };
+
+  // 제목 변경 핸들러 (한글 완성형 완벽 지원)
+  const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newTitle = e.target.value;
+    setLocalTitle(newTitle);
+    debouncedSyncToParent({ title: newTitle });
+  };
+
+  // 본문 변경 핸들러 (한글 조합 중 리렌더링 차단)
+  const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const newContent = e.target.value;
+    setLocalContent(newContent);
+    debouncedSyncToParent({ content: newContent });
+  };
 
   // 폴더 계층 빵가루(Breadcrumb) 계산
   const folderBreadcrumbs = useMemo(() => {
@@ -83,14 +121,15 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
-    const selected = note.content.substring(start, end);
+    const selected = localContent.substring(start, end);
     const replacement = `${prefix}${selected || '내용'}${suffix}`;
 
     const newContent = 
-      note.content.substring(0, start) + 
+      localContent.substring(0, start) + 
       replacement + 
-      note.content.substring(end);
+      localContent.substring(end);
 
+    setLocalContent(newContent);
     onUpdateNote({ content: newContent });
 
     setTimeout(() => {
@@ -105,20 +144,24 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   // 커서 위치에 이미지 Data URL 삽입
   const insertImageAtCursor = (dataUrl: string, altText: string = '이미지') => {
     const textarea = textareaRef.current;
+    const imageMarkdown = `\n\n![${altText}](${dataUrl})\n\n`;
+
     if (!textarea) {
-      onUpdateNote({ content: `${note.content}\n\n![${altText}](${dataUrl})\n\n` });
+      const newContent = `${localContent}${imageMarkdown}`;
+      setLocalContent(newContent);
+      onUpdateNote({ content: newContent });
       return;
     }
 
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
-    const imageMarkdown = `\n\n![${altText}](${dataUrl})\n\n`;
 
     const newContent = 
-      note.content.substring(0, start) + 
+      localContent.substring(0, start) + 
       imageMarkdown + 
-      note.content.substring(end);
+      localContent.substring(end);
 
+    setLocalContent(newContent);
     onUpdateNote({ content: newContent });
 
     setTimeout(() => {
@@ -391,8 +434,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       <div className="px-6 pt-4 pb-2">
         <input
           type="text"
-          value={note.title}
-          onChange={(e) => onUpdateNote({ title: e.target.value })}
+          value={localTitle}
+          onChange={handleTitleChange}
           placeholder="메모 제목을 입력하세요..."
           className="w-full bg-transparent text-xl md:text-2xl font-bold text-slate-100 placeholder-slate-600 focus:outline-none"
         />
@@ -404,8 +447,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <div className={`flex-1 flex flex-col h-full ${viewMode === 'split' ? 'border-r border-slate-800/80 pr-6' : ''}`}>
             <textarea
               ref={textareaRef}
-              value={note.content}
-              onChange={(e) => onUpdateNote({ content: e.target.value })}
+              value={localContent}
+              onChange={handleContentChange}
               onPaste={handlePaste}
               placeholder="마크다운 문법으로 자유롭게 작성해 보세요... 이미지는 Ctrl + V 로 바로 붙여넣을 수 있습니다!"
               className="w-full flex-1 bg-transparent text-slate-200 text-sm md:text-base leading-relaxed resize-none focus:outline-none font-mono placeholder-slate-600 scrollbar-thin"
@@ -416,7 +459,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
         {(viewMode === 'preview' || viewMode === 'split') && (
           <div className="flex-1 h-full overflow-y-auto markdown-preview prose prose-invert max-w-none pr-2">
-            <div dangerouslySetInnerHTML={renderMarkdown(note.content)} />
+            <div dangerouslySetInnerHTML={renderMarkdown(localContent)} />
           </div>
         )}
       </div>
