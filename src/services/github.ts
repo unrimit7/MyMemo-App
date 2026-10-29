@@ -18,12 +18,16 @@ export function utf8ToBase64(str: string): string {
 }
 
 export function base64ToUtf8(str: string): string {
-  return decodeURIComponent(
-    atob(str)
-      .split('')
-      .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-      .join('')
-  );
+  try {
+    return decodeURIComponent(
+      atob(str.replace(/\s/g, ''))
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+  } catch {
+    return atob(str.replace(/\s/g, ''));
+  }
 }
 
 function getHeaders(token: string) {
@@ -180,7 +184,7 @@ export async function deleteFileFromGitHub(
   }
 }
 
-// 3. GitHub 전체 동기화 실행 (가짜 충돌 방지 및 안전 알고리즘)
+// 3. GitHub 전체 동기화 실행 (충돌 사본 남발 방지 & 내 최신 글 우선 보장)
 export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary> {
   const summary: SyncSummary = {
     uploaded: 0,
@@ -222,7 +226,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
 
   const remoteFileMap = new Map(remoteFiles.map((f) => [f.path, f]));
 
-  // 1-2) 사용자가 삭제한 파일들을 GitHub 원격에서도 삭제
+  // 1-2) 로컬에서 삭제된 파일들을 원격에서도 삭제
   const pendingDeletes = await getDeletedRemotePaths();
   const deletedSuccessPaths: string[] = [];
   for (const delPath of pendingDeletes) {
@@ -241,7 +245,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
     await clearDeletedRemotePaths(deletedSuccessPaths);
   }
 
-  // 2) 로컬 메모들을 GitHub로 업로드 및 정밀 비교
+  // 2) 로컬 메모들을 GitHub로 업로드 (현재 기기 수정 내용이 항상 최우선!)
   for (const note of notes) {
     if (note.isLocalOnly || isChainLocalOnly(note.projectId)) {
       summary.skippedLocalOnly++;
@@ -250,74 +254,24 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
 
     const folderPath = getProjectFolderPath(note.projectId, projects);
     const safeTitle = (note.title || '제목없음').replace(/[\/\\:*?"<>|]/g, '_');
+    // 고유 ID를 파일명에 명확히 포함하여 제목 변경 시에도 추적
     const expectedPath = `${notesDir}/${folderPath}/${safeTitle}_${note.id.slice(-6)}.md`;
+
+    // 만약 이전에 다른 파일명(예: 이전 제목)으로 올라간 적이 있다면 이전 파일 삭제
+    if (note.githubPath && note.githubPath !== expectedPath) {
+      const oldRemote = remoteFileMap.get(note.githubPath);
+      if (oldRemote) {
+        await deleteFileFromGitHub(config, note.githubPath, oldRemote.sha, `Rename note from ${note.githubPath}`);
+        remoteFileMap.delete(note.githubPath);
+      }
+    }
 
     const remoteFile = remoteFileMap.get(expectedPath);
     const serializedContent = serializeNoteToMarkdown(note, folderPath);
 
     if (remoteFile) {
-      // SHA가 다를 경우 실제 내용(Content) 비교
-      if (note.githubSha && note.githubSha !== remoteFile.sha) {
-        const remoteContentRes = await fetch(remoteFile.url, { headers: getHeaders(config.token) });
-        const remoteContentData = await remoteContentRes.json();
-        const remoteRaw = base64ToUtf8(remoteContentData.content);
-        const remoteParsed = parseMarkdownToNote(remoteRaw);
-
-        // 실제 본문과 제목이 같으면 충돌이 아님! (Frontmatter 타임스탬프 차이일 뿐임)
-        const isContentIdentical = 
-          (remoteParsed.content || '').trim() === note.content.trim() &&
-          (remoteParsed.title || '').trim() === note.title.trim();
-
-        if (isContentIdentical) {
-          // 동일하므로 최신 SHA만 갱신
-          note.githubSha = remoteFile.sha;
-          note.syncStatus = 'synced';
-          await saveNote(note);
-        } else if (note.syncStatus === 'pending') {
-          // 실제 내용이 서로 다르고, 로컬도 수정 중인 진짜 충돌 발생!
-          // 단, 이미 충돌 복사본인 메모는 재충돌 사본 생성을 방지
-          if (!note.title.startsWith('[충돌 복사본]')) {
-            summary.conflicts++;
-
-            const conflictNote: Note = {
-              id: `note-${Date.now()}-conflict`,
-              projectId: note.projectId,
-              title: `[원격 버전] ${remoteParsed.title || note.title}`,
-              content: remoteParsed.content, // Frontmatter 없는 순수 본문만 저장
-              isLocalOnly: true, // 충돌 사본은 로컬에만 보관하여 루프 방지!
-              syncStatus: 'local_only',
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            };
-            await saveNote(conflictNote);
-          }
-
-          // 내 로컬 버전을 원격에 덮어써서 동기화 완료
-          const upRes = await uploadFileToGitHub(
-            config,
-            expectedPath,
-            serializedContent,
-            `Update note: ${note.title}`,
-            remoteFile.sha
-          );
-          if (upRes.success) {
-            note.githubSha = upRes.sha;
-            note.githubPath = expectedPath;
-            note.syncStatus = 'synced';
-            await saveNote(note);
-            summary.uploaded++;
-          }
-        } else {
-          // 로컬은 수정 안 했는데 원격이 바뀜 -> 원격 내용으로 로컬 업데이트
-          note.title = remoteParsed.title || note.title;
-          note.content = remoteParsed.content;
-          note.githubSha = remoteFile.sha;
-          note.syncStatus = 'synced';
-          await saveNote(note);
-          summary.downloaded++;
-        }
-      } else if (note.syncStatus === 'pending' || !note.githubSha) {
-        // 로컬 변경사항 업로드
+      // 로컬에서 수정 중(pending)이면 무조건 내 최신 내용으로 원격에 업데이트! (사본 남발 원천 차단)
+      if (note.syncStatus === 'pending' || note.githubSha !== remoteFile.sha) {
         const upRes = await uploadFileToGitHub(
           config,
           expectedPath,
@@ -338,7 +292,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
       }
       remoteFileMap.delete(expectedPath);
     } else {
-      // 원격에 없는 새 메모 생성
+      // 새 메모 업로드
       const upRes = await uploadFileToGitHub(
         config,
         expectedPath,
@@ -355,7 +309,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
     }
   }
 
-  // 3) 원격에만 있고 로컬에 없는 파일들을 로컬로 다운로드
+  // 3) 원격에만 있고 로컬에 없는 파일들을 다운로드
   for (const [path, remoteFile] of remoteFileMap.entries()) {
     const fileRes = await fetch(remoteFile.url, { headers: getHeaders(config.token) });
     if (!fileRes.ok) continue;
@@ -363,6 +317,11 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
     const fileData = await fileRes.json();
     const rawContent = base64ToUtf8(fileData.content);
     const parsed = parseMarkdownToNote(rawContent);
+
+    // 이미 같은 ID를 가진 메모가 로컬에 있다면 건너뜀 (중복 생성 방지)
+    if (parsed.id && notes.some((n) => n.id === parsed.id)) {
+      continue;
+    }
 
     const relativePath = path.slice(notesDir.length).replace(/^\//, '');
     const segments = relativePath.split('/');
