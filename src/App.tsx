@@ -149,11 +149,12 @@ export function App() {
     return notes.find((n) => n.id === activeNoteId) || null;
   }, [notes, activeNoteId]);
 
-  // 프로젝트 추가 핸들러
-  const handleCreateProject = async (name: string, isLocalOnly: boolean) => {
+  // 프로젝트(폴더) 추가 핸들러 (상위 parentId 지원)
+  const handleCreateProject = async (name: string, isLocalOnly: boolean, parentId?: string | null) => {
     const newProject: Project = {
       id: `proj-${Date.now()}`,
       name,
+      parentId: parentId || null,
       isLocalOnly,
       createdAt: new Date().toISOString(),
     };
@@ -162,12 +163,27 @@ export function App() {
     setActiveProjectId(newProject.id);
   };
 
-  // 프로젝트 삭제 핸들러
+  // 프로젝트 삭제 핸들러 (하위 폴더들도 함께 정리)
   const handleDeleteProject = async (id: string) => {
-    await deleteProject(id);
-    setProjects((prev) => prev.filter((p) => p.id !== id));
-    setNotes((prev) => prev.filter((n) => n.projectId !== id));
-    if (activeProjectId === id) {
+    // 자식 ID 수집 함수
+    const getAllDescendantIds = (rootId: string): string[] => {
+      const children = projects.filter((p) => p.parentId === rootId);
+      let ids = children.map((c) => c.id);
+      for (const child of children) {
+        ids = ids.concat(getAllDescendantIds(child.id));
+      }
+      return ids;
+    };
+
+    const targetIds = [id, ...getAllDescendantIds(id)];
+
+    for (const projId of targetIds) {
+      await deleteProject(projId);
+    }
+
+    setProjects((prev) => prev.filter((p) => !targetIds.includes(p.id)));
+    setNotes((prev) => prev.filter((n) => !targetIds.includes(n.projectId)));
+    if (targetIds.includes(activeProjectId)) {
       setActiveProjectId('ALL');
     }
   };

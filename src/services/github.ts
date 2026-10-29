@@ -1,4 +1,4 @@
-import type { GitHubConfig, Note, SyncSummary } from '../types';
+import type { GitHubConfig, Note, Project, SyncSummary } from '../types';
 import { saveNote, getAllNotes, getAllProjects, saveProject } from './db';
 
 // UTF-8 안전한 Base64 인코딩/디코딩 (한글 및 이모지 깨짐 방지)
@@ -51,12 +51,26 @@ export async function testGitHubConnection(config: GitHubConfig): Promise<{ succ
   }
 }
 
+// 폴더 ID로부터 전체 계층 경로 문자열 구하기 (예: "업무/기획/디자인")
+export function getProjectFolderPath(projectId: string, projects: Project[]): string {
+  const parts: string[] = [];
+  let curr = projects.find((p) => p.id === projectId);
+
+  while (curr) {
+    parts.unshift(curr.name.replace(/[\/\\:*?"<>|]/g, '_'));
+    if (!curr.parentId) break;
+    curr = projects.find((p) => p.id === curr?.parentId);
+  }
+
+  return parts.length > 0 ? parts.join('/') : '기타';
+}
+
 // 마크다운 Frontmatter 파서/시리얼라이저
-export function serializeNoteToMarkdown(note: Note, projectName: string): string {
+export function serializeNoteToMarkdown(note: Note, folderPath: string): string {
   const frontmatter = `---
 id: "${note.id}"
 title: "${note.title.replace(/"/g, '\\"')}"
-project: "${projectName.replace(/"/g, '\\"')}"
+folder: "${folderPath.replace(/"/g, '\\"')}"
 createdAt: "${note.createdAt}"
 updatedAt: "${note.updatedAt}"
 ---
@@ -68,7 +82,7 @@ updatedAt: "${note.updatedAt}"
 export function parseMarkdownToNote(raw: string): {
   id?: string;
   title?: string;
-  projectName?: string;
+  folder?: string;
   content: string;
   createdAt?: string;
   updatedAt?: string;
@@ -77,10 +91,7 @@ export function parseMarkdownToNote(raw: string): {
   const match = raw.match(fmRegex);
 
   if (!match) {
-    // Frontmatter가 없는 일반 마크다운 파일
-    return {
-      content: raw,
-    };
+    return { content: raw };
   }
 
   const fmText = match[1];
@@ -156,6 +167,17 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
   const projects = await getAllProjects();
   const notes = await getAllNotes();
 
+  // 상위 조상 중 하나라도 isLocalOnly이면 true를 반환하는 함수
+  const isChainLocalOnly = (projectId: string): boolean => {
+    let curr = projects.find((p) => p.id === projectId);
+    while (curr) {
+      if (curr.isLocalOnly) return true;
+      if (!curr.parentId) break;
+      curr = projects.find((p) => p.id === curr?.parentId);
+    }
+    return false;
+  };
+
   // 1) 원격 저장소 파일 트리 가져오기
   const notesDir = (config.notesDir || 'notes').replace(/^\/|\/$/g, '');
   const treeUrl = `https://api.github.com/repos/${config.owner}/${config.repo}/git/trees/${config.branch || 'main'}?recursive=1`;
@@ -171,39 +193,28 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
 
   const remoteFileMap = new Map(remoteFiles.map((f) => [f.path, f]));
 
-  // 2) 로컬 메모들을 GitHub로 업로드 (단, isLocalOnly === true는 엄격히 건너뜀!)
+  // 2) 로컬 메모들을 GitHub로 업로드 (단, isLocalOnly 또는 상위 폴더가 로컬 전용이면 제외!)
   for (const note of notes) {
-    if (note.isLocalOnly) {
+    if (note.isLocalOnly || isChainLocalOnly(note.projectId)) {
       summary.skippedLocalOnly++;
       continue;
     }
 
-    const project = projects.find((p) => p.id === note.projectId);
-    // 만약 상위 프로젝트 자체가 기기 전용이라면 이 메모도 건너뜀
-    if (project && project.isLocalOnly) {
-      summary.skippedLocalOnly++;
-      continue;
-    }
-
-    const safeProjName = (project?.name || '기타').replace(/[\/\\:*?"<>|]/g, '_');
+    const folderPath = getProjectFolderPath(note.projectId, projects);
     const safeTitle = (note.title || '제목없음').replace(/[\/\\:*?"<>|]/g, '_');
-    const expectedPath = `${notesDir}/${safeProjName}/${safeTitle}_${note.id.slice(-6)}.md`;
+    const expectedPath = `${notesDir}/${folderPath}/${safeTitle}_${note.id.slice(-6)}.md`;
 
     const remoteFile = remoteFileMap.get(expectedPath);
-    const serializedContent = serializeNoteToMarkdown(note, project?.name || '기타');
+    const serializedContent = serializeNoteToMarkdown(note, folderPath);
 
     if (remoteFile) {
-      // 이미 원격에 파일이 있음
       if (note.githubSha && note.githubSha !== remoteFile.sha && note.syncStatus === 'pending') {
-        // 충돌 감지! (원격도 바뀌었고 로컬도 수정됨)
         summary.conflicts++;
         
-        // 원격 내용 다운로드
         const remoteContentRes = await fetch(remoteFile.url, { headers: getHeaders(config.token) });
         const remoteContentData = await remoteContentRes.json();
         const remoteDecoded = base64ToUtf8(remoteContentData.content);
 
-        // 충돌 사본 메모 생성 (데이터 유실 방지)
         const conflictNote: Note = {
           id: `note-${Date.now()}-conflict`,
           projectId: note.projectId,
@@ -217,7 +228,6 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
         };
         await saveNote(conflictNote);
 
-        // 로컬 원본은 내 변경사항으로 새 sha 반영
         const upRes = await uploadFileToGitHub(
           config,
           expectedPath,
@@ -233,7 +243,6 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
           summary.uploaded++;
         }
       } else if (note.syncStatus === 'pending' || !note.githubSha) {
-        // 로컬 변경사항 업로드
         const upRes = await uploadFileToGitHub(
           config,
           expectedPath,
@@ -249,13 +258,11 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
           summary.uploaded++;
         }
       } else {
-        // 이미 최신 동기화 상태
         note.syncStatus = 'synced';
         await saveNote(note);
       }
       remoteFileMap.delete(expectedPath);
     } else {
-      // 원격에 없는 새 메모 -> 업로드 생성
       const upRes = await uploadFileToGitHub(
         config,
         expectedPath,
@@ -272,7 +279,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
     }
   }
 
-  // 3) 원격에만 있고 로컬에 없는 파일들을 로컬로 다운로드
+  // 3) 원격에만 있고 로컬에 없는 파일들을 로컬로 다운로드 및 폴더 트리 동적 생성
   for (const [path, remoteFile] of remoteFileMap.entries()) {
     const fileRes = await fetch(remoteFile.url, { headers: getHeaders(config.token) });
     if (!fileRes.ok) continue;
@@ -281,23 +288,40 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
     const rawContent = base64ToUtf8(fileData.content);
     const parsed = parseMarkdownToNote(rawContent);
 
-    // 프로젝트 찾기 또는 자동 생성
-    const projName = parsed.projectName || path.split('/')[1] || '원격 메모';
-    let targetProj = projects.find((p) => p.name === projName);
-    if (!targetProj) {
-      targetProj = {
-        id: `proj-${Date.now()}`,
-        name: projName,
-        isLocalOnly: false,
-        createdAt: new Date().toISOString(),
-      };
-      await saveProject(targetProj);
-      projects.push(targetProj);
+    // 경로 파싱: notes/메인폴더/하위폴더/파일명.md
+    const relativePath = path.slice(notesDir.length).replace(/^\//, '');
+    const segments = relativePath.split('/');
+    segments.pop(); // 파일명 제외한 폴더 세그먼트들
+
+    // 폴더 체인 찾기 또는 순차 생성 (최대 3단계: root -> sub1 -> sub2)
+    let parentId: string | null = null;
+    if (segments.length === 0) {
+      // 루트 바로 아래 파일
+      segments.push('빠른 메모');
     }
+
+    for (let i = 0; i < Math.min(segments.length, 3); i++) {
+      const segName = segments[i];
+      let found = projects.find((p) => p.name === segName && (p.parentId || null) === parentId);
+      if (!found) {
+        found = {
+          id: `proj-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          name: segName,
+          parentId: parentId,
+          isLocalOnly: false,
+          createdAt: new Date().toISOString(),
+        };
+        await saveProject(found);
+        projects.push(found);
+      }
+      parentId = found.id;
+    }
+
+    const targetProjectId = parentId || 'proj-default';
 
     const newNote: Note = {
       id: parsed.id || `note-${Date.now()}`,
-      projectId: targetProj.id,
+      projectId: targetProjectId,
       title: parsed.title || path.split('/').pop()?.replace('.md', '') || '제목 없음',
       content: parsed.content,
       isLocalOnly: false,

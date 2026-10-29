@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import type { Note, Project } from '../types';
 import { 
   Plus, 
@@ -35,13 +35,26 @@ export const NoteList: React.FC<NoteListProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
 
-  // 현재 활성화된 프로젝트 정보
+  // 현재 활성화된 프로젝트 정보 및 하위 폴더 ID 목록
   const currentProject = projects.find((p) => p.id === activeProjectId);
   const projectTitle = activeProjectId === 'ALL' ? '전체 메모' : currentProject?.name || '메모';
 
-  // 필터링: 프로젝트별 & 검색어
+  const activeFamilyIds = useMemo(() => {
+    if (activeProjectId === 'ALL') return [];
+    const getDescendants = (rootId: string): string[] => {
+      const children = projects.filter((p) => p.parentId === rootId);
+      let ids = children.map((c) => c.id);
+      for (const child of children) {
+        ids = ids.concat(getDescendants(child.id));
+      }
+      return ids;
+    };
+    return [activeProjectId, ...getDescendants(activeProjectId)];
+  }, [activeProjectId, projects]);
+
+  // 필터링: 프로젝트(하위 포함) & 검색어
   const filteredNotes = notes.filter((note) => {
-    const matchesProject = activeProjectId === 'ALL' || note.projectId === activeProjectId;
+    const matchesProject = activeProjectId === 'ALL' || activeFamilyIds.includes(note.projectId);
     if (!matchesProject) return false;
 
     if (!searchQuery.trim()) return true;

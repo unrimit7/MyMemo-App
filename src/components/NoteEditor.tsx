@@ -1,6 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import type { Note, Project } from '../types';
 import { marked } from 'marked';
+import { compressImageToDataUrl } from '../utils/image';
 import { 
   Lock, 
   Unlock, 
@@ -15,9 +16,11 @@ import {
   CheckSquare, 
   List, 
   Code, 
-  Quote,
+  Quote, 
+  Image as ImageIcon,
   AlertTriangle,
-  Folder
+  Folder,
+  Loader2
 } from 'lucide-react';
 
 interface NoteEditorProps {
@@ -34,9 +37,11 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   onBackToList,
 }) => {
   const [viewMode, setViewMode] = useState<'edit' | 'preview' | 'split'>('edit');
+  const [isProcessingImage, setIsProcessingImage] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 화면 너비에 따라 기본 뷰 모드 자동 조정 (PC 와이드면 split도 가능)
+  // 화면 너비에 따라 기본 뷰 모드 자동 조정
   useEffect(() => {
     if (window.innerWidth >= 1280) {
       setViewMode('split');
@@ -44,6 +49,19 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       setViewMode('edit');
     }
   }, [note?.id]);
+
+  // 폴더 계층 빵가루(Breadcrumb) 계산
+  const folderBreadcrumbs = useMemo(() => {
+    if (!note) return [];
+    const chain: Project[] = [];
+    let curr = projects.find((p) => p.id === note.projectId);
+    while (curr) {
+      chain.unshift(curr);
+      if (!curr.parentId) break;
+      curr = projects.find((p) => p.id === curr?.parentId);
+    }
+    return chain;
+  }, [note?.projectId, projects]);
 
   if (!note) {
     return (
@@ -72,7 +90,6 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
     onUpdateNote({ content: newContent });
 
-    // 커서 위치 재조정
     setTimeout(() => {
       textarea.focus();
       textarea.setSelectionRange(
@@ -82,7 +99,76 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     }, 0);
   };
 
-  // 마크다운 파싱 HTML (안전 렌더링)
+  // 커서 위치에 이미지 Data URL 삽입
+  const insertImageAtCursor = (dataUrl: string, altText: string = '이미지') => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      onUpdateNote({ content: `${note.content}\n\n![${altText}](${dataUrl})\n\n` });
+      return;
+    }
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const imageMarkdown = `\n\n![${altText}](${dataUrl})\n\n`;
+
+    const newContent = 
+      note.content.substring(0, start) + 
+      imageMarkdown + 
+      note.content.substring(end);
+
+    onUpdateNote({ content: newContent });
+
+    setTimeout(() => {
+      textarea.focus();
+      const nextPos = start + imageMarkdown.length;
+      textarea.setSelectionRange(nextPos, nextPos);
+    }, 0);
+  };
+
+  // 1. 붙여넣기(Paste) 이벤트 핸들러 (Ctrl + V 이미지 캡처 지원)
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        e.preventDefault();
+        const blob = items[i].getAsFile();
+        if (!blob) return;
+
+        setIsProcessingImage(true);
+        try {
+          const compressed = await compressImageToDataUrl(blob, 1000, 0.75);
+          insertImageAtCursor(compressed, '캡처 이미지');
+        } catch (err) {
+          console.error('이미지 압축 실패:', err);
+          alert('이미지를 처리하는 중 오류가 발생했습니다.');
+        } finally {
+          setIsProcessingImage(false);
+        }
+        return;
+      }
+    }
+  };
+
+  // 2. 사진 파일 선택 버튼 핸들러
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsProcessingImage(true);
+    try {
+      const compressed = await compressImageToDataUrl(file, 1000, 0.75);
+      insertImageAtCursor(compressed, file.name.replace(/\.[^/.]+$/, ''));
+    } catch (err) {
+      console.error('이미지 업로드 실패:', err);
+      alert('이미지를 불러오지 못했습니다.');
+    } finally {
+      setIsProcessingImage(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const renderMarkdown = (content: string) => {
     try {
       return { __html: marked.parse(content || '') as string };
@@ -93,12 +179,21 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-950 overflow-hidden">
+      {/* 숨겨진 파일 선택 인풋 */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileChange}
+        accept="image/*"
+        className="hidden"
+      />
+
       {/* 충돌 경고 배너 */}
       {note.syncStatus === 'conflict' && (
         <div className="bg-amber-500/15 border-b border-amber-500/30 p-2.5 px-4 flex items-center justify-between text-xs text-amber-300">
           <div className="flex items-center gap-2">
             <AlertTriangle size={15} className="text-amber-400 shrink-0" />
-            <span>다른 기기에서 수정된 내용과 충돌이 감지되어 백업 사본이 별도로 보관되었습니다.</span>
+            <span>원격 수정 내용과의 충돌이 감지되어 백업 사본이 보관되었습니다.</span>
           </div>
           <button
             onClick={() => onUpdateNote({ syncStatus: 'pending' })}
@@ -109,38 +204,40 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         </div>
       )}
 
-      {/* 상단 툴바 1: 내비게이션 & 메타데이터 제어 */}
+      {/* 상단 툴바 1: 내비게이션 & 빵가루 경로 & 로컬 토글 */}
       <div className="p-3 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2 bg-slate-950/70">
-        <div className="flex items-center gap-2">
-          {/* 모바일 목록 복귀 버튼 */}
+        <div className="flex items-center gap-2 min-w-0">
           <button
             onClick={onBackToList}
-            className="md:hidden p-1.5 -ml-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 flex items-center gap-1 text-xs"
+            className="md:hidden p-1.5 -ml-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 flex items-center gap-1 text-xs shrink-0"
           >
             <ArrowLeft size={16} />
             <span>목록</span>
           </button>
 
-          {/* 소속 프로젝트 선택 드롭다운 */}
-          <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-300">
-            <Folder size={12} className="text-indigo-400" />
+          {/* 계층 경로 빵가루 드롭다운 */}
+          <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-300 max-w-[240px] md:max-w-md truncate" title={folderBreadcrumbs.map(b => b.name).join(' > ')}>
+            <Folder size={12} className="text-indigo-400 shrink-0" />
             <select
               value={note.projectId}
               onChange={(e) => onUpdateNote({ projectId: e.target.value })}
-              className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer"
+              className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer truncate max-w-full"
             >
-              {projects.map((p) => (
-                <option key={p.id} value={p.id} className="bg-slate-900 text-slate-200">
-                  {p.isLocalOnly ? `🔒 ${p.name}` : p.name}
-                </option>
-              ))}
+              {projects.map((p) => {
+                const depth = p.parentId ? 1 : 0;
+                const prefix = depth === 1 ? '　└ ' : '';
+                return (
+                  <option key={p.id} value={p.id} className="bg-slate-900 text-slate-200">
+                    {prefix}{p.isLocalOnly ? `🔒 ${p.name}` : p.name}
+                  </option>
+                );
+              })}
             </select>
           </div>
         </div>
 
-        {/* 오른쪽: 기기 전용(로컬) 토글 스위치 & 뷰 모드 전환 */}
-        <div className="flex items-center gap-2">
-          {/* 🔒 기기 전용 토글 버튼 */}
+        {/* 오른쪽: 기기 전용(로컬) 토글 & 뷰 모드 */}
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => onUpdateNote({ isLocalOnly: !note.isLocalOnly })}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
@@ -163,7 +260,6 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             )}
           </button>
 
-          {/* 뷰 모드 전환 버튼들 (편집 / 미리보기 / 분할) */}
           <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5 text-slate-400">
             <button
               onClick={() => setViewMode('edit')}
@@ -196,7 +292,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         </div>
       </div>
 
-      {/* 상단 툴바 2: 마크다운 빠른 서식 버튼바 (모바일/PC 공용) */}
+      {/* 상단 툴바 2: 마크다운 빠른 서식 및 [사진 첨부] 버튼바 */}
       {(viewMode === 'edit' || viewMode === 'split') && (
         <div className="px-3 py-1.5 border-b border-slate-800/60 bg-slate-950/40 flex items-center gap-1 overflow-x-auto text-slate-400 text-xs scrollbar-none">
           <button
@@ -258,6 +354,22 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           >
             <Code size={13} />
           </button>
+          <div className="w-[1px] h-3.5 bg-slate-800 mx-1" />
+
+          {/* 🖼️ 사진 첨부 버튼 */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isProcessingImage}
+            className="p-1 hover:bg-slate-800 text-indigo-400 hover:text-indigo-300 rounded px-2 font-semibold flex items-center gap-1 text-[11px] bg-indigo-500/10 border border-indigo-500/20 active:scale-95"
+            title="커서 위치에 사진/이미지 첨부 (또는 복사 후 Ctrl+V)"
+          >
+            {isProcessingImage ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <ImageIcon size={12} />
+            )}
+            <span>사진 첨부</span>
+          </button>
         </div>
       )}
 
@@ -274,21 +386,20 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
       {/* 본문 영역: 편집창 / 미리보기 / 분할 */}
       <div className="flex-1 flex overflow-hidden p-4 md:px-6 gap-6">
-        {/* 편집 에디터 */}
         {(viewMode === 'edit' || viewMode === 'split') && (
           <div className={`flex-1 flex flex-col h-full ${viewMode === 'split' ? 'border-r border-slate-800/80 pr-6' : ''}`}>
             <textarea
               ref={textareaRef}
               value={note.content}
               onChange={(e) => onUpdateNote({ content: e.target.value })}
-              placeholder="마크다운 문법으로 자유롭게 작성해 보세요..."
+              onPaste={handlePaste}
+              placeholder="마크다운 문법으로 자유롭게 작성해 보세요... 이미지는 Ctrl + V 로 바로 붙여넣을 수 있습니다!"
               className="w-full flex-1 bg-transparent text-slate-200 text-sm md:text-base leading-relaxed resize-none focus:outline-none font-mono placeholder-slate-600 scrollbar-thin"
               spellCheck={false}
             />
           </div>
         )}
 
-        {/* 실시간 마크다운 미리보기 */}
         {(viewMode === 'preview' || viewMode === 'split') && (
           <div className="flex-1 h-full overflow-y-auto markdown-preview prose prose-invert max-w-none pr-2">
             <div dangerouslySetInnerHTML={renderMarkdown(note.content)} />

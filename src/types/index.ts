@@ -1,6 +1,7 @@
 export interface Project {
   id: string;
   name: string;
+  parentId?: string | null; // 상위 폴더 ID (null이면 메인 프로젝트)
   isLocalOnly: boolean; // 기기 전용 여부 (GitHub 동기화에서 배제)
   color?: string;
   createdAt: string;
@@ -10,7 +11,7 @@ export type SyncStatus = 'synced' | 'pending' | 'conflict' | 'local_only' | 'syn
 
 export interface Note {
   id: string;
-  projectId: string;
+  projectId: string; // 소속된 폴더(프로젝트) ID
   title: string;
   content: string;
   isLocalOnly: boolean; // 기기 전용 여부 (true면 GitHub 동기화 제외)
