@@ -43,6 +43,7 @@ export function App() {
   // 모바일 화면 뷰 모드 ('list' 또는 'editor')
   const [mobileScreen, setMobileScreen] = useState<'list' | 'editor'>('list');
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [externalAddTarget, setExternalAddTarget] = useState<{ parentId: string | null; key: number } | null>(null);
 
   // 삭제 확인 모달 상태
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState>({
@@ -387,6 +388,7 @@ export function App() {
         onCloseMobile={() => setIsSidebarOpenMobile(false)}
         canInstall={!!deferredPrompt}
         onInstallApp={handleInstallApp}
+        externalAddTarget={externalAddTarget}
       />
 
       {/* 2단: 메모 목록 (소주제 목록) */}
@@ -403,6 +405,10 @@ export function App() {
           onCreateNote={handleCreateNote}
           onDeleteNote={requestDeleteNote}
           onOpenSidebar={() => setIsSidebarOpenMobile(true)}
+          onRequestCreateSubfolder={(parentId) => {
+            setExternalAddTarget({ parentId, key: Date.now() });
+            setIsSidebarOpenMobile(true);
+          }}
         />
       </div>
 

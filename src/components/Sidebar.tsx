@@ -30,6 +30,7 @@ interface SidebarProps {
   onCloseMobile: () => void;
   onInstallApp?: () => void;
   canInstall?: boolean;
+  externalAddTarget?: { parentId: string | null; key: number } | null;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -47,6 +48,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCloseMobile,
   onInstallApp,
   canInstall,
+  externalAddTarget,
 }) => {
   // 새 폴더 모달/인라인 상태: { parentId: string | null | undefined, isOpen: boolean }
   const [addingTarget, setAddingTarget] = useState<{ parentId: string | null; isOpen: boolean }>({
@@ -55,6 +57,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   });
   const [newProjectName, setNewProjectName] = useState('');
   const [newIsLocalOnly, setNewIsLocalOnly] = useState(false);
+
+  // 외부(NoteList)에서 하위 폴더 생성 트리거 시 폼 열기
+  React.useEffect(() => {
+    if (externalAddTarget) {
+      setAddingTarget({ parentId: externalAddTarget.parentId, isOpen: true });
+      const parent = projects.find((p) => p.id === externalAddTarget.parentId);
+      if (parent) setNewIsLocalOnly(parent.isLocalOnly);
+    }
+  }, [externalAddTarget, projects]);
 
   // 펼쳐진 폴더 ID 세트
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
@@ -177,8 +188,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </span>
           </button>
 
-          {/* 호버 액션: 하위 폴더 추가 (depth < 2일 때만) & 삭제 */}
-          <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity gap-0.5">
+          {/* 상시 표시 액션: 하위 폴더 추가 (depth < 2일 때만) & 삭제 */}
+          <div className="flex items-center opacity-70 group-hover:opacity-100 transition-opacity gap-1 shrink-0">
             {canHaveSubfolder && (
               <button
                 type="button"
@@ -187,10 +198,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   setAddingTarget({ parentId: project.id, isOpen: true });
                   setNewIsLocalOnly(project.isLocalOnly);
                 }}
-                className="p-1 text-slate-400 hover:text-indigo-300 hover:bg-slate-800 rounded"
-                title="하위 폴더 추가"
+                className="p-1.5 text-slate-400 hover:text-indigo-300 hover:bg-slate-700/60 rounded-md transition-colors"
+                title={`${project.name}의 하위 폴더 추가`}
               >
-                <FolderPlus size={13} />
+                <FolderPlus size={14} />
               </button>
             )}
 
@@ -201,10 +212,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   e.stopPropagation();
                   onDeleteProject(project.id);
                 }}
-                className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded"
-                title="삭제"
+                className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-700/60 rounded-md transition-colors"
+                title="폴더 삭제"
               >
-                <X size={13} />
+                <X size={14} />
               </button>
             )}
           </div>

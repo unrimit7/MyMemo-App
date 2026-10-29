@@ -9,7 +9,8 @@ import {
   CloudCheck, 
   CloudUpload,
   Calendar,
-  Trash2
+  Trash2,
+  FolderPlus
 } from 'lucide-react';
 
 interface NoteListProps {
@@ -21,6 +22,7 @@ interface NoteListProps {
   onCreateNote: () => void;
   onDeleteNote: (id: string) => void;
   onOpenSidebar: () => void;
+  onRequestCreateSubfolder?: (parentId: string) => void;
 }
 
 export const NoteList: React.FC<NoteListProps> = ({
@@ -32,6 +34,7 @@ export const NoteList: React.FC<NoteListProps> = ({
   onCreateNote,
   onDeleteNote,
   onOpenSidebar,
+  onRequestCreateSubfolder,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -98,13 +101,26 @@ export const NoteList: React.FC<NoteListProps> = ({
           </div>
         </div>
 
-        <button
-          onClick={onCreateNote}
-          className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-sm transition-all shrink-0 active:scale-95"
-        >
-          <Plus size={15} />
-          <span>새 메모</span>
-        </button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {currentProject && onRequestCreateSubfolder && (
+            <button
+              onClick={() => onRequestCreateSubfolder(currentProject.id)}
+              className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-indigo-300 border border-slate-700/80 rounded-lg text-xs font-semibold shadow-sm transition-all active:scale-95"
+              title={`${currentProject.name}의 하위 폴더 생성`}
+            >
+              <FolderPlus size={14} className="text-indigo-400" />
+              <span className="hidden sm:inline">하위 폴더</span>
+            </button>
+          )}
+
+          <button
+            onClick={onCreateNote}
+            className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-sm transition-all active:scale-95"
+          >
+            <Plus size={15} />
+            <span>새 메모</span>
+          </button>
+        </div>
       </div>
 
       {/* 검색창 */}
