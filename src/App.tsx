@@ -12,7 +12,7 @@ import {
   saveGitHubConfig,
   trackDeletedNote
 } from './services/db';
-import { syncWithGitHub } from './services/github';
+import { syncWithGitHub, getProjectFolderPath } from './services/github';
 import { Sidebar } from './components/Sidebar';
 import { NoteList } from './components/NoteList';
 import { NoteEditor } from './components/NoteEditor';
@@ -367,7 +367,17 @@ export function App() {
     if (type === 'note') {
       const targetNote = notes.find((n) => n.id === id);
       if (targetNote && !targetNote.isLocalOnly) {
-        await trackDeletedNote(targetNote.id, targetNote.githubPath);
+        const folderPath = getProjectFolderPath(targetNote.projectId, projects);
+        const safeTitle = (targetNote.title || '제목없음').replace(/[\/\\:*?"<>|]/g, '_');
+        const notesDir = gitHubConfig?.notesDir || 'notes';
+        const expectedPath = `${notesDir}/${folderPath}/${safeTitle}_${targetNote.id.slice(-6)}.md`;
+        const legacyPath = `${notesDir}/${folderPath}/${safeTitle}.md`;
+
+        await trackDeletedNote(targetNote.id, targetNote.githubPath || expectedPath);
+        if (targetNote.githubPath && targetNote.githubPath !== expectedPath) {
+          await trackDeletedNote(undefined, expectedPath);
+        }
+        await trackDeletedNote(undefined, legacyPath);
       }
       await deleteNote(id);
       const remaining = notes.filter((n) => n.id !== id);

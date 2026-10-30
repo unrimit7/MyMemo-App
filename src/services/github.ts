@@ -291,14 +291,29 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
   const deletedSuccessTombstones: { id?: string; path?: string }[] = [];
 
   for (const t of tombstones) {
-    if (t.path && remoteFileMap.has(t.path)) {
-      const remoteTarget = remoteFileMap.get(t.path)!;
-      const delRes = await deleteFileFromGitHub(config, t.path, remoteTarget.sha, `Delete note: ${t.path}`);
+    let targetPath = t.path;
+    let targetFile = t.path ? remoteFileMap.get(t.path) : undefined;
+
+    // 경로로 바로 못 찾았다면 idSuffix로 찾기
+    if (!targetFile && t.id) {
+      const idSuffix = `_${t.id.slice(-6)}.md`;
+      for (const [p, f] of remoteFileMap.entries()) {
+        if (p.endsWith(idSuffix)) {
+          targetFile = f;
+          targetPath = p;
+          break;
+        }
+      }
+    }
+
+    if (targetFile && targetPath) {
+      const delRes = await deleteFileFromGitHub(config, targetPath, targetFile.sha, `Delete note: ${targetPath}`);
       if (delRes.success) {
-        remoteFileMap.delete(t.path);
+        remoteFileMap.delete(targetPath);
         deletedSuccessTombstones.push(t);
       }
-    } else if (t.path && !remoteFileMap.has(t.path)) {
+    } else {
+      // 원격에도 이미 존재하지 않으면 처리 완료로 간주
       deletedSuccessTombstones.push(t);
     }
   }
@@ -314,8 +329,9 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
     const safeTitle = (note.title || '제목없음').replace(/[\/\\:*?"<>|]/g, '_');
     const expectedPath = `${notesDir}/${folderPath}/${safeTitle}_${note.id.slice(-6)}.md`;
     const idSuffix = `_${note.id.slice(-6)}.md`;
+    const legacyPath = `${notesDir}/${folderPath}/${safeTitle}.md`;
 
-    // 1. 해당 로컬 메모와 일치하는 원격 파일 찾기 (경로 또는 ID 접미사 기준)
+    // 1. 해당 로컬 메모와 일치하는 원격 파일 찾기 (경로, ID 접미사, 또는 레거시 경로 기준)
     let remoteFile = remoteFileMap.get(expectedPath);
     let remotePath = expectedPath;
 
@@ -334,6 +350,11 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
       }
     }
 
+    if (!remoteFile && remoteFileMap.has(legacyPath)) {
+      remoteFile = remoteFileMap.get(legacyPath);
+      remotePath = legacyPath;
+    }
+
     const serializedContent = serializeNoteToMarkdown(note, folderPath);
 
     if (remoteFile) {
@@ -341,6 +362,12 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
       remoteFileMap.delete(remotePath);
       if (note.githubPath && note.githubPath !== remotePath) {
         remoteFileMap.delete(note.githubPath);
+      }
+      if (remoteFileMap.has(legacyPath)) {
+        // 구버전 파일이 원격에 따로 남아있다면 원격에서 즉시 정리하여 좀비 방지!
+        const legacyTarget = remoteFileMap.get(legacyPath)!;
+        await deleteFileFromGitHub(config, legacyPath, legacyTarget.sha, `Clean legacy duplicate: ${legacyPath}`);
+        remoteFileMap.delete(legacyPath);
       }
 
       const isRemoteChanged = note.githubSha !== remoteFile.sha;
@@ -471,7 +498,9 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
 
     // ★ 핵심: 로컬 톰스톤(삭제 기록)에 있는 메모인지 확인!
     const isDeletedLocally = tombstones.some(
-      (t) => (parsed.id && t.id === parsed.id) || (t.path && t.path === path)
+      (t) => (parsed.id && t.id === parsed.id) || 
+             (t.path && t.path === path) ||
+             (t.id && path.endsWith(`_${t.id.slice(-6)}.md`))
     );
     if (isDeletedLocally) {
       // 로컬에서 이미 삭제된 메모가 원격에 남아있는 경우 원격 파일도 삭제하고 다운로드하지 않음!
@@ -482,32 +511,72 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
       continue;
     }
 
-    // 만약 로컬에 이미 같은 ID를 가진 메모가 있다면 내용 갱신
+    // ★ 1. 만약 로컬에 이미 같은 ID를 가진 메모가 있다면 타임스탬프 비교 갱신
     const existingLocalNote = parsed.id ? notes.find((n) => n.id === parsed.id) : null;
     if (existingLocalNote) {
-      existingLocalNote.title = parsed.title || existingLocalNote.title;
-      existingLocalNote.content = parsed.content;
-      existingLocalNote.attachments = parsed.attachments;
-      existingLocalNote.githubSha = remoteFile.sha;
-      existingLocalNote.githubPath = path;
-      existingLocalNote.updatedAt = parsed.updatedAt || new Date().toISOString();
-      existingLocalNote.syncStatus = 'synced';
-      await saveNote(existingLocalNote);
-      summary.downloaded++;
+      const localTime = new Date(existingLocalNote.updatedAt || 0).getTime();
+      const remoteTime = new Date(parsed.updatedAt || 0).getTime();
+
+      if (remoteTime > localTime) {
+        existingLocalNote.title = parsed.title || existingLocalNote.title;
+        existingLocalNote.content = parsed.content;
+        existingLocalNote.attachments = parsed.attachments;
+        existingLocalNote.githubSha = remoteFile.sha;
+        existingLocalNote.githubPath = path;
+        existingLocalNote.updatedAt = parsed.updatedAt || new Date().toISOString();
+        existingLocalNote.syncStatus = 'synced';
+        await saveNote(existingLocalNote);
+        summary.downloaded++;
+      } else {
+        // 로컬이 더 최신이면 이전 경로의 원격 잔여 파일 정리
+        if (existingLocalNote.githubPath && existingLocalNote.githubPath !== path) {
+          await deleteFileFromGitHub(config, path, remoteFile.sha, `Remove obsolete duplicate: ${path}`);
+        }
+      }
       continue;
     }
 
+    // ★ 2. 제목 기반 매칭: 동일 제목 메모가 로컬에 이미 존재하는 경우 중복 신규 생성 차단!
     const relativePath = path.slice(notesDir.length).replace(/^\//, '');
     const segments = relativePath.split('/');
-    segments.pop();
+    const remoteFileName = segments.pop()?.replace('.md', '') || '';
+    const cleanRemoteTitle = (parsed.title || remoteFileName).replace(/_\w{6}$/, '');
 
-    let parentId: string | null = null;
-    if (segments.length === 0) {
-      segments.push('빠른 메모');
+    const existingByTitle = notes.find((n) => {
+      const nTitleClean = n.title.replace(/_\w{6}$/, '');
+      return nTitleClean === cleanRemoteTitle;
+    });
+
+    if (existingByTitle) {
+      const localTime = new Date(existingByTitle.updatedAt || 0).getTime();
+      const remoteTime = new Date(parsed.updatedAt || 0).getTime();
+
+      if (remoteTime > localTime) {
+        existingByTitle.content = parsed.content;
+        existingByTitle.attachments = parsed.attachments;
+        existingByTitle.updatedAt = parsed.updatedAt || new Date().toISOString();
+        existingByTitle.githubSha = remoteFile.sha;
+        existingByTitle.githubPath = path;
+        existingByTitle.syncStatus = 'synced';
+        await saveNote(existingByTitle);
+        summary.downloaded++;
+      } else {
+        // 로컬이 최신 상태이므로 원격의 중복 잔여 파일 삭제!
+        await deleteFileFromGitHub(config, path, remoteFile.sha, `Remove legacy duplicate: ${path}`);
+      }
+      continue;
     }
 
-    for (let i = 0; i < Math.min(segments.length, 3); i++) {
-      const segName = segments[i];
+    const folderSegments = path.slice(notesDir.length).replace(/^\//, '').split('/');
+    folderSegments.pop();
+
+    let parentId: string | null = null;
+    if (folderSegments.length === 0) {
+      folderSegments.push('빠른 메모');
+    }
+
+    for (let i = 0; i < Math.min(folderSegments.length, 3); i++) {
+      const segName = folderSegments[i];
       let found = projects.find((p) => p.name === segName && (p.parentId || null) === parentId);
       if (!found) {
         found = {
