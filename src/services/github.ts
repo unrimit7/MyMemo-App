@@ -286,6 +286,32 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
 
   const remoteFileMap = new Map(remoteFiles.map((f) => [f.path, f]));
 
+  // 1-1) 원격 폴더 구조(.folders.json) 동기화: 메모가 0개인 빈 폴더도 기기 간에 사라지지 않도록 복원
+  const foldersJsonFile = (treeData.tree || []).find(
+    (item: any) => item.type === 'blob' && item.path === `${notesDir}/.folders.json`
+  );
+
+  if (foldersJsonFile) {
+    try {
+      const foldersRes = await fetch(foldersJsonFile.url, { headers: getHeaders(config.token) });
+      if (foldersRes.ok) {
+        const foldersData = await foldersRes.json();
+        const rawFolders = base64ToUtf8(foldersData.content);
+        const remoteProjects: Project[] = JSON.parse(rawFolders);
+
+        for (const rp of remoteProjects) {
+          const localExists = projects.find((p) => p.id === rp.id || (p.name === rp.name && p.parentId === rp.parentId));
+          if (!localExists) {
+            await saveProject(rp);
+            projects.push(rp);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('원격 폴더 구조 로드 실패:', e);
+    }
+  }
+
   // 1-2) 톰스톤(삭제 큐) 처리: 로컬에서 삭제된 파일들을 원격에서도 확실히 제거
   const tombstones = await getDeletedTombstones();
   const deletedSuccessTombstones: { id?: string; path?: string }[] = [];
@@ -615,6 +641,23 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
   // 성공적으로 처리된 톰스톤 정리
   if (deletedSuccessTombstones.length > 0) {
     await clearDeletedTombstones(deletedSuccessTombstones);
+  }
+
+  // 4) 원격에 전체 폴더 구조(.folders.json) 동기화 보관 (메모가 하나도 없는 빈 폴더도 기기 간 완벽 유지)
+  try {
+    const syncableProjects = projects.filter((p) => !p.isLocalOnly);
+    const serializedProjects = JSON.stringify(syncableProjects, null, 2);
+    const foldersPath = `${notesDir}/.folders.json`;
+
+    await uploadFileToGitHub(
+      config,
+      foldersPath,
+      serializedProjects,
+      'Sync folder structure',
+      foldersJsonFile?.sha
+    );
+  } catch (e) {
+    console.warn('원격 폴더 목록 업로드 실패:', e);
   }
 
   return summary;
