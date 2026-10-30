@@ -208,9 +208,70 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     }, 0);
   };
 
+  // 체크박스(- [ ] <-> - [x]) 토글 함수 (현재 커서 라인 또는 선택된 여러 줄 일괄 토글)
+  const toggleCheckboxAtCursor = () => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = localContent;
+
+    // 선택 영역이 걸쳐 있는 모든 라인의 시작과 끝 인덱스 찾기
+    const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+    let lineEnd = text.indexOf('\n', end);
+    if (lineEnd === -1) lineEnd = text.length;
+
+    const selectedBlock = text.substring(lineStart, lineEnd);
+    const lines = selectedBlock.split('\n');
+
+    const newLines = lines.map((line) => {
+      // 1. 이미 - [ ] 형태인 경우 -> - [x] 로 변경 (체크)
+      if (/^(\s*-\s*)\[\s*\](.*)$/.test(line)) {
+        return line.replace(/^(\s*-\s*)\[\s*\]/, '$1[x]');
+      }
+      // 2. 이미 - [x] 형태인 경우 -> - [ ] 로 변경 (해제)
+      if (/^(\s*-\s*)\[[xX]\](.*)$/.test(line)) {
+        return line.replace(/^(\s*-\s*)\[[xX]\]/, '$1[ ]');
+      }
+      // 3. - 글머리 기호만 있는 경우 -> - [ ] 추가
+      if (/^(\s*-\s+)(.*)$/.test(line)) {
+        return line.replace(/^(\s*-\s+)/, '$1[ ] ');
+      }
+      // 4. 일반 텍스트 줄인 경우 -> 줄 앞에 - [ ] 추가
+      if (line.trim().length > 0) {
+        return `- [ ] ${line}`;
+      }
+      return line;
+    });
+
+    const replacedBlock = newLines.join('\n');
+    const newContent = text.substring(0, lineStart) + replacedBlock + text.substring(lineEnd);
+
+    setLocalContent(newContent);
+    debouncedSyncToParent({ content: newContent });
+
+    // 커서 위치 복원
+    setTimeout(() => {
+      textarea.focus();
+      const lengthDiff = replacedBlock.length - selectedBlock.length;
+      textarea.setSelectionRange(
+        Math.max(lineStart, start),
+        Math.max(lineStart, end + lengthDiff)
+      );
+    }, 0);
+  };
+
   // PC 작성 편의를 위한 키보드 단축키 핸들러
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+    // Ctrl + Enter 또는 Alt + Enter: 체크박스 토글 (- [ ] <-> - [x])
+    if ((isCtrlOrCmd || e.altKey) && e.key === 'Enter') {
+      e.preventDefault();
+      toggleCheckboxAtCursor();
+      return;
+    }
 
     // Tab 키 처리 (들여쓰기 2칸)
     if (e.key === 'Tab') {
@@ -798,6 +859,10 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             
             <div className="py-3 space-y-2 text-xs">
               <div className="grid grid-cols-2 gap-2">
+                <div className="flex items-center justify-between p-2 bg-indigo-950/40 rounded-lg border border-indigo-500/30 col-span-2">
+                  <span className="text-indigo-300 font-semibold">체크박스 체크 / 해제 토글</span>
+                  <kbd className="px-2 py-0.5 bg-indigo-600 border border-indigo-400 text-white rounded font-mono text-[11px] font-bold">Ctrl + Enter</kbd>
+                </div>
                 <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
                   <span className="text-slate-400">굵게 (Bold)</span>
                   <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl + B</kbd>
