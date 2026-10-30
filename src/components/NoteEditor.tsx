@@ -43,6 +43,7 @@ interface NoteEditorProps {
   onToggleSidebar?: () => void;
   isNoteListCollapsed?: boolean;
   onToggleNoteList?: () => void;
+  onSync?: () => void;
 }
 
 export const NoteEditor: React.FC<NoteEditorProps> = ({
@@ -55,6 +56,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   onToggleSidebar,
   isNoteListCollapsed,
   onToggleNoteList,
+  onSync,
 }) => {
   const [viewMode, setViewMode] = useState<'edit' | 'preview' | 'split'>('edit');
   const [isProcessingImage, setIsProcessingImage] = useState(false);
@@ -266,6 +268,17 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   // PC 작성 편의를 위한 키보드 단축키 핸들러
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+    // Ctrl + S: 현재 작성 중인 내용 즉시 확정 저장 후 GitHub 동기화
+    if (isCtrlOrCmd && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      if (updateTimerRef.current) {
+        clearTimeout(updateTimerRef.current);
+      }
+      onUpdateNote({ content: localContent, title: localTitle });
+      onSync?.();
+      return;
+    }
 
     // Ctrl + Enter 또는 Alt + Enter: 체크박스 토글 (- [ ] <-> - [x])
     if ((isCtrlOrCmd || e.altKey) && e.key === 'Enter') {
@@ -873,6 +886,10 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             
             <div className="py-3 space-y-2 text-xs">
               <div className="grid grid-cols-2 gap-2">
+                <div className="flex items-center justify-between p-2 bg-indigo-950/40 rounded-lg border border-indigo-500/30 col-span-2">
+                  <span className="text-indigo-300 font-semibold">GitHub 동기화 (클라우드 저장)</span>
+                  <kbd className="px-2 py-0.5 bg-indigo-600 border border-indigo-400 text-white rounded font-mono text-[11px] font-bold">Ctrl + S</kbd>
+                </div>
                 <div className="flex items-center justify-between p-2 bg-indigo-950/40 rounded-lg border border-indigo-500/30 col-span-2">
                   <span className="text-indigo-300 font-semibold">체크박스 체크 / 해제 토글</span>
                   <kbd className="px-2 py-0.5 bg-indigo-600 border border-indigo-400 text-white rounded font-mono text-[11px] font-bold">Ctrl + Enter</kbd>

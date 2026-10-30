@@ -525,6 +525,25 @@ export function App() {
     runSync(false);
   };
 
+  // 전역 단축키 핸들러 (Ctrl + S: 언제 어디서나 GitHub 동기화 실행)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+      if (isCtrlOrCmd && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        // 메모 에디터(textarea)에 포커스가 있을 때는 NoteEditor 내부 onKeyDown에서 최신 타이핑 버퍼를 즉시 플러시 후 onSync를 부르므로 중복 실행 방지
+        const activeEl = document.activeElement;
+        const isEditingNote = activeEl && activeEl.tagName === 'TEXTAREA';
+        if (!isEditingNote) {
+          handleManualSync();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [runSync]);
+
   // 설정 저장 핸들러
   const handleSaveConfig = async (newConfig: GitHubConfig) => {
     await saveGitHubConfig(newConfig);
@@ -612,6 +631,7 @@ export function App() {
           onToggleSidebar={toggleSidebar}
           isNoteListCollapsed={isNoteListCollapsed}
           onToggleNoteList={toggleNoteList}
+          onSync={handleManualSync}
         />
       </div>
 
