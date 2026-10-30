@@ -24,7 +24,8 @@ import {
   AlertTriangle,
   Folder,
   Loader2,
-  Trash2
+  Trash2,
+  PanelLeftOpen
 } from 'lucide-react';
 
 interface NoteEditorProps {
@@ -33,6 +34,10 @@ interface NoteEditorProps {
   onUpdateNote: (updated: Partial<Note>) => void;
   onBackToList: () => void;
   onDeleteNote?: (id: string) => void;
+  isSidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
+  isNoteListCollapsed?: boolean;
+  onToggleNoteList?: () => void;
 }
 
 export const NoteEditor: React.FC<NoteEditorProps> = ({
@@ -41,6 +46,10 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   onUpdateNote,
   onBackToList,
   onDeleteNote,
+  isSidebarCollapsed,
+  onToggleSidebar,
+  isNoteListCollapsed,
+  onToggleNoteList,
 }) => {
   const [viewMode, setViewMode] = useState<'edit' | 'preview' | 'split'>('edit');
   const [isProcessingImage, setIsProcessingImage] = useState(false);
@@ -362,6 +371,30 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             <ArrowLeft size={16} />
             <span>목록</span>
           </button>
+
+          {/* 데스크톱: 좌측 패널(사이드바, 메모목록) 접힘 상태일 때 펼치기 토글 버튼 */}
+          <div className="hidden md:flex items-center gap-1.5 mr-1 shrink-0">
+            {isSidebarCollapsed && onToggleSidebar && (
+              <button
+                onClick={onToggleSidebar}
+                className="p-1.5 text-slate-400 hover:text-indigo-300 hover:bg-slate-900 border border-slate-800/90 rounded-lg transition-colors flex items-center gap-1 text-xs shadow-sm"
+                title="사이드바(폴더 목록) 펼치기"
+              >
+                <Folder size={13} className="text-indigo-400" />
+                <span className="font-medium text-[11px]">폴더 펼치기</span>
+              </button>
+            )}
+            {isNoteListCollapsed && onToggleNoteList && (
+              <button
+                onClick={onToggleNoteList}
+                className="p-1.5 text-slate-400 hover:text-indigo-300 hover:bg-slate-900 border border-slate-800/90 rounded-lg transition-colors flex items-center gap-1 text-xs shadow-sm"
+                title="메모 목록 펼치기"
+              >
+                <PanelLeftOpen size={14} className="text-indigo-400" />
+                <span className="font-medium text-[11px]">목록 펼치기</span>
+              </button>
+            )}
+          </div>
 
           {/* 계층 경로 빵가루 드롭다운 */}
           <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-300 max-w-[240px] md:max-w-md truncate" title={folderBreadcrumbs.map(b => b.name).join(' > ')}>

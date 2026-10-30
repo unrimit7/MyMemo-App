@@ -46,6 +46,30 @@ export function App() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [externalAddTarget, setExternalAddTarget] = useState<{ parentId: string | null; key: number } | null>(null);
 
+  // 데스크톱 좌측 패널(사이드바, 메모목록) 접기/펼치기 상태
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    return localStorage.getItem('mymemo_sidebar_collapsed') === 'true';
+  });
+  const [isNoteListCollapsed, setIsNoteListCollapsed] = useState<boolean>(() => {
+    return localStorage.getItem('mymemo_notelist_collapsed') === 'true';
+  });
+
+  const toggleSidebar = () => {
+    setIsSidebarCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem('mymemo_sidebar_collapsed', String(next));
+      return next;
+    });
+  };
+
+  const toggleNoteList = () => {
+    setIsNoteListCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem('mymemo_notelist_collapsed', String(next));
+      return next;
+    });
+  };
+
   // 삭제 확인 모달 상태
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState>({
     isOpen: false,
@@ -468,11 +492,14 @@ export function App() {
         onInstallApp={handleInstallApp}
         externalAddTarget={externalAddTarget}
         onDropFilesToProject={handleDropFilesToProject}
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={toggleSidebar}
       />
 
       {/* 2단: 메모 목록 (소주제 목록) */}
       <div className={`
-        ${mobileScreen === 'list' ? 'flex' : 'hidden'} md:flex
+        ${mobileScreen === 'list' ? 'flex' : 'hidden'} 
+        ${isNoteListCollapsed ? 'md:hidden' : 'md:flex'}
         w-full md:w-80 lg:w-96 h-full shrink-0
       `}>
         <NoteList
@@ -491,6 +518,9 @@ export function App() {
             setIsSidebarOpenMobile(true);
           }}
           onDropFiles={(files) => handleDropFilesToProject(activeProjectId, files)}
+          isSidebarCollapsed={isSidebarCollapsed}
+          onToggleSidebar={toggleSidebar}
+          onToggleCollapse={toggleNoteList}
         />
       </div>
 
@@ -505,6 +535,10 @@ export function App() {
           onUpdateNote={handleUpdateNote}
           onBackToList={() => setMobileScreen('list')}
           onDeleteNote={requestDeleteNote}
+          isSidebarCollapsed={isSidebarCollapsed}
+          onToggleSidebar={toggleSidebar}
+          isNoteListCollapsed={isNoteListCollapsed}
+          onToggleNoteList={toggleNoteList}
         />
       </div>
 

@@ -13,7 +13,9 @@ import {
   FolderPlus,
   Folder,
   ChevronRight,
-  ChevronLeft
+  ChevronLeft,
+  PanelLeftClose,
+  PanelLeftOpen
 } from 'lucide-react';
 
 interface NoteListProps {
@@ -29,6 +31,9 @@ interface NoteListProps {
   onOpenSidebar: () => void;
   onRequestCreateSubfolder?: (parentId: string) => void;
   onDropFiles?: (files: FileList) => void;
+  isSidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
+  onToggleCollapse?: () => void;
 }
 
 export const NoteList: React.FC<NoteListProps> = ({
@@ -44,6 +49,9 @@ export const NoteList: React.FC<NoteListProps> = ({
   onOpenSidebar,
   onRequestCreateSubfolder,
   onDropFiles,
+  isSidebarCollapsed,
+  onToggleSidebar,
+  onToggleCollapse,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isDragOverList, setIsDragOverList] = useState(false);
@@ -120,6 +128,17 @@ export const NoteList: React.FC<NoteListProps> = ({
             <Menu size={20} />
           </button>
 
+          {/* 데스크톱: 사이드바가 접혀있을 때 사이드바 펼치기 버튼 */}
+          {isSidebarCollapsed && onToggleSidebar && (
+            <button
+              onClick={onToggleSidebar}
+              className="hidden md:flex p-1.5 -ml-1 text-slate-400 hover:text-indigo-300 hover:bg-slate-800 rounded-lg transition-colors items-center gap-1 text-xs shrink-0"
+              title="사이드바(폴더) 펼치기"
+            >
+              <PanelLeftOpen size={16} className="text-indigo-400" />
+            </button>
+          )}
+
           {/* 상위 폴더가 있을 경우 뒤로가기 버튼 */}
           {parentProject && (
             <button
@@ -162,6 +181,17 @@ export const NoteList: React.FC<NoteListProps> = ({
             <Plus size={15} />
             <span>새 메모</span>
           </button>
+
+          {/* 데스크톱: 메모 목록 접기 버튼 */}
+          {onToggleCollapse && (
+            <button
+              onClick={onToggleCollapse}
+              className="hidden md:flex p-1.5 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-lg transition-colors ml-0.5"
+              title="메모 목록 접기"
+            >
+              <PanelLeftClose size={16} />
+            </button>
+          )}
         </div>
       </div>
 

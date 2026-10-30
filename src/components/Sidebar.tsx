@@ -13,7 +13,8 @@ import {
   Download,
   ChevronRight,
   ChevronDown,
-  Pencil
+  Pencil,
+  PanelLeftClose
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -34,6 +35,8 @@ interface SidebarProps {
   canInstall?: boolean;
   externalAddTarget?: { parentId: string | null; key: number } | null;
   onDropFilesToProject?: (projectId: string, files: FileList) => void;
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -54,6 +57,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   canInstall,
   externalAddTarget,
   onDropFilesToProject,
+  isCollapsed,
+  onToggleCollapse,
 }) => {
   // 드래그 오버 중인 폴더 ID
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
@@ -350,8 +355,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <aside className={`
         fixed md:static inset-y-0 left-0 z-50
         w-72 bg-slate-950 border-r border-slate-800
-        flex flex-col h-full transition-transform duration-200 ease-in-out
+        flex flex-col h-full transition-all duration-200 ease-in-out
         ${isOpenMobile ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+        ${isCollapsed ? 'md:hidden' : 'md:flex'}
       `}>
         {/* 상단 타이틀 */}
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
@@ -359,12 +365,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <h1 className="font-bold text-slate-100 text-base leading-tight">MyMemo</h1>
             <p className="text-xs text-slate-400">계층형 폴더 & Private Sync</p>
           </div>
-          <button 
-            onClick={onCloseMobile}
-            className="md:hidden text-slate-400 hover:text-white p-1 rounded-lg"
-          >
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-1">
+            {onToggleCollapse && (
+              <button
+                onClick={onToggleCollapse}
+                className="hidden md:flex p-1.5 text-slate-400 hover:text-slate-100 hover:bg-slate-900 rounded-lg transition-colors"
+                title="사이드바(폴더) 접기"
+              >
+                <PanelLeftClose size={18} />
+              </button>
+            )}
+            <button 
+              onClick={onCloseMobile}
+              className="md:hidden text-slate-400 hover:text-white p-1 rounded-lg"
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         {/* 프로젝트 목록 헤더 */}
