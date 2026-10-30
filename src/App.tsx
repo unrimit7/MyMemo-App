@@ -234,6 +234,7 @@ export function App() {
         projectId: targetProjId,
         title: processed.title,
         content: processed.content,
+        attachments: processed.attachments,
         isLocalOnly,
         syncStatus: isLocalOnly ? 'local_only' : 'pending',
         createdAt: new Date().toISOString(),

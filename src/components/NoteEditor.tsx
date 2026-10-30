@@ -3,6 +3,8 @@ import type { Note, Project } from '../types';
 import { marked } from 'marked';
 import { compressImageToDataUrl } from '../utils/image';
 import { processFileForNote } from '../utils/file';
+import { cleanLegacyAttachments, renderAttachmentsInHtml } from '../utils/attachment';
+import type { AttachmentItem } from '../types';
 import { 
   Lock, 
   Unlock, 
@@ -52,11 +54,20 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const updateTimerRef = useRef<any>(null);
 
-  // 메모가 변경(ID 변경)될 때만 로컬 버퍼를 새 메모 내용으로 동기화
+  // 메모가 변경(ID 변경)될 때 로컬 버퍼 동기화 및 기존 레거시 거대 Base64 자동 정리
   useEffect(() => {
     if (note) {
       setLocalTitle(note.title);
-      setLocalContent(note.content);
+
+      const { content: cleanedContent, attachments: cleanedAttachments, hasChanges } = cleanLegacyAttachments(
+        note.content,
+        note.attachments
+      );
+      setLocalContent(cleanedContent);
+
+      if (hasChanges) {
+        onUpdateNote({ content: cleanedContent, attachments: cleanedAttachments });
+      }
     }
   }, [note?.id]);
 
@@ -143,15 +154,33 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     }, 0);
   };
 
-  // 커서 위치에 이미지 Data URL 삽입
-  const insertImageAtCursor = (dataUrl: string, altText: string = '이미지') => {
-    const textarea = textareaRef.current;
-    const imageMarkdown = `\n\n![${altText}](${dataUrl})\n\n`;
+  // 커서 위치에 첨부파일을 깔끔한 단일 줄 태그로 삽입하고 data는 note.attachments에 보관
+  const insertAttachmentAtCursor = (
+    attName: string,
+    dataUrl: string,
+    mimeType: string = 'image/webp'
+  ) => {
+    const attId = `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const updatedAttachments: Record<string, AttachmentItem> = {
+      ...(note?.attachments || {}),
+      [attId]: {
+        id: attId,
+        name: attName,
+        type: mimeType,
+        data: dataUrl,
+      },
+    };
 
+    const isPdf = mimeType === 'application/pdf' || attName.endsWith('.pdf');
+    const insertTag = isPdf
+      ? `\n\n[📄 PDF: ${attName}](attachment:${attId})\n\n`
+      : `\n\n![${attName}](attachment:${attId})\n\n`;
+
+    const textarea = textareaRef.current;
     if (!textarea) {
-      const newContent = `${localContent}${imageMarkdown}`;
+      const newContent = `${localContent}${insertTag}`;
       setLocalContent(newContent);
-      onUpdateNote({ content: newContent });
+      onUpdateNote({ content: newContent, attachments: updatedAttachments });
       return;
     }
 
@@ -160,15 +189,15 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
     const newContent = 
       localContent.substring(0, start) + 
-      imageMarkdown + 
+      insertTag + 
       localContent.substring(end);
 
     setLocalContent(newContent);
-    onUpdateNote({ content: newContent });
+    onUpdateNote({ content: newContent, attachments: updatedAttachments });
 
     setTimeout(() => {
       textarea.focus();
-      const nextPos = start + imageMarkdown.length;
+      const nextPos = start + insertTag.length;
       textarea.setSelectionRange(nextPos, nextPos);
     }, 0);
   };
@@ -187,7 +216,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         setIsProcessingImage(true);
         try {
           const compressed = await compressImageToDataUrl(blob, 1000, 0.75);
-          insertImageAtCursor(compressed, '캡처 이미지');
+          insertAttachmentAtCursor('캡처 이미지', compressed, 'image/webp');
         } catch (err) {
           console.error('이미지 압축 실패:', err);
           alert('이미지를 처리하는 중 오류가 발생했습니다.');
@@ -207,7 +236,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     setIsProcessingImage(true);
     try {
       const compressed = await compressImageToDataUrl(file, 1000, 0.75);
-      insertImageAtCursor(compressed, file.name.replace(/\.[^/.]+$/, ''));
+      insertAttachmentAtCursor(file.name.replace(/\.[^/.]+$/, ''), compressed, file.type || 'image/webp');
     } catch (err) {
       console.error('이미지 업로드 실패:', err);
       alert('이미지를 불러오지 못했습니다.');
@@ -234,16 +263,21 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         const textarea = textareaRef.current;
         const insertText = `\n\n${processed.content}\n\n`;
 
+        const mergedAttachments: Record<string, AttachmentItem> = {
+          ...(note?.attachments || {}),
+          ...(processed.attachments || {}),
+        };
+
         if (!textarea) {
           const newContent = `${localContent}${insertText}`;
           setLocalContent(newContent);
-          onUpdateNote({ content: newContent });
+          onUpdateNote({ content: newContent, attachments: mergedAttachments });
         } else {
           const start = textarea.selectionStart;
           const end = textarea.selectionEnd;
           const newContent = localContent.substring(0, start) + insertText + localContent.substring(end);
           setLocalContent(newContent);
-          onUpdateNote({ content: newContent });
+          onUpdateNote({ content: newContent, attachments: mergedAttachments });
         }
       } catch (err) {
         console.error('파일 드롭 처리 실패:', err);
@@ -255,7 +289,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
   const renderMarkdown = (content: string) => {
     try {
-      return { __html: marked.parse(content || '') as string };
+      const rawHtml = marked.parse(content || '') as string;
+      return { __html: renderAttachmentsInHtml(rawHtml, note?.attachments) };
     } catch {
       return { __html: '<p>마크다운을 렌더링할 수 없습니다.</p>' };
     }

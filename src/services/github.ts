@@ -1,4 +1,5 @@
-import type { GitHubConfig, Note, Project, SyncSummary } from '../types';
+import type { AttachmentItem, GitHubConfig, Note, Project, SyncSummary } from '../types';
+import { cleanLegacyAttachments } from '../utils/attachment';
 import { 
   saveNote, 
   deleteNote,
@@ -96,7 +97,12 @@ updatedAt: "${note.updatedAt}"
 ---
 
 `;
-  return frontmatter + note.content;
+  let body = note.content;
+  if (note.attachments && Object.keys(note.attachments).length > 0) {
+    const serializedAtts = JSON.stringify(note.attachments);
+    body += `\n\n<!-- MYMEMO_ATTACHMENTS:\n${serializedAtts}\n:MYMEMO_ATTACHMENTS -->\n`;
+  }
+  return frontmatter + body;
 }
 
 export function parseMarkdownToNote(raw: string): {
@@ -104,32 +110,53 @@ export function parseMarkdownToNote(raw: string): {
   title?: string;
   folder?: string;
   content: string;
+  attachments?: Record<string, AttachmentItem>;
   createdAt?: string;
   updatedAt?: string;
 } {
   const fmRegex = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
   const match = raw.match(fmRegex);
 
-  if (!match) {
-    return { content: raw };
+  let rawContent = raw;
+  const result: any = {};
+
+  if (match) {
+    const fmText = match[1];
+    rawContent = match[2];
+
+    fmText.split('\n').forEach((line) => {
+      const colonIdx = line.indexOf(':');
+      if (colonIdx !== -1) {
+        const key = line.slice(0, colonIdx).trim();
+        let val = line.slice(colonIdx + 1).trim();
+        if (val.startsWith('"') && val.endsWith('"')) {
+          val = val.slice(1, -1);
+        }
+        result[key] = val;
+      }
+    });
   }
 
-  const fmText = match[1];
-  const content = match[2];
-  const result: any = { content };
-
-  fmText.split('\n').forEach((line) => {
-    const colonIdx = line.indexOf(':');
-    if (colonIdx !== -1) {
-      const key = line.slice(0, colonIdx).trim();
-      let val = line.slice(colonIdx + 1).trim();
-      if (val.startsWith('"') && val.endsWith('"')) {
-        val = val.slice(1, -1);
-      }
-      result[key] = val;
+  // 첨부파일 딕셔너리 파싱
+  let parsedAttachments: Record<string, AttachmentItem> = {};
+  const attMatch = rawContent.match(/<!--\s*MYMEMO_ATTACHMENTS:\r?\n([\s\S]*?)\r?\n:MYMEMO_ATTACHMENTS\s*-->/);
+  if (attMatch) {
+    try {
+      parsedAttachments = JSON.parse(attMatch[1]);
+      rawContent = rawContent.replace(attMatch[0], '').trim();
+    } catch (e) {
+      console.warn('첨부파일 파싱 실패:', e);
     }
-  });
+  }
 
+  // 본문 내 레거시 Base64 자동 정리
+  const { content: cleanedContent, attachments: finalAttachments } = cleanLegacyAttachments(
+    rawContent,
+    parsedAttachments
+  );
+
+  result.content = cleanedContent;
+  result.attachments = finalAttachments;
   return result;
 }
 
@@ -408,6 +435,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
       projectId: targetProjectId,
       title: parsed.title || path.split('/').pop()?.replace('.md', '') || '제목 없음',
       content: parsed.content,
+      attachments: parsed.attachments,
       isLocalOnly: false,
       githubSha: remoteFile.sha,
       githubPath: path,
