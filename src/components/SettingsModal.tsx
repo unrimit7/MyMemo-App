@@ -29,6 +29,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [token, setToken] = useState('');
   const [branch, setBranch] = useState('main');
   const [notesDir, setNotesDir] = useState('notes');
+  const [autoSync, setAutoSync] = useState(false);
 
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -40,6 +41,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setToken(config.token || '');
       setBranch(config.branch || 'main');
       setNotesDir(config.notesDir || 'notes');
+      setAutoSync(config.autoSync ?? false);
     }
   }, [config, isOpen]);
 
@@ -80,6 +82,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       branch: branch.trim() || 'main',
       notesDir: notesDir.trim() || 'notes',
       isConnected: true,
+      autoSync: autoSync,
       lastSyncedAt: config?.lastSyncedAt,
     });
 
@@ -196,6 +199,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-slate-200 text-xs focus:outline-none focus:border-indigo-500"
               />
             </div>
+          </div>
+
+          {/* 동기화 동작 방식 (수동 vs 자동) 설정 */}
+          <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-950/60 space-y-1.5">
+            <label className="flex items-center gap-2 text-xs font-bold text-slate-200 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoSync}
+                onChange={(e) => setAutoSync(e.target.checked)}
+                className="accent-indigo-500 rounded w-4 h-4 cursor-pointer"
+              />
+              <span>메모 작성 중 실시간 자동 동기화</span>
+            </label>
+            <p className="text-[11px] text-slate-400 leading-relaxed pl-6">
+              {autoSync ? (
+                <span className="text-amber-400 font-medium">⚡ 작성 3.5초 후 자동으로 GitHub에 커밋 및 업로드됩니다.</span>
+              ) : (
+                <span className="text-indigo-300">🛡️ <strong>수동 동기화 모드 (권장)</strong>: 평소에는 기기 로컬에 즉시 저장되고, 사이드바의 <strong>[동기화]</strong> 버튼을 누를 때만 확실하게 GitHub와 통신합니다. (배터리 및 불필요한 커밋 절약)</span>
+              )}
+            </p>
           </div>
 
           {/* 연결 테스트 결과 메시지 */}

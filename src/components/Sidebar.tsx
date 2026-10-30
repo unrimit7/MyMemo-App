@@ -37,6 +37,7 @@ interface SidebarProps {
   onDropFilesToProject?: (projectId: string, files: FileList) => void;
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
+  pendingCount?: number;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -59,6 +60,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onDropFilesToProject,
   isCollapsed,
   onToggleCollapse,
+  pendingCount,
 }) => {
   // 드래그 오버 중인 폴더 ID
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
@@ -504,6 +506,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   ? '지금 GitHub 동기화' 
                   : 'GitHub 미연결'}
             </span>
+            {pendingCount !== undefined && pendingCount > 0 && !isSyncing && (
+              <span className="px-1.5 py-0.5 text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-full font-bold ml-0.5">
+                {pendingCount}
+              </span>
+            )}
           </button>
 
           <div className="flex items-center justify-between pt-1">

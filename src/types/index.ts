@@ -38,6 +38,7 @@ export interface GitHubConfig {
   branch: string;
   notesDir: string;
   isConnected: boolean;
+  autoSync?: boolean; // false면 수동 동기화 모드(권장), true면 변경 3.5초 후 자동 업로드
   lastSyncedAt?: string;
 }
 

@@ -15,7 +15,8 @@ import {
   ChevronRight,
   ChevronLeft,
   PanelLeftClose,
-  PanelLeftOpen
+  PanelLeftOpen,
+  RefreshCw
 } from 'lucide-react';
 
 interface NoteListProps {
@@ -34,6 +35,9 @@ interface NoteListProps {
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
   onToggleCollapse?: () => void;
+  pendingCount?: number;
+  onSync?: () => void;
+  isSyncing?: boolean;
 }
 
 export const NoteList: React.FC<NoteListProps> = ({
@@ -52,6 +56,9 @@ export const NoteList: React.FC<NoteListProps> = ({
   isSidebarCollapsed,
   onToggleSidebar,
   onToggleCollapse,
+  pendingCount,
+  onSync,
+  isSyncing,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isDragOverList, setIsDragOverList] = useState(false);
@@ -181,6 +188,21 @@ export const NoteList: React.FC<NoteListProps> = ({
             <Plus size={15} />
             <span>새 메모</span>
           </button>
+
+          {/* 동기화 버튼 (사이드바가 접혔을 때도 즉시 동기화 가능) */}
+          {onSync && (
+            <button
+              onClick={onSync}
+              disabled={isSyncing}
+              className="p-1.5 text-slate-400 hover:text-indigo-300 hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-1 relative"
+              title="지금 GitHub 동기화"
+            >
+              <RefreshCw size={14} className={isSyncing ? 'animate-spin text-indigo-400' : ''} />
+              {pendingCount !== undefined && pendingCount > 0 && !isSyncing && (
+                <span className="w-2 h-2 rounded-full bg-amber-400 absolute top-1 right-1" />
+              )}
+            </button>
+          )}
 
           {/* 데스크톱: 메모 목록 접기 버튼 */}
           {onToggleCollapse && (

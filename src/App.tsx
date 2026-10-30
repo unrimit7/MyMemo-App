@@ -194,14 +194,14 @@ export function App() {
     initApp();
   }, []);
 
-  // 2. 화면으로 복귀할 때 서비스워커 갱신 확인 및 자동 동기화
+  // 2. 화면으로 복귀할 때 서비스워커 갱신 확인 및 자동 동기화 (autoSync 옵션 켜진 경우에만)
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         if ('serviceWorker' in navigator) {
           navigator.serviceWorker.getRegistration().then((reg) => reg?.update());
         }
-        if (gitHubConfig?.isConnected) {
+        if (gitHubConfig?.isConnected && gitHubConfig.autoSync) {
           runSync(true);
         }
       }
@@ -209,6 +209,11 @@ export function App() {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [gitHubConfig, runSync]);
+
+  // GitHub 업로드 대기 중인 메모 개수 계산
+  const pendingCount = useMemo(() => {
+    return notes.filter((n) => !n.isLocalOnly && n.syncStatus === 'pending').length;
+  }, [notes]);
 
   // 프로젝트별 메모 개수 계산
   const noteCounts = useMemo(() => {
@@ -473,7 +478,8 @@ export function App() {
     await saveNote(updatedNote);
     setNotes((prev) => prev.map((n) => (n.id === updatedNote.id ? updatedNote : n)));
 
-    if (!isLocalOnlyNow && gitHubConfig?.isConnected) {
+    // autoSync 설정이 true로 켜져 있는 경우에만 3.5초 뒤 자동 업로드
+    if (!isLocalOnlyNow && gitHubConfig?.isConnected && gitHubConfig.autoSync) {
       if (autoSyncTimerRef.current) {
         clearTimeout(autoSyncTimerRef.current);
       }
@@ -534,6 +540,7 @@ export function App() {
         onDropFilesToProject={handleDropFilesToProject}
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={toggleSidebar}
+        pendingCount={pendingCount}
       />
 
       {/* 2단: 메모 목록 (소주제 목록) */}
@@ -561,6 +568,9 @@ export function App() {
           isSidebarCollapsed={isSidebarCollapsed}
           onToggleSidebar={toggleSidebar}
           onToggleCollapse={toggleNoteList}
+          pendingCount={pendingCount}
+          onSync={handleManualSync}
+          isSyncing={isSyncing}
         />
       </div>
 
