@@ -32,8 +32,12 @@ interface DeleteConfirmState {
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
-  const [activeProjectId, setActiveProjectId] = useState<string>('ALL');
-  const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+  const [activeProjectId, setActiveProjectId] = useState<string>(() => {
+    return localStorage.getItem('mymemo_active_project_id') || 'ALL';
+  });
+  const [activeNoteId, setActiveNoteId] = useState<string | null>(() => {
+    return localStorage.getItem('mymemo_active_note_id') || null;
+  });
 
   const [gitHubConfig, setGitHubConfig] = useState<GitHubConfig | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -42,7 +46,9 @@ export function App() {
   const [syncToast, setSyncToast] = useState<string | null>(null);
 
   // 모바일 화면 뷰 모드 ('list' 또는 'editor')
-  const [mobileScreen, setMobileScreen] = useState<'list' | 'editor'>('list');
+  const [mobileScreen, setMobileScreen] = useState<'list' | 'editor'>(() => {
+    return (localStorage.getItem('mymemo_mobile_screen') as 'list' | 'editor') || 'list';
+  });
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [externalAddTarget, setExternalAddTarget] = useState<{ parentId: string | null; key: number } | null>(null);
 
@@ -157,8 +163,27 @@ export function App() {
       setNotes(loadedNotes);
       setGitHubConfig(config);
 
-      if (loadedNotes.length > 0 && !activeNoteId) {
-        setActiveNoteId(loadedNotes[0].id);
+      // 마지막으로 선택했던 폴더 및 메모 복원
+      const savedProjId = localStorage.getItem('mymemo_active_project_id');
+      const savedNoteId = localStorage.getItem('mymemo_active_note_id');
+
+      if (savedProjId && (savedProjId === 'ALL' || loadedProjects.some((p) => p.id === savedProjId))) {
+        setActiveProjectId(savedProjId);
+      } else {
+        setActiveProjectId('ALL');
+        localStorage.setItem('mymemo_active_project_id', 'ALL');
+      }
+
+      if (savedNoteId && loadedNotes.some((n) => n.id === savedNoteId)) {
+        setActiveNoteId(savedNoteId);
+      } else if (loadedNotes.length > 0) {
+        // 선택된 폴더가 있다면 그 폴더 내의 첫 메모를 우선 선택
+        const notesInProj = savedProjId && savedProjId !== 'ALL'
+          ? loadedNotes.filter((n) => n.projectId === savedProjId)
+          : loadedNotes;
+        const targetNote = notesInProj[0] || loadedNotes[0];
+        setActiveNoteId(targetNote.id);
+        localStorage.setItem('mymemo_active_note_id', targetNote.id);
       }
 
       if (config && config.isConnected) {
@@ -344,9 +369,10 @@ export function App() {
       setNotes(remaining);
 
       // 모바일에서는 메모 삭제 후 즉시 메모 목록('list') 화면으로 복귀
-      setMobileScreen('list');
+      handleBackToList();
       if (activeNoteId === id) {
         setActiveNoteId(null);
+        localStorage.removeItem('mymemo_active_note_id');
       }
 
       // GitHub 자동 삭제 동기화 예약
@@ -380,7 +406,7 @@ export function App() {
       setProjects((prev) => prev.filter((p) => !targetIds.includes(p.id)));
       setNotes((prev) => prev.filter((n) => !targetIds.includes(n.projectId)));
       if (targetIds.includes(activeProjectId)) {
-        setActiveProjectId('ALL');
+        handleSelectProject('ALL');
       }
 
       // GitHub 자동 삭제 동기화 예약
@@ -390,7 +416,19 @@ export function App() {
     }
   };
 
-  // 새 메모 추가 핸들러
+  // 폴더(프로젝트) 선택 핸들러
+  const handleSelectProject = (id: string) => {
+    setActiveProjectId(id);
+    localStorage.setItem('mymemo_active_project_id', id);
+  };
+
+  // 모바일 목록으로 복귀 핸들러
+  const handleBackToList = () => {
+    setMobileScreen('list');
+    localStorage.setItem('mymemo_mobile_screen', 'list');
+  };
+
+  // 새 메모 추가 핸들러 (속한 폴더명 + ' - 새 메모' 기본 이름 자동 생성)
   const handleCreateNote = async () => {
     let targetProjId = activeProjectId;
     if (targetProjId === 'ALL') {
@@ -399,11 +437,12 @@ export function App() {
 
     const currentProj = projects.find((p) => p.id === targetProjId);
     const isLocalOnly = currentProj?.isLocalOnly || false;
+    const initialTitle = currentProj ? `${currentProj.name} - 새 메모` : '새 메모';
 
     const newNote: Note = {
       id: `note-${Date.now()}`,
       projectId: targetProjId,
-      title: '새 메모',
+      title: initialTitle,
       content: '',
       isLocalOnly,
       syncStatus: isLocalOnly ? 'local_only' : 'pending',
@@ -413,8 +452,7 @@ export function App() {
 
     await saveNote(newNote);
     setNotes((prev) => [newNote, ...prev]);
-    setActiveNoteId(newNote.id);
-    setMobileScreen('editor');
+    handleSelectNote(newNote.id);
   };
 
   // 메모 내용 수정 핸들러 (수정 3초 후 자동 동기화 예약)
@@ -448,7 +486,9 @@ export function App() {
   // 메모 선택 핸들러
   const handleSelectNote = (id: string) => {
     setActiveNoteId(id);
+    localStorage.setItem('mymemo_active_note_id', id);
     setMobileScreen('editor');
+    localStorage.setItem('mymemo_mobile_screen', 'editor');
   };
 
   // 수동 동기화 버튼 클릭
@@ -477,7 +517,7 @@ export function App() {
       <Sidebar
         projects={projects}
         activeProjectId={activeProjectId}
-        onSelectProject={setActiveProjectId}
+        onSelectProject={handleSelectProject}
         onCreateProject={handleCreateProject}
         onDeleteProject={requestDeleteProject}
         onRenameProject={handleRenameProject}
@@ -508,7 +548,7 @@ export function App() {
           activeProjectId={activeProjectId}
           activeNoteId={activeNoteId}
           noteCounts={noteCounts}
-          onSelectProject={setActiveProjectId}
+          onSelectProject={handleSelectProject}
           onSelectNote={handleSelectNote}
           onCreateNote={handleCreateNote}
           onDeleteNote={requestDeleteNote}
@@ -533,7 +573,7 @@ export function App() {
           note={activeNote}
           projects={projects}
           onUpdateNote={handleUpdateNote}
-          onBackToList={() => setMobileScreen('list')}
+          onBackToList={handleBackToList}
           onDeleteNote={requestDeleteNote}
           isSidebarCollapsed={isSidebarCollapsed}
           onToggleSidebar={toggleSidebar}
