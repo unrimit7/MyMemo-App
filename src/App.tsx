@@ -464,6 +464,19 @@ export function App() {
   const handleUpdateNote = async (updated: Partial<Note>) => {
     if (!activeNote) return;
 
+    // 소속 폴더 이동 시 알림 토스트 표시 및 활성 폴더 목록 연동
+    if (updated.projectId && updated.projectId !== activeNote.projectId) {
+      const targetProj = projects.find((p) => p.id === updated.projectId);
+      if (targetProj) {
+        setSyncToast(`📁 메모가 '${targetProj.name}' 폴더로 이동되었습니다.`);
+        setTimeout(() => setSyncToast(null), 3000);
+        if (activeProjectId !== 'ALL') {
+          setActiveProjectId(updated.projectId);
+          localStorage.setItem('mymemo_active_project_id', updated.projectId);
+        }
+      }
+    }
+
     const isLocalOnlyNow = updated.isLocalOnly !== undefined ? updated.isLocalOnly : activeNote.isLocalOnly;
 
     const updatedNote: Note = {

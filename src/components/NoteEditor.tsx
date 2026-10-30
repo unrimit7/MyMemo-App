@@ -537,13 +537,18 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             )}
           </div>
 
-          {/* 계층 경로 빵가루 드롭다운 */}
-          <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-300 max-w-[240px] md:max-w-md truncate" title={folderBreadcrumbs.map(b => b.name).join(' > ')}>
+          {/* 계층 경로 빵가루 드롭다운 (현재 메모의 소속 폴더 이동) */}
+          <div 
+            className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-300 max-w-[240px] md:max-w-md truncate" 
+            title="현재 메모의 소속 폴더를 다른 폴더로 이동할 수 있습니다."
+          >
             <Folder size={12} className="text-indigo-400 shrink-0" />
+            <span className="text-[11px] text-slate-400 font-medium shrink-0">폴더:</span>
             <select
               value={note.projectId}
               onChange={(e) => onUpdateNote({ projectId: e.target.value })}
-              className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer truncate max-w-full"
+              className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer truncate max-w-full font-medium"
+              title="클릭하여 다른 폴더를 선택하면 메모가 해당 폴더로 이동합니다."
             >
               {projects.map((p) => {
                 const depth = p.parentId ? 1 : 0;
