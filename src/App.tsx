@@ -145,11 +145,16 @@ export function App() {
     initApp();
   }, []);
 
-  // 2. 화면으로 복귀할 때 자동 동기화
+  // 2. 화면으로 복귀할 때 서비스워커 갱신 확인 및 자동 동기화
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && gitHubConfig?.isConnected) {
-        runSync(true);
+      if (document.visibilityState === 'visible') {
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistration().then((reg) => reg?.update());
+        }
+        if (gitHubConfig?.isConnected) {
+          runSync(true);
+        }
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
