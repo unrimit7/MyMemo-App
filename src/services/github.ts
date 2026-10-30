@@ -322,27 +322,28 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
       }
       remoteFileMap.delete(expectedPath);
     } else {
-      // 원격에 파일이 없는 경우:
-      // ★ 핵심: 이미 이전에 동기화(synced)되었던 메모인데 원격에서 사라졌다면,
-      // 다른 기기(PC 등)에서 삭제된 것이므로 로컬에서도 함께 삭제! (되살아남/새 메모 생성 방지)
-      if (note.syncStatus === 'synced' && note.githubPath) {
-        await deleteNote(note.id);
-        continue;
-      }
+      // 원격에 expectedPath 파일이 없는 경우:
+      const isRecentlyModified = Date.now() - new Date(note.updatedAt).getTime() < 5 * 60 * 1000;
 
-      // 새 메모 업로드
-      const upRes = await uploadFileToGitHub(
-        config,
-        expectedPath,
-        serializedContent,
-        `Create note: ${note.title}`
-      );
-      if (upRes.success) {
-        note.githubSha = upRes.sha;
-        note.githubPath = expectedPath;
-        note.syncStatus = 'synced';
-        await saveNote(note);
-        summary.uploaded++;
+      // 1) 로컬에서 수정 중(pending)이거나, 아직 원격 경로가 없거나, 제목/폴더 이동으로 경로가 바뀌었거나, 최근 5분 내 작성된 메모는 무조건 원격에 업로드!
+      if (note.syncStatus === 'pending' || !note.githubPath || note.githubPath !== expectedPath || isRecentlyModified) {
+        const upRes = await uploadFileToGitHub(
+          config,
+          expectedPath,
+          serializedContent,
+          `Create note: ${note.title}`
+        );
+        if (upRes.success) {
+          note.githubSha = upRes.sha;
+          note.githubPath = expectedPath;
+          note.syncStatus = 'synced';
+          await saveNote(note);
+          summary.uploaded++;
+        }
+      } else {
+        // 2) note.syncStatus === 'synced'이고 note.githubPath === expectedPath인데 원격에서 사라진 경우:
+        // 즉, 로컬에서 변경된 적이 전혀 없는데 다른 기기에서 삭제된 메모인 경우에만 로컬 삭제 반영
+        await deleteNote(note.id);
       }
     }
   }

@@ -222,9 +222,19 @@ export const NoteList: React.FC<NoteListProps> = ({
 
       {/* 메모 목록 */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+        {subprojects.length > 0 && !searchQuery.trim() && (
+          <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-1.5 pt-2 pb-1 flex items-center justify-between">
+            <span>메모 ({filteredNotes.length})</span>
+          </div>
+        )}
+
         {filteredNotes.length === 0 ? (
-          <div className="text-center py-12 px-4 text-slate-500 text-xs">
-            {searchQuery ? '검색 결과가 없습니다.' : '메모가 없습니다. 새 메모를 작성해 보세요!'}
+          <div className="text-center py-8 px-4 text-slate-500 text-xs">
+            {searchQuery 
+              ? '검색 결과가 없습니다.' 
+              : subprojects.length > 0 
+                ? '이 폴더에 작성된 직속 메모가 없습니다. 상단 [+ 새 메모]를 눌러 메모를 작성해 보세요!' 
+                : '메모가 없습니다. 새 메모를 작성해 보세요!'}
           </div>
         ) : (
           filteredNotes.map((note) => {
