@@ -4,6 +4,7 @@ import { marked } from 'marked';
 import { compressImageToDataUrl } from '../utils/image';
 import { processFileForNote } from '../utils/file';
 import { cleanLegacyAttachments, renderAttachmentsInHtml } from '../utils/attachment';
+import { exportNoteToPdf } from '../utils/exportPdf';
 import type { AttachmentItem } from '../types';
 import { 
   Lock, 
@@ -25,7 +26,8 @@ import {
   Folder,
   Loader2,
   Trash2,
-  PanelLeftOpen
+  PanelLeftOpen,
+  FileDown
 } from 'lucide-react';
 
 interface NoteEditorProps {
@@ -470,6 +472,23 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               <Columns size={13} />
             </button>
           </div>
+
+          {/* 📄 PDF 내보내기 / 인쇄 버튼 */}
+          <button
+            onClick={() => {
+              const breadcrumbText = folderBreadcrumbs.map((b) => b.name).join(' > ');
+              exportNoteToPdf(
+                { ...note, title: localTitle, content: localContent, attachments: localAttachments },
+                breadcrumbText,
+                localContent
+              );
+            }}
+            className="flex items-center gap-1 px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-indigo-300 border border-slate-800 rounded-lg text-xs font-medium transition-all shadow-sm active:scale-95"
+            title="현재 메모를 깔끔한 PDF 문서로 내보내기 / 인쇄"
+          >
+            <FileDown size={13} className="text-indigo-400" />
+            <span className="hidden sm:inline">PDF 내보내기</span>
+          </button>
 
           {/* 메모 삭제 버튼 */}
           {onDeleteNote && (
