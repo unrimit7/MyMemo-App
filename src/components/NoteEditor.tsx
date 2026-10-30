@@ -27,7 +27,9 @@ import {
   Loader2,
   Trash2,
   PanelLeftOpen,
-  FileDown
+  FileDown,
+  Keyboard,
+  X
 } from 'lucide-react';
 
 interface NoteEditorProps {
@@ -56,6 +58,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const [viewMode, setViewMode] = useState<'edit' | 'preview' | 'split'>('edit');
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [isDragOverEditor, setIsDragOverEditor] = useState(false);
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
 
   // 한글 IME 조합 깨짐 방지를 위한 로컬 버퍼 상태
   const [localTitle, setLocalTitle] = useState(note?.title || '');
@@ -203,6 +206,111 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         start + prefix.length + (selected.length || 2)
       );
     }, 0);
+  };
+
+  // PC 작성 편의를 위한 키보드 단축키 핸들러
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+    // Tab 키 처리 (들여쓰기 2칸)
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+
+      if (e.shiftKey) {
+        // Shift + Tab: 앞 2칸 공백 제거
+        const before = localContent.substring(0, start);
+        if (before.endsWith('  ')) {
+          const newContent = before.slice(0, -2) + localContent.substring(start);
+          setLocalContent(newContent);
+          debouncedSyncToParent({ content: newContent });
+          setTimeout(() => {
+            textarea.selectionStart = textarea.selectionEnd = Math.max(0, start - 2);
+          }, 0);
+        }
+      } else {
+        // Tab: 2칸 공백 삽입
+        const newContent = localContent.substring(0, start) + '  ' + localContent.substring(end);
+        setLocalContent(newContent);
+        debouncedSyncToParent({ content: newContent });
+        setTimeout(() => {
+          textarea.selectionStart = textarea.selectionEnd = start + 2;
+        }, 0);
+      }
+      return;
+    }
+
+    if (isCtrlOrCmd) {
+      // Ctrl + B: 굵게
+      if (e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        insertMarkdown('**', '**');
+        return;
+      }
+      // Ctrl + I: 기울임
+      if (e.key.toLowerCase() === 'i') {
+        e.preventDefault();
+        insertMarkdown('*', '*');
+        return;
+      }
+      // Ctrl + K: 링크 삽입
+      if (e.key.toLowerCase() === 'k' && !e.shiftKey) {
+        e.preventDefault();
+        insertMarkdown('[', '](https://)');
+        return;
+      }
+      // Ctrl + Shift + K: 인라인 코드
+      if (e.key.toLowerCase() === 'k' && e.shiftKey) {
+        e.preventDefault();
+        insertMarkdown('`', '`');
+        return;
+      }
+      // Ctrl + Shift + X: 취소선
+      if (e.key.toLowerCase() === 'x' && e.shiftKey) {
+        e.preventDefault();
+        insertMarkdown('~~', '~~');
+        return;
+      }
+      // Ctrl + Shift + T 또는 Alt + T: To-Do 체크리스트
+      if ((e.key.toLowerCase() === 't' && e.shiftKey) || (e.altKey && e.key.toLowerCase() === 't')) {
+        e.preventDefault();
+        insertMarkdown('- [ ] ');
+        return;
+      }
+      // Ctrl + Shift + L: 글머리 기호 목록
+      if (e.key.toLowerCase() === 'l' && e.shiftKey) {
+        e.preventDefault();
+        insertMarkdown('- ');
+        return;
+      }
+      // Ctrl + 1: 큰 제목 (# )
+      if (e.key === '1') {
+        e.preventDefault();
+        insertMarkdown('# ');
+        return;
+      }
+      // Ctrl + 2: 중간 제목 (## )
+      if (e.key === '2') {
+        e.preventDefault();
+        insertMarkdown('## ');
+        return;
+      }
+      // Ctrl + 3: 소제목 (### )
+      if (e.key === '3') {
+        e.preventDefault();
+        insertMarkdown('### ');
+        return;
+      }
+      // Ctrl + / 또는 Ctrl + ?: 단축키 안내 창 토글
+      if (e.key === '/' || e.key === '?') {
+        e.preventDefault();
+        setShowShortcutsModal((prev) => !prev);
+        return;
+      }
+    }
   };
 
   // 커서 위치에 첨부파일을 깔끔한 단일 줄 태그로 삽입하고 data는 note.attachments에 보관
@@ -612,6 +720,16 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             )}
             <span>사진 첨부</span>
           </button>
+
+          {/* ⌨️ 단축키 안내 버튼 */}
+          <button
+            onClick={() => setShowShortcutsModal(true)}
+            className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded px-1.5 flex items-center gap-1 text-[11px] border border-slate-800 transition-colors ml-auto shrink-0"
+            title="PC 마크다운 단축키 안내 (Ctrl + /)"
+          >
+            <Keyboard size={12} className="text-indigo-400" />
+            <span className="hidden sm:inline">단축키</span>
+          </button>
         </div>
       )}
 
@@ -634,6 +752,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               ref={textareaRef}
               value={localContent}
               onChange={handleContentChange}
+              onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               placeholder="마크다운 문법으로 자유롭게 작성해 보세요... 이미지는 Ctrl + V 로 바로 붙여넣을 수 있습니다!"
               className="w-full flex-1 bg-transparent text-slate-200 text-sm md:text-base leading-relaxed resize-none focus:outline-none font-mono placeholder-slate-600 scrollbar-thin"
@@ -648,6 +767,90 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           </div>
         )}
       </div>
+
+      {/* 단축키 안내 팝업 모달 */}
+      {showShortcutsModal && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in"
+          onClick={() => setShowShortcutsModal(false)}
+        >
+          <div 
+            className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl p-5 text-slate-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Keyboard size={18} className="text-indigo-400" />
+                <h3 className="font-bold text-sm text-slate-100">PC 마크다운 단축키 안내</h3>
+              </div>
+              <button
+                onClick={() => setShowShortcutsModal(false)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            
+            <div className="py-3 space-y-2 text-xs">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-400">굵게 (Bold)</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl + B</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-400">기울임 (Italic)</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl + I</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-400">To-Do 체크</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl+Shift+T</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-400">글머리 목록</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl+Shift+L</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-400">취소선</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl+Shift+X</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-400">인라인 코드</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl+Shift+K</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-400">큰 제목 (H1)</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl + 1</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-400">중간 제목 (H2)</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl + 2</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-400">들여쓰기 2칸</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Tab</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-400">들여쓰기 취소</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Shift + Tab</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80 col-span-2">
+                  <span className="text-slate-400">클립보드 스크린샷 붙여넣기</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl + V</kbd>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-2 text-right">
+              <button
+                onClick={() => setShowShortcutsModal(false)}
+                className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
