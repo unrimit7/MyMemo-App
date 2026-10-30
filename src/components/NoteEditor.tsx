@@ -49,6 +49,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   // 한글 IME 조합 깨짐 방지를 위한 로컬 버퍼 상태
   const [localTitle, setLocalTitle] = useState(note?.title || '');
   const [localContent, setLocalContent] = useState(note?.content || '');
+  const [localAttachments, setLocalAttachments] = useState<Record<string, AttachmentItem>>(note?.attachments || {});
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -64,12 +65,20 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         note.attachments
       );
       setLocalContent(cleanedContent);
+      setLocalAttachments(cleanedAttachments);
 
       if (hasChanges) {
         onUpdateNote({ content: cleanedContent, attachments: cleanedAttachments });
       }
     }
   }, [note?.id]);
+
+  // 상위 prop에서 attachments가 갱신될 때 로컬 첨부파일 상태 동기화
+  useEffect(() => {
+    if (note?.attachments) {
+      setLocalAttachments(note.attachments);
+    }
+  }, [note?.attachments]);
 
   // 화면 너비에 따라 기본 뷰 모드 자동 조정
   useEffect(() => {
@@ -161,8 +170,9 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     mimeType: string = 'image/webp'
   ) => {
     const attId = `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const safeName = attName.replace(/`/g, "'").replace(/[\[\]]/g, '').trim();
     const updatedAttachments: Record<string, AttachmentItem> = {
-      ...(note?.attachments || {}),
+      ...localAttachments,
       [attId]: {
         id: attId,
         name: attName,
@@ -171,10 +181,12 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       },
     };
 
+    setLocalAttachments(updatedAttachments);
+
     const isPdf = mimeType === 'application/pdf' || attName.endsWith('.pdf');
     const insertTag = isPdf
-      ? `\n\n[📄 PDF: ${attName}](attachment:${attId})\n\n`
-      : `\n\n![${attName}](attachment:${attId})\n\n`;
+      ? `\n\n[📄 PDF: ${safeName}](attachment:${attId})\n\n`
+      : `\n\n![${safeName}](attachment:${attId})\n\n`;
 
     const textarea = textareaRef.current;
     if (!textarea) {
@@ -264,9 +276,11 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         const insertText = `\n\n${processed.content}\n\n`;
 
         const mergedAttachments: Record<string, AttachmentItem> = {
-          ...(note?.attachments || {}),
+          ...localAttachments,
           ...(processed.attachments || {}),
         };
+
+        setLocalAttachments(mergedAttachments);
 
         if (!textarea) {
           const newContent = `${localContent}${insertText}`;
@@ -290,7 +304,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const renderMarkdown = (content: string) => {
     try {
       const rawHtml = marked.parse(content || '') as string;
-      return { __html: renderAttachmentsInHtml(rawHtml, note?.attachments) };
+      return { __html: renderAttachmentsInHtml(rawHtml, localAttachments) };
     } catch {
       return { __html: '<p>마크다운을 렌더링할 수 없습니다.</p>' };
     }

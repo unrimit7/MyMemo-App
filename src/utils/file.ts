@@ -11,7 +11,9 @@ export interface ProcessedDroppedFile {
 // 드롭된 파일을 분석하여 마크다운 메모용 제목과 본문으로 변환 (거대한 Base64를 본문에서 숨기고 단일 줄 태그로 삽입)
 export async function processFileForNote(file: File): Promise<ProcessedDroppedFile> {
   const fileName = file.name;
+  const safeName = fileName.replace(/`/g, "'").replace(/[\[\]]/g, '').trim();
   const baseTitle = fileName.replace(/\.[^/.]+$/, '');
+  const safeBaseTitle = safeName.replace(/\.[^/.]+$/, '');
   const mimeType = file.type;
 
   // 1. 텍스트 또는 마크다운 파일
@@ -49,8 +51,8 @@ export async function processFileForNote(file: File): Promise<ProcessedDroppedFi
       const dataUrl = await compressImageToDataUrl(file, 1000, 0.75);
       const attId = `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       return {
-        title: baseTitle,
-        content: `# 🖼️ ${baseTitle}\n\n![${fileName}](attachment:${attId})\n\n`,
+        title: safeBaseTitle,
+        content: `# 🖼️ ${safeBaseTitle}\n\n![${safeName}](attachment:${attId})\n\n`,
         attachments: {
           [attId]: {
             id: attId,
@@ -63,7 +65,7 @@ export async function processFileForNote(file: File): Promise<ProcessedDroppedFi
       };
     } catch {
       return {
-        title: baseTitle,
+        title: safeBaseTitle,
         content: `이미지 파일: ${fileName}`,
         type: 'image',
       };
@@ -78,8 +80,8 @@ export async function processFileForNote(file: File): Promise<ProcessedDroppedFi
         const dataUrl = e.target?.result as string;
         const attId = `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         resolve({
-          title: `[PDF] ${baseTitle}`,
-          content: `# 📄 ${fileName}\n\n[📄 PDF 문서: ${fileName}](attachment:${attId})\n\n`,
+          title: `[PDF] ${safeBaseTitle}`,
+          content: `# 📄 ${safeName}\n\n[📄 PDF 문서: ${safeName}](attachment:${attId})\n\n`,
           attachments: {
             [attId]: {
               id: attId,
@@ -93,7 +95,7 @@ export async function processFileForNote(file: File): Promise<ProcessedDroppedFi
       };
       reader.onerror = () => {
         resolve({
-          title: `[PDF] ${baseTitle}`,
+          title: `[PDF] ${safeBaseTitle}`,
           content: `PDF 파일: ${fileName}`,
           type: 'pdf',
         });
@@ -109,8 +111,8 @@ export async function processFileForNote(file: File): Promise<ProcessedDroppedFi
       const dataUrl = e.target?.result as string;
       const attId = `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       resolve({
-        title: baseTitle,
-        content: `# 📎 ${fileName}\n\n[📎 파일: ${fileName}](attachment:${attId})\n\n`,
+        title: safeBaseTitle,
+        content: `# 📎 ${safeName}\n\n[📎 파일: ${safeName}](attachment:${attId})\n\n`,
         attachments: {
           [attId]: {
             id: attId,
