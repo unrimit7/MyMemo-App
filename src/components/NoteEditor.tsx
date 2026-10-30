@@ -65,24 +65,34 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const updateTimerRef = useRef<any>(null);
+  const currentNoteIdRef = useRef(note?.id);
+  const lastNoteUpdatedAtRef = useRef(note?.updatedAt);
 
-  // 메모가 변경(ID 변경)될 때 로컬 버퍼 동기화 및 기존 레거시 거대 Base64 자동 정리
+  // 메모가 변경(ID 변경)되거나 외부(동기화 등)에서 최신 버전으로 갱신될 때 로컬 버퍼 동기화
   useEffect(() => {
     if (note) {
-      setLocalTitle(note.title);
+      const isDifferentNote = note.id !== currentNoteIdRef.current;
+      const isRemoteUpdated = note.updatedAt !== lastNoteUpdatedAtRef.current;
 
-      const { content: cleanedContent, attachments: cleanedAttachments, hasChanges } = cleanLegacyAttachments(
-        note.content,
-        note.attachments
-      );
-      setLocalContent(cleanedContent);
-      setLocalAttachments(cleanedAttachments);
+      currentNoteIdRef.current = note.id;
+      lastNoteUpdatedAtRef.current = note.updatedAt;
 
-      if (hasChanges) {
-        onUpdateNote({ content: cleanedContent, attachments: cleanedAttachments });
+      if (isDifferentNote || isRemoteUpdated) {
+        setLocalTitle(note.title);
+
+        const { content: cleanedContent, attachments: cleanedAttachments, hasChanges } = cleanLegacyAttachments(
+          note.content,
+          note.attachments
+        );
+        setLocalContent(cleanedContent);
+        setLocalAttachments(cleanedAttachments);
+
+        if (hasChanges) {
+          onUpdateNote({ content: cleanedContent, attachments: cleanedAttachments });
+        }
       }
     }
-  }, [note?.id]);
+  }, [note?.id, note?.updatedAt]);
 
   // 상위 prop에서 attachments가 갱신될 때 로컬 첨부파일 상태 동기화
   useEffect(() => {

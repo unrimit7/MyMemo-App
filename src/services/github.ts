@@ -303,7 +303,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
     }
   }
 
-  // 2) 로컬 메모들을 GitHub로 업로드
+  // 2) 로컬 메모와 원격 메모 간 양방향 동기화 (업로드 및 원격 변경사항 다운로드)
   for (const note of notes) {
     if (note.isLocalOnly || isChainLocalOnly(note.projectId)) {
       summary.skippedLocalOnly++;
@@ -313,28 +313,72 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
     const folderPath = getProjectFolderPath(note.projectId, projects);
     const safeTitle = (note.title || '제목없음').replace(/[\/\\:*?"<>|]/g, '_');
     const expectedPath = `${notesDir}/${folderPath}/${safeTitle}_${note.id.slice(-6)}.md`;
+    const idSuffix = `_${note.id.slice(-6)}.md`;
 
-    // 파일명이 변경된 경우 이전 파일 삭제
-    if (note.githubPath && note.githubPath !== expectedPath) {
-      const oldRemote = remoteFileMap.get(note.githubPath);
-      if (oldRemote) {
-        await deleteFileFromGitHub(config, note.githubPath, oldRemote.sha, `Rename note from ${note.githubPath}`);
-        remoteFileMap.delete(note.githubPath);
+    // 1. 해당 로컬 메모와 일치하는 원격 파일 찾기 (경로 또는 ID 접미사 기준)
+    let remoteFile = remoteFileMap.get(expectedPath);
+    let remotePath = expectedPath;
+
+    if (!remoteFile && note.githubPath && remoteFileMap.has(note.githubPath)) {
+      remoteFile = remoteFileMap.get(note.githubPath);
+      remotePath = note.githubPath;
+    }
+
+    if (!remoteFile) {
+      for (const [p, f] of remoteFileMap.entries()) {
+        if (p.endsWith(idSuffix)) {
+          remoteFile = f;
+          remotePath = p;
+          break;
+        }
       }
     }
 
-    const remoteFile = remoteFileMap.get(expectedPath);
     const serializedContent = serializeNoteToMarkdown(note, folderPath);
 
     if (remoteFile) {
-      // 원격에 파일이 이미 있는 경우
-      if (note.syncStatus === 'pending' || note.githubSha !== remoteFile.sha) {
+      // 3단계의 '신규 파일 다운로드'에서 중복 처리되지 않도록 맵에서 제거
+      remoteFileMap.delete(remotePath);
+      if (note.githubPath && note.githubPath !== remotePath) {
+        remoteFileMap.delete(note.githubPath);
+      }
+
+      const isRemoteChanged = note.githubSha !== remoteFile.sha;
+      const isLocalPending = note.syncStatus === 'pending';
+
+      if (!isLocalPending && isRemoteChanged) {
+        // [경우 A] 로컬은 수정되지 않았으나, 다른 기기(PC 등)에서 수정하여 원격 SHA가 변경된 경우:
+        // -> 원격의 최신 내용을 다운로드하여 로컬 메모에 덮어쓰기 반영!
+        const fileRes = await fetch(remoteFile.url, { headers: getHeaders(config.token) });
+        if (fileRes.ok) {
+          const fileData = await fileRes.json();
+          const rawContent = base64ToUtf8(fileData.content);
+          const parsed = parseMarkdownToNote(rawContent);
+
+          note.title = parsed.title || note.title;
+          note.content = parsed.content;
+          note.attachments = parsed.attachments;
+          note.githubSha = remoteFile.sha;
+          note.githubPath = remotePath;
+          note.updatedAt = parsed.updatedAt || new Date().toISOString();
+          note.syncStatus = 'synced';
+          await saveNote(note);
+          summary.downloaded++;
+        }
+      } else if (isLocalPending && !isRemoteChanged) {
+        // [경우 B] 로컬에서만 수정되었고, 원격은 변경되지 않은 경우:
+        // -> 로컬 내용을 원격에 업로드!
+        // 만약 파일 경로가 바뀌었다면 이전 파일 정리
+        if (remotePath !== expectedPath) {
+          await deleteFileFromGitHub(config, remotePath, remoteFile.sha, `Rename note: ${note.title}`);
+        }
+
         const upRes = await uploadFileToGitHub(
           config,
           expectedPath,
           serializedContent,
           `Update note: ${note.title}`,
-          remoteFile.sha
+          remotePath === expectedPath ? remoteFile.sha : undefined
         );
         if (upRes.success) {
           note.githubSha = upRes.sha;
@@ -343,17 +387,59 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
           await saveNote(note);
           summary.uploaded++;
         }
+      } else if (isLocalPending && isRemoteChanged) {
+        // [경우 C] 양쪽 기기에서 동시에 수정된 경우 (충돌):
+        // 더 최신 수정 일시를 가진 쪽을 우선 반영하거나 분기
+        const fileRes = await fetch(remoteFile.url, { headers: getHeaders(config.token) });
+        if (fileRes.ok) {
+          const fileData = await fileRes.json();
+          const rawContent = base64ToUtf8(fileData.content);
+          const parsed = parseMarkdownToNote(rawContent);
+
+          const localTime = new Date(note.updatedAt).getTime();
+          const remoteTime = new Date(parsed.updatedAt || 0).getTime();
+
+          if (localTime >= remoteTime) {
+            // 로컬이 더 최신이면 원격에 덮어쓰기
+            const upRes = await uploadFileToGitHub(
+              config,
+              expectedPath,
+              serializedContent,
+              `Update note: ${note.title}`,
+              remoteFile.sha
+            );
+            if (upRes.success) {
+              note.githubSha = upRes.sha;
+              note.githubPath = expectedPath;
+              note.syncStatus = 'synced';
+              await saveNote(note);
+              summary.uploaded++;
+            }
+          } else {
+            // 원격이 더 최신이면 원격 내용 반영
+            note.title = parsed.title || note.title;
+            note.content = parsed.content;
+            note.attachments = parsed.attachments;
+            note.githubSha = remoteFile.sha;
+            note.githubPath = remotePath;
+            note.updatedAt = parsed.updatedAt || new Date().toISOString();
+            note.syncStatus = 'synced';
+            await saveNote(note);
+            summary.downloaded++;
+          }
+        }
       } else {
+        // [경우 D] 양쪽 모두 이미 동일한 상태
         note.syncStatus = 'synced';
+        note.githubPath = remotePath;
         await saveNote(note);
       }
-      remoteFileMap.delete(expectedPath);
     } else {
-      // 원격에 expectedPath 파일이 없는 경우:
+      // [경우 E] 원격에 해당 파일이 없는 경우:
       const isRecentlyModified = Date.now() - new Date(note.updatedAt).getTime() < 5 * 60 * 1000;
 
-      // 1) 로컬에서 수정 중(pending)이거나, 아직 원격 경로가 없거나, 제목/폴더 이동으로 경로가 바뀌었거나, 최근 5분 내 작성된 메모는 무조건 원격에 업로드!
-      if (note.syncStatus === 'pending' || !note.githubPath || note.githubPath !== expectedPath || isRecentlyModified) {
+      if (note.syncStatus === 'pending' || !note.githubPath || isRecentlyModified) {
+        // 새로 작성되었거나 최근 5분 내 수정된 로컬 메모는 원격에 생성 업로드!
         const upRes = await uploadFileToGitHub(
           config,
           expectedPath,
@@ -368,14 +454,13 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
           summary.uploaded++;
         }
       } else {
-        // 2) note.syncStatus === 'synced'이고 note.githubPath === expectedPath인데 원격에서 사라진 경우:
-        // 즉, 로컬에서 변경된 적이 전혀 없는데 다른 기기에서 삭제된 메모인 경우에만 로컬 삭제 반영
+        // 다른 기기에서 삭제되어 원격에서 사라진 경우 로컬에서도 삭제 반영
         await deleteNote(note.id);
       }
     }
   }
 
-  // 3) 원격에만 있고 로컬에 없는 파일들을 다운로드
+  // 3) 원격에만 있고 로컬에 없는 신규 파일들을 다운로드
   for (const [path, remoteFile] of remoteFileMap.entries()) {
     const fileRes = await fetch(remoteFile.url, { headers: getHeaders(config.token) });
     if (!fileRes.ok) continue;
@@ -397,8 +482,18 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
       continue;
     }
 
-    // 이미 같은 ID를 가진 메모가 로컬에 있다면 건너뜀 (중복 생성 방지)
-    if (parsed.id && notes.some((n) => n.id === parsed.id)) {
+    // 만약 로컬에 이미 같은 ID를 가진 메모가 있다면 내용 갱신
+    const existingLocalNote = parsed.id ? notes.find((n) => n.id === parsed.id) : null;
+    if (existingLocalNote) {
+      existingLocalNote.title = parsed.title || existingLocalNote.title;
+      existingLocalNote.content = parsed.content;
+      existingLocalNote.attachments = parsed.attachments;
+      existingLocalNote.githubSha = remoteFile.sha;
+      existingLocalNote.githubPath = path;
+      existingLocalNote.updatedAt = parsed.updatedAt || new Date().toISOString();
+      existingLocalNote.syncStatus = 'synced';
+      await saveNote(existingLocalNote);
+      summary.downloaded++;
       continue;
     }
 
