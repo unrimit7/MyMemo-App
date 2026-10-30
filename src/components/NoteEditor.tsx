@@ -29,7 +29,8 @@ import {
   PanelLeftOpen,
   FileDown,
   Keyboard,
-  X
+  X,
+  Table
 } from 'lucide-react';
 
 interface NoteEditorProps {
@@ -516,7 +517,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     try {
       // 마크다운 체크박스(- [ ] 또는 - [x]) 뒤에 띄어쓰기를 빠뜨린 경우에도 정상 체크박스로 렌더링되도록 자동 보정
       const normalizedContent = (content || '').replace(/^(\s*-\s*\[[ xX]\])([^\s\n])/gm, '$1 $2');
-      const rawHtml = marked.parse(normalizedContent) as string;
+      const rawHtml = marked.parse(normalizedContent, { breaks: true, gfm: true }) as string;
       return { __html: renderAttachmentsInHtml(rawHtml, localAttachments) };
     } catch {
       return { __html: '<p>마크다운을 렌더링할 수 없습니다.</p>' };
@@ -771,6 +772,17 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             title="인라인 코드"
           >
             <Code size={13} />
+          </button>
+          <button
+            onClick={() => {
+              const tableTpl = '\n\n| 문제점 | 원인 및 해결 방법 | 상태 |\n| :--- | :--- | :---: |\n| 프로그램 종료 시 RACK 기동상태 유지 | 시퀀스 수정하여 전체 OFF 처리 | 진행중 |\n\n';
+              insertMarkdown(tableTpl, '');
+            }}
+            className="p-1 hover:bg-slate-800 hover:text-indigo-300 rounded px-1.5 flex items-center gap-1 text-[11px]"
+            title="마크다운 표(Table) 서식 삽입"
+          >
+            <Table size={13} className="text-indigo-400" />
+            <span className="hidden sm:inline">표</span>
           </button>
           <div className="w-[1px] h-3.5 bg-slate-800 mx-1" />
 
