@@ -16,7 +16,9 @@ import {
   ChevronLeft,
   PanelLeftClose,
   PanelLeftOpen,
-  RefreshCw
+  RefreshCw,
+  Clock,
+  ArrowDownAZ
 } from 'lucide-react';
 
 interface NoteListProps {
@@ -62,6 +64,17 @@ export const NoteList: React.FC<NoteListProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isDragOverList, setIsDragOverList] = useState(false);
+  const [sortBy, setSortBy] = useState<'updated' | 'title'>(() => {
+    return (localStorage.getItem('mymemo_sort_by') as 'updated' | 'title') || 'updated';
+  });
+
+  const handleToggleSort = () => {
+    setSortBy((prev) => {
+      const next = prev === 'updated' ? 'title' : 'updated';
+      localStorage.setItem('mymemo_sort_by', next);
+      return next;
+    });
+  };
 
   // 현재 활성화된 프로젝트 정보 및 부모/자식 폴더
   const currentProject = projects.find((p) => p.id === activeProjectId);
@@ -77,15 +90,27 @@ export const NoteList: React.FC<NoteListProps> = ({
 
   const projectTitle = activeProjectId === 'ALL' ? '전체 메모' : currentProject?.name || '메모';
 
-  // 필터링: 메인 폴더 접속 시 하위 폴더의 메모가 섞이지 않고 오직 직속 메모만 표시
-  const filteredNotes = notes.filter((note) => {
-    const matchesProject = activeProjectId === 'ALL' || note.projectId === activeProjectId;
-    if (!matchesProject) return false;
+  // 필터링 및 정렬 (최신 수정일 순 또는 이름 순)
+  const filteredNotes = useMemo(() => {
+    const list = notes.filter((note) => {
+      const matchesProject = activeProjectId === 'ALL' || note.projectId === activeProjectId;
+      if (!matchesProject) return false;
 
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
-    return note.title.toLowerCase().includes(q) || note.content.toLowerCase().includes(q);
-  });
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase();
+      return note.title.toLowerCase().includes(q) || note.content.toLowerCase().includes(q);
+    });
+
+    return list.sort((a, b) => {
+      if (sortBy === 'title') {
+        return (a.title || '').localeCompare(b.title || '', 'ko-KR');
+      }
+      // 'updated': 최신 수정일 순 (내림차순)
+      const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+      const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+      return timeB - timeA;
+    });
+  }, [notes, activeProjectId, searchQuery, sortBy]);
 
   const formatDate = (isoString: string) => {
     try {
@@ -217,18 +242,35 @@ export const NoteList: React.FC<NoteListProps> = ({
         </div>
       </div>
 
-      {/* 검색창 */}
-      <div className="p-3 border-b border-slate-800/60">
-        <div className="relative">
-          <Search size={14} className="absolute left-3 top-2.5 text-slate-500" />
+      {/* 검색창 & 정렬 버튼 */}
+      <div className="p-2.5 border-b border-slate-800/60 flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search size={14} className="absolute left-2.5 top-2.5 text-slate-500" />
           <input
             type="text"
             placeholder="제목 또는 내용 검색..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+            className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
           />
         </div>
+        <button
+          onClick={handleToggleSort}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-950 border border-slate-800 hover:border-slate-700 hover:bg-slate-850 text-slate-300 rounded-lg text-xs font-medium transition-all shrink-0 active:scale-95"
+          title={sortBy === 'updated' ? '현재: 최신 수정일 순 (클릭하면 가나다 이름순 정렬)' : '현재: 가나다 이름순 (클릭하면 최신 수정순 정렬)'}
+        >
+          {sortBy === 'updated' ? (
+            <>
+              <Clock size={13} className="text-indigo-400" />
+              <span>최신순</span>
+            </>
+          ) : (
+            <>
+              <ArrowDownAZ size={13} className="text-indigo-400" />
+              <span>이름순</span>
+            </>
+          )}
+        </button>
       </div>
 
       {/* 하위 폴더 섹션: 메인 폴더 접속 시 안의 폴더가 나오도록 표시 */}
