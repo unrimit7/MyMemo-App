@@ -226,13 +226,13 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const lines = selectedBlock.split('\n');
 
     const newLines = lines.map((line) => {
-      // 1. 이미 - [ ] 형태인 경우 -> - [x] 로 변경 (체크)
+      // 1. 이미 - [ ] 형태인 경우 -> - [x] 로 변경 (체크, 뒤에 반드시 공백 1칸 보장)
       if (/^(\s*-\s*)\[\s*\](.*)$/.test(line)) {
-        return line.replace(/^(\s*-\s*)\[\s*\]/, '$1[x]');
+        return line.replace(/^(\s*-\s*)\[\s*\]\s*/, '$1[x] ');
       }
-      // 2. 이미 - [x] 형태인 경우 -> - [ ] 로 변경 (해제)
+      // 2. 이미 - [x] 형태인 경우 -> - [ ] 로 변경 (해제, 뒤에 반드시 공백 1칸 보장)
       if (/^(\s*-\s*)\[[xX]\](.*)$/.test(line)) {
-        return line.replace(/^(\s*-\s*)\[[xX]\]/, '$1[ ]');
+        return line.replace(/^(\s*-\s*)\[[xX]\]\s*/, '$1[ ] ');
       }
       // 3. - 글머리 기호만 있는 경우 -> - [ ] 추가
       if (/^(\s*-\s+)(.*)$/.test(line)) {
@@ -514,7 +514,9 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
   const renderMarkdown = (content: string) => {
     try {
-      const rawHtml = marked.parse(content || '') as string;
+      // 마크다운 체크박스(- [ ] 또는 - [x]) 뒤에 띄어쓰기를 빠뜨린 경우에도 정상 체크박스로 렌더링되도록 자동 보정
+      const normalizedContent = (content || '').replace(/^(\s*-\s*\[[ xX]\])([^\s\n])/gm, '$1 $2');
+      const rawHtml = marked.parse(normalizedContent) as string;
       return { __html: renderAttachmentsInHtml(rawHtml, localAttachments) };
     } catch {
       return { __html: '<p>마크다운을 렌더링할 수 없습니다.</p>' };
