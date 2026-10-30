@@ -317,12 +317,13 @@ export function App() {
       await deleteNote(id);
       const remaining = notes.filter((n) => n.id !== id);
       setNotes(remaining);
+
+      // 모바일에서는 메모 삭제 후 즉시 메모 목록('list') 화면으로 복귀
+      setMobileScreen('list');
       if (activeNoteId === id) {
-        setActiveNoteId(remaining[0]?.id || null);
-        if (remaining.length === 0) {
-          setMobileScreen('list');
-        }
+        setActiveNoteId(null);
       }
+
       // GitHub 자동 삭제 동기화 예약
       if (gitHubConfig?.isConnected) {
         setTimeout(() => runSync(true), 1500);
