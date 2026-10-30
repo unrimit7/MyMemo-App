@@ -179,7 +179,7 @@ export function cleanLegacyAttachments(
   );
 
   return {
-    content: cleaned.trim(),
+    content: cleaned,
     attachments,
     hasChanges,
   };

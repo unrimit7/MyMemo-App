@@ -66,18 +66,19 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const updateTimerRef = useRef<any>(null);
   const currentNoteIdRef = useRef(note?.id);
-  const lastNoteUpdatedAtRef = useRef(note?.updatedAt);
+  const lastSentContentRef = useRef<string | null>(null);
+  const lastSentTitleRef = useRef<string | null>(null);
 
   // 메모가 변경(ID 변경)되거나 외부(동기화 등)에서 최신 버전으로 갱신될 때 로컬 버퍼 동기화
   useEffect(() => {
     if (note) {
       const isDifferentNote = note.id !== currentNoteIdRef.current;
-      const isRemoteUpdated = note.updatedAt !== lastNoteUpdatedAtRef.current;
-
       currentNoteIdRef.current = note.id;
-      lastNoteUpdatedAtRef.current = note.updatedAt;
 
-      if (isDifferentNote || isRemoteUpdated) {
+      if (isDifferentNote) {
+        // 완전히 다른 메모로 이동한 경우 무조건 새 메모 내용으로 로드
+        lastSentContentRef.current = null;
+        lastSentTitleRef.current = null;
         setLocalTitle(note.title);
 
         const { content: cleanedContent, attachments: cleanedAttachments, hasChanges } = cleanLegacyAttachments(
@@ -89,6 +90,20 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
         if (hasChanges) {
           onUpdateNote({ content: cleanedContent, attachments: cleanedAttachments });
+        }
+      } else {
+        // 같은 메모를 보고 있는 경우:
+        // 내가 직접 타이핑 중인 내용이 아닐 때(외부 동기화로 변경되었을 때)만 덮어쓰기
+        if (note.title !== localTitle && note.title !== lastSentTitleRef.current) {
+          setLocalTitle(note.title);
+        }
+        if (note.content !== localContent && note.content !== lastSentContentRef.current) {
+          const { content: cleanedContent, attachments: cleanedAttachments } = cleanLegacyAttachments(
+            note.content,
+            note.attachments
+          );
+          setLocalContent(cleanedContent);
+          setLocalAttachments(cleanedAttachments);
         }
       }
     }
@@ -112,6 +127,12 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
   // 부모 컴포넌트에 안전하게 디바운스 업데이트 전송
   const debouncedSyncToParent = (updatedFields: Partial<Note>) => {
+    if (updatedFields.content !== undefined) {
+      lastSentContentRef.current = updatedFields.content;
+    }
+    if (updatedFields.title !== undefined) {
+      lastSentTitleRef.current = updatedFields.title;
+    }
     if (updateTimerRef.current) {
       clearTimeout(updateTimerRef.current);
     }
