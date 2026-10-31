@@ -30,6 +30,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [branch, setBranch] = useState('main');
   const [notesDir, setNotesDir] = useState('notes');
   const [autoSync, setAutoSync] = useState(false);
+  const [syncOnStartup, setSyncOnStartup] = useState(false);
 
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -42,6 +43,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setBranch(config.branch || 'main');
       setNotesDir(config.notesDir || 'notes');
       setAutoSync(config.autoSync ?? false);
+      setSyncOnStartup(config.syncOnStartup ?? false);
     }
   }, [config, isOpen]);
 
@@ -83,6 +85,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       notesDir: notesDir.trim() || 'notes',
       isConnected: true,
       autoSync: autoSync,
+      syncOnStartup: syncOnStartup,
       lastSyncedAt: config?.lastSyncedAt,
     });
 
@@ -201,24 +204,53 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
-          {/* 동기화 동작 방식 (수동 vs 자동) 설정 */}
-          <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-950/60 space-y-1.5">
-            <label className="flex items-center gap-2 text-xs font-bold text-slate-200 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={autoSync}
-                onChange={(e) => setAutoSync(e.target.checked)}
-                className="accent-indigo-500 rounded w-4 h-4 cursor-pointer"
-              />
-              <span>메모 작성 중 실시간 자동 동기화</span>
-            </label>
-            <p className="text-[11px] text-slate-400 leading-relaxed pl-6">
-              {autoSync ? (
-                <span className="text-amber-400 font-medium">⚡ 작성 3.5초 후 자동으로 GitHub에 커밋 및 업로드됩니다.</span>
-              ) : (
-                <span className="text-indigo-300">🛡️ <strong>수동 동기화 모드 (권장)</strong>: 평소에는 기기 로컬에 즉시 저장되고, 사이드바의 <strong>[동기화]</strong> 버튼을 누를 때만 확실하게 GitHub와 통신합니다. (배터리 및 불필요한 커밋 절약)</span>
-              )}
-            </p>
+          {/* 동기화 동작 모드 설정 (2가지 독립 옵션) */}
+          <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60 space-y-3.5">
+            <h4 className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+              <span>동기화 방식 설정 (기기별 독립 적용)</span>
+            </h4>
+
+            {/* 1. 앱 기동 시 자동 동기화 */}
+            <div className="space-y-1">
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-200 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={syncOnStartup}
+                  onChange={(e) => setSyncOnStartup(e.target.checked)}
+                  className="accent-indigo-500 rounded w-4 h-4 cursor-pointer"
+                />
+                <span>1. 앱 시작(기동) 시 최신 메모 자동 동기화</span>
+              </label>
+              <p className="text-[11px] text-slate-400 leading-relaxed pl-6">
+                {syncOnStartup ? (
+                  <span className="text-emerald-400 font-medium">✅ 앱을 켤 때 다른 기기나 동료가 올린 최신 메모를 자동으로 1회 가져옵니다.</span>
+                ) : (
+                  <span>앱을 켜도 동기화하지 않고, 오직 수동으로 [동기화] 버튼을 누를 때만 동기화합니다.</span>
+                )}
+              </p>
+            </div>
+
+            <div className="h-[1px] bg-slate-800/80" />
+
+            {/* 2. 메모 작성 중 실시간 자동 동기화 */}
+            <div className="space-y-1">
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-200 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={autoSync}
+                  onChange={(e) => setAutoSync(e.target.checked)}
+                  className="accent-indigo-500 rounded w-4 h-4 cursor-pointer"
+                />
+                <span>2. 메모 작성 중 실시간 자동 동기화</span>
+              </label>
+              <p className="text-[11px] text-slate-400 leading-relaxed pl-6">
+                {autoSync ? (
+                  <span className="text-amber-400 font-medium">⚡ 작성 중 3.5초 후 자동으로 GitHub에 커밋 및 업로드됩니다.</span>
+                ) : (
+                  <span className="text-indigo-300 font-medium">🛡️ <strong>수동 동기화 모드 (여러 사람 협업 시 강력 권장)</strong>: 평소에는 로컬에 저장되고, <strong>[동기화]</strong> 버튼이나 Ctrl+S를 누를 때만 GitHub에 안전하게 반영합니다.</span>
+                )}
+              </p>
+            </div>
           </div>
 
           {/* 연결 테스트 결과 메시지 */}

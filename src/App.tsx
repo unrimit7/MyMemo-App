@@ -188,8 +188,8 @@ export function App() {
         localStorage.setItem('mymemo_active_note_id', targetNote.id);
       }
 
-      // 설정이 연결되어 있고 자동 동기화 옵션이 켜져 있을 때만 앱 시작 시 동기화
-      if (config && config.isConnected && config.autoSync) {
+      // 설정이 연결되어 있고 '앱 시작 시 자동 동기화(syncOnStartup)' 또는 '실시간 자동 동기화(autoSync)' 옵션이 켜져 있을 때만 앱 시작 시 동기화
+      if (config && config.isConnected && (config.syncOnStartup || config.autoSync)) {
         runSync(true, config);
       }
     };

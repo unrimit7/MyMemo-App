@@ -39,6 +39,7 @@ export interface GitHubConfig {
   notesDir: string;
   isConnected: boolean;
   autoSync?: boolean; // false면 수동 동기화 모드(권장), true면 변경 3.5초 후 자동 업로드
+  syncOnStartup?: boolean; // true면 앱 시작(기동) 시 최신 메모 자동 1회 동기화
   lastSyncedAt?: string;
 }
 
