@@ -40,7 +40,9 @@ import {
   Table,
   Link2,
   Minus,
-  CloudUpload
+  CloudUpload,
+  Undo2,
+  Redo2
 } from 'lucide-react';
 
 interface NoteEditorProps {
@@ -87,6 +89,39 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const lastSentContentRef = useRef<string | null>(null);
   const lastSentTitleRef = useRef<string | null>(null);
 
+  // 실행 취소(Undo) / 다시 실행(Redo) 전용 히스토리 스택
+  const historyRef = useRef<{ content: string; cursorPos?: number }[]>([]);
+  const historyIndexRef = useRef<number>(-1);
+  const isUndoRedoActionRef = useRef<boolean>(false);
+  const pushHistoryTimerRef = useRef<any>(null);
+
+  // 히스토리 스택에 스냅샷 기록
+  const pushHistory = (content: string, cursorPos?: number) => {
+    if (isUndoRedoActionRef.current) return;
+    const history = historyRef.current;
+    const currentIndex = historyIndexRef.current;
+    const newHistory = history.slice(0, currentIndex + 1);
+    if (newHistory.length > 0 && newHistory[newHistory.length - 1].content === content) {
+      return;
+    }
+    newHistory.push({ content, cursorPos });
+    if (newHistory.length > 60) {
+      newHistory.shift();
+    }
+    historyRef.current = newHistory;
+    historyIndexRef.current = newHistory.length - 1;
+  };
+
+  // 타이핑 중 디바운스 히스토리 기록
+  const debouncedPushHistory = (content: string, cursorPos?: number) => {
+    if (pushHistoryTimerRef.current) {
+      clearTimeout(pushHistoryTimerRef.current);
+    }
+    pushHistoryTimerRef.current = setTimeout(() => {
+      pushHistory(content, cursorPos);
+    }, 350);
+  };
+
   // 메모가 변경(ID 변경)되거나 외부(동기화 등)에서 최신 버전으로 갱신될 때 로컬 버퍼 동기화
   useEffect(() => {
     if (note) {
@@ -106,6 +141,10 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         setLocalContent(cleanedContent);
         setLocalAttachments(cleanedAttachments);
 
+        // 히스토리 초기화
+        historyRef.current = [{ content: cleanedContent, cursorPos: 0 }];
+        historyIndexRef.current = 0;
+
         if (hasChanges) {
           onUpdateNote({ content: cleanedContent, attachments: cleanedAttachments });
         }
@@ -122,6 +161,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           );
           setLocalContent(cleanedContent);
           setLocalAttachments(cleanedAttachments);
+          pushHistory(cleanedContent, 0);
         }
       }
     }
@@ -171,6 +211,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const newContent = e.target.value;
     setLocalContent(newContent);
     debouncedSyncToParent({ content: newContent });
+    debouncedPushHistory(newContent, e.target.selectionStart);
   };
 
   // 폴더 계층 빵가루(Breadcrumb) 계산
@@ -240,13 +281,17 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const selected = localContent.substring(start, end);
     const replacement = `${prefix}${selected || '내용'}${suffix}`;
 
+    // 실행 취소를 위해 변경 전 스냅샷 저장
+    pushHistory(localContent, start);
+
     const newContent = 
       localContent.substring(0, start) + 
       replacement + 
       localContent.substring(end);
 
     setLocalContent(newContent);
-    onUpdateNote({ content: newContent });
+    debouncedSyncToParent({ content: newContent });
+    pushHistory(newContent, start + prefix.length + (selected.length || 2));
 
     setTimeout(() => {
       textarea.focus();
@@ -265,6 +310,9 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
     const text = localContent;
+
+    // 실행 취소를 위해 변경 전 스냅샷 저장
+    pushHistory(localContent, start);
 
     // 선택 영역이 걸쳐 있는 모든 라인의 시작과 끝 인덱스 찾기
     const lineStart = text.lastIndexOf('\n', start - 1) + 1;
@@ -299,6 +347,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
     setLocalContent(newContent);
     debouncedSyncToParent({ content: newContent });
+    pushHistory(newContent, start);
 
     // 커서 위치 복원
     setTimeout(() => {
@@ -319,6 +368,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const end = textarea.selectionEnd;
     const text = localContent;
 
+    pushHistory(localContent, start);
+
     const lineStart = text.lastIndexOf('\n', start - 1) + 1;
     let lineEnd = text.indexOf('\n', end);
     if (lineEnd === -1) lineEnd = text.length;
@@ -331,6 +382,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const newContent = text.substring(0, lineStart) + replaced + text.substring(lineEnd);
     setLocalContent(newContent);
     debouncedSyncToParent({ content: newContent });
+    pushHistory(newContent, start + 2);
 
     setTimeout(() => {
       textarea.focus();
@@ -346,6 +398,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
     const text = localContent;
+
+    pushHistory(localContent, start);
 
     const lineStart = text.lastIndexOf('\n', start - 1) + 1;
     let lineEnd = text.indexOf('\n', end);
@@ -374,6 +428,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const newContent = text.substring(0, lineStart) + replaced + text.substring(lineEnd);
     setLocalContent(newContent);
     debouncedSyncToParent({ content: newContent });
+    pushHistory(newContent, Math.max(lineStart, start - 2));
 
     setTimeout(() => {
       textarea.focus();
@@ -382,6 +437,44 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         Math.max(lineStart, end - removedTotal)
       );
     }, 0);
+  };
+
+  // 실행 취소 (Undo) 함수
+  const handleUndo = () => {
+    if (historyIndexRef.current > 0) {
+      historyIndexRef.current -= 1;
+      const target = historyRef.current[historyIndexRef.current];
+      isUndoRedoActionRef.current = true;
+      setLocalContent(target.content);
+      debouncedSyncToParent({ content: target.content });
+      setTimeout(() => {
+        isUndoRedoActionRef.current = false;
+        const textarea = textareaRef.current;
+        if (textarea && target.cursorPos !== undefined) {
+          textarea.focus();
+          textarea.setSelectionRange(target.cursorPos, target.cursorPos);
+        }
+      }, 0);
+    }
+  };
+
+  // 다시 실행 (Redo) 함수
+  const handleRedo = () => {
+    if (historyIndexRef.current < historyRef.current.length - 1) {
+      historyIndexRef.current += 1;
+      const target = historyRef.current[historyIndexRef.current];
+      isUndoRedoActionRef.current = true;
+      setLocalContent(target.content);
+      debouncedSyncToParent({ content: target.content });
+      setTimeout(() => {
+        isUndoRedoActionRef.current = false;
+        const textarea = textareaRef.current;
+        if (textarea && target.cursorPos !== undefined) {
+          textarea.focus();
+          textarea.setSelectionRange(target.cursorPos, target.cursorPos);
+        }
+      }, 0);
+    }
   };
 
   // 즉시 저장 및 GitHub 동기화 실행 (아이콘 클릭 및 Ctrl+S 공용)
@@ -449,6 +542,19 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     }
 
     if (isCtrlOrCmd) {
+      // Ctrl + Z: 실행 취소 (Undo)
+      if (!e.shiftKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        handleUndo();
+        return;
+      }
+      // Ctrl + Y 또는 Ctrl + Shift + Z: 다시 실행 (Redo)
+      if (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z')) {
+        e.preventDefault();
+        handleRedo();
+        return;
+      }
+
       // Ctrl + B: 굵게
       if (e.key.toLowerCase() === 'b') {
         e.preventDefault();
@@ -967,6 +1073,27 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             >
               <Outdent size={13} />
             </button>
+
+            <div className="w-[1px] h-3.5 bg-slate-800/80 mx-1 shrink-0" />
+
+            {/* 실행 취소 (Undo) */}
+            <button
+              type="button"
+              onClick={handleUndo}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-amber-300 text-slate-400 rounded-md transition-colors shrink-0 active:scale-90"
+              title="실행 취소 Undo (Ctrl + Z)"
+            >
+              <Undo2 size={13} />
+            </button>
+            {/* 다시 실행 (Redo) */}
+            <button
+              type="button"
+              onClick={handleRedo}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-amber-300 text-slate-400 rounded-md transition-colors shrink-0 active:scale-90"
+              title="다시 실행 Redo (Ctrl + Y 또는 Ctrl + Shift + Z)"
+            >
+              <Redo2 size={13} />
+            </button>
           </div>
 
           {/* 2번째 줄: To-Do 체크리스트, 체크토글, 표, 링크, 코드블록, 인용구, 구분선, 사진, 동기화, 안내 */}
@@ -1155,6 +1282,14 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                 <div className="flex items-center justify-between p-2 bg-indigo-950/40 rounded-lg border border-indigo-500/30 col-span-2">
                   <span className="text-indigo-300 font-semibold">체크박스 체크 / 해제 토글</span>
                   <kbd className="px-2 py-0.5 bg-indigo-600 border border-indigo-400 text-white rounded font-mono text-[11px] font-bold">Ctrl + Enter</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-400">실행 취소 (Undo)</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl + Z</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-400">다시 실행 (Redo)</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl + Y</kbd>
                 </div>
                 <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
                   <span className="text-slate-400">굵게 (Bold)</span>
