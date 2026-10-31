@@ -73,7 +73,18 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   onSync,
   isSyncing,
 }) => {
-  const [viewMode, setViewMode] = useState<'edit' | 'preview' | 'split'>('edit');
+  // 모바일/휴대폰 환경 기본 감지 (휴대폰에서는 기본 모드를 '보기 모드'로 제공)
+  const isMobileEnvironment = () => {
+    if (typeof window === 'undefined') return false;
+    return window.innerWidth < 768 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  };
+
+  const [viewMode, setViewMode] = useState<'edit' | 'preview' | 'split'>(() => {
+    if (typeof window === 'undefined') return 'edit';
+    if (isMobileEnvironment()) return 'preview';
+    if (window.innerWidth >= 1280) return 'split';
+    return 'edit';
+  });
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [isProcessingPdf, setIsProcessingPdf] = useState(false);
   const [isDragOverEditor, setIsDragOverEditor] = useState(false);
@@ -177,9 +188,22 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     }
   }, [note?.attachments]);
 
-  // 화면 너비에 따라 기본 뷰 모드 자동 조정
+  // 화면 너비 및 기기 환경에 따라 기본 뷰 모드 자동 조정
   useEffect(() => {
-    if (window.innerWidth >= 1280) {
+    if (isMobileEnvironment()) {
+      // 휴대폰 환경: 기본 모드를 '보기(미리보기)' 모드로 열기
+      // 단, 방금 새로 추가된 빈 메모(내용이 비어있음)인 경우에만 바로 작성할 수 있도록 편집 모드로 시작
+      const isNewlyCreatedEmpty = note && (
+        !note.content.trim() || 
+        (Date.now() - new Date(note.createdAt).getTime() < 3000 && !note.content.includes('#'))
+      );
+
+      if (isNewlyCreatedEmpty) {
+        setViewMode('edit');
+      } else {
+        setViewMode('preview');
+      }
+    } else if (window.innerWidth >= 1280) {
       setViewMode('split');
     } else {
       setViewMode('edit');
@@ -893,6 +917,34 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     }
   };
 
+  // 마크다운 미리보기 내 체크박스(- [ ] <-> - [x]) 클릭 토글 지원
+  const toggleTaskCheckbox = (taskIndex: number) => {
+    let currentIndex = 0;
+    const newContent = localContent.replace(/^(\s*-\s*\[)([ xX])(\])/gm, (match, prefix, checkState, suffix) => {
+      if (currentIndex === taskIndex) {
+        currentIndex++;
+        const nextState = checkState === ' ' ? 'x' : ' ';
+        return `${prefix}${nextState}${suffix}`;
+      }
+      currentIndex++;
+      return match;
+    });
+
+    setLocalContent(newContent);
+    onUpdateNote({ content: newContent });
+  };
+
+  const handlePreviewClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (target && target.tagName === 'INPUT' && (target as HTMLInputElement).type === 'checkbox') {
+      const taskIndex = target.getAttribute('data-task-index');
+      if (taskIndex !== null) {
+        const idx = parseInt(taskIndex, 10);
+        toggleTaskCheckbox(idx);
+      }
+    }
+  };
+
   const renderMarkdown = (content: string) => {
     try {
       // 마크다운 체크박스(- [ ] 또는 - [x]) 뒤에 띄어쓰기를 빠뜨린 경우에도 정상 체크박스로 렌더링되도록 자동 보정
@@ -901,6 +953,15 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
       // 표(table)를 모바일 가로 스크롤 컨테이너로 감싸 좁은 화면에서 컬럼이 찌그러지는 현상 방지
       rawHtml = rawHtml.replace(/<table>([\s\S]*?)<\/table>/g, '<div class="table-scroll-container"><table>$1</table></div>');
+
+      // 마크다운 체크박스를 보기 모드에서도 직접 클릭해 체크/해제할 수 있도록 속성 변환
+      let taskCounter = 0;
+      rawHtml = rawHtml.replace(/<input\s+([^>]*?)type="checkbox"([^>]*?)>/g, (_match, before, after) => {
+        const currentIndex = taskCounter++;
+        const cleanBefore = before.replace(/disabled(?:="[^"]*")?/g, '');
+        const cleanAfter = after.replace(/disabled(?:="[^"]*")?/g, '');
+        return `<input ${cleanBefore}type="checkbox"${cleanAfter} data-task-index="${currentIndex}" class="task-checkbox cursor-pointer">`;
+      });
 
       return { __html: renderAttachmentsInHtml(rawHtml, localAttachments) };
     } catch {
@@ -1046,26 +1107,28 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5 text-slate-400">
             <button
               onClick={() => setViewMode('edit')}
-              className={`p-1.5 rounded text-xs transition-colors ${
-                viewMode === 'edit' ? 'bg-indigo-600 text-white' : 'hover:text-slate-200'
+              className={`p-1.5 md:p-1.5 rounded text-xs transition-colors flex items-center gap-1 ${
+                viewMode === 'edit' ? 'bg-indigo-600 text-white font-semibold shadow-xs' : 'hover:text-slate-200'
               }`}
               title="편집 모드 (단축키: Alt + 1 또는 Ctrl + M)"
             >
               <Edit3 size={13} />
+              <span className="md:hidden text-[11px]">편집</span>
             </button>
             <button
               onClick={() => setViewMode('preview')}
-              className={`p-1.5 rounded text-xs transition-colors ${
-                viewMode === 'preview' ? 'bg-indigo-600 text-white' : 'hover:text-slate-200'
+              className={`p-1.5 md:p-1.5 rounded text-xs transition-colors flex items-center gap-1 ${
+                viewMode === 'preview' ? 'bg-indigo-600 text-white font-semibold shadow-xs' : 'hover:text-slate-200'
               }`}
-              title="미리보기 모드 (단축키: Alt + 2 또는 Ctrl + M)"
+              title="보기 모드 (단축키: Alt + 2 또는 Ctrl + M)"
             >
               <Eye size={13} />
+              <span className="md:hidden text-[11px]">보기</span>
             </button>
             <button
               onClick={() => setViewMode('split')}
               className={`hidden lg:block p-1.5 rounded text-xs transition-colors ${
-                viewMode === 'split' ? 'bg-indigo-600 text-white' : 'hover:text-slate-200'
+                viewMode === 'split' ? 'bg-indigo-600 text-white font-semibold' : 'hover:text-slate-200'
               }`}
               title="분할 보기 모드 (단축키: Alt + 3 또는 Ctrl + M)"
             >
@@ -1400,11 +1463,27 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         )}
 
         {(viewMode === 'preview' || viewMode === 'split') && (
-          <div className="flex-1 h-full overflow-y-auto markdown-preview prose prose-invert max-w-none pr-2">
+          <div 
+            className="flex-1 h-full overflow-y-auto markdown-preview prose prose-invert max-w-none pr-2"
+            onClick={handlePreviewClick}
+          >
             <div dangerouslySetInnerHTML={renderMarkdown(localContent)} />
           </div>
         )}
       </div>
+
+      {/* 모바일 보기 모드일 때 우측 하단 빠른 편집 플로팅 버튼 (FAB) */}
+      {viewMode === 'preview' && (
+        <button
+          type="button"
+          onClick={() => setViewMode('edit')}
+          className="md:hidden fixed bottom-6 right-6 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white rounded-full shadow-2xl shadow-indigo-950/80 flex items-center gap-1.5 z-40 transition-all font-semibold text-xs border border-indigo-400/40"
+          title="편집 모드로 전환"
+        >
+          <Edit3 size={15} />
+          <span>편집</span>
+        </button>
+      )}
 
       {/* 단축키 안내 팝업 모달 */}
       {showShortcutsModal && (

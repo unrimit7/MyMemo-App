@@ -93,6 +93,10 @@
 .markdown-preview input[type="checkbox"] {
   margin-right: 0.5rem;
   accent-color: #6366f1;
+  cursor: pointer;
+  width: 1.05rem;
+  height: 1.05rem;
+  vertical-align: -0.15rem;
 }
 
 .markdown-preview hr {
