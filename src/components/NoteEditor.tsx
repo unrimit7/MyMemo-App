@@ -42,7 +42,8 @@ import {
   Minus,
   CloudUpload,
   Undo2,
-  Redo2
+  Redo2,
+  FileText
 } from 'lucide-react';
 
 interface NoteEditorProps {
@@ -74,6 +75,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 }) => {
   const [viewMode, setViewMode] = useState<'edit' | 'preview' | 'split'>('edit');
   const [isProcessingImage, setIsProcessingImage] = useState(false);
+  const [isProcessingPdf, setIsProcessingPdf] = useState(false);
   const [isDragOverEditor, setIsDragOverEditor] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
 
@@ -84,6 +86,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
   const updateTimerRef = useRef<any>(null);
   const currentNoteIdRef = useRef(note?.id);
   const lastSentContentRef = useRef<string | null>(null);
@@ -651,14 +654,18 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
     const textarea = textareaRef.current;
     if (!textarea) {
+      pushHistory(localContent, localContent.length);
       const newContent = `${localContent}${insertTag}`;
       setLocalContent(newContent);
       onUpdateNote({ content: newContent, attachments: updatedAttachments });
+      pushHistory(newContent, newContent.length);
       return;
     }
 
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
+
+    pushHistory(localContent, start);
 
     const newContent = 
       localContent.substring(0, start) + 
@@ -667,10 +674,11 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
     setLocalContent(newContent);
     onUpdateNote({ content: newContent, attachments: updatedAttachments });
+    const nextPos = start + insertTag.length;
+    pushHistory(newContent, nextPos);
 
     setTimeout(() => {
       textarea.focus();
-      const nextPos = start + insertTag.length;
       textarea.setSelectionRange(nextPos, nextPos);
     }, 0);
   };
@@ -701,13 +709,33 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     }
   };
 
-  // 2. 사진 파일 선택 버튼 핸들러
+  // 2. 사진 파일 선택 버튼 핸들러 (모바일/PC 지원)
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsProcessingImage(true);
     try {
+      // 사진 선택기에서 실수로 PDF를 선택했더라도 정상적으로 PDF 처리 지원
+      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const dataUrl = event.target?.result as string;
+          if (dataUrl) {
+            insertAttachmentAtCursor(file.name, dataUrl, 'application/pdf');
+          }
+          setIsProcessingImage(false);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        };
+        reader.onerror = () => {
+          alert('PDF 파일을 읽지 못했습니다.');
+          setIsProcessingImage(false);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+
       const compressed = await compressImageToDataUrl(file, 1000, 0.75);
       insertAttachmentAtCursor(file.name.replace(/\.[^/.]+$/, ''), compressed, file.type || 'image/webp');
     } catch (err) {
@@ -716,6 +744,42 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     } finally {
       setIsProcessingImage(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  // 3. PDF 문서 전용 파일 선택 핸들러 (스마트폰 파일 관리자/다운로드 폴더 연동)
+  const handlePdfFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 25 * 1024 * 1024) {
+      alert('25MB 이하의 PDF 파일만 첨부할 수 있습니다.');
+      if (pdfInputRef.current) pdfInputRef.current.value = '';
+      return;
+    }
+
+    setIsProcessingPdf(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        if (dataUrl) {
+          insertAttachmentAtCursor(file.name, dataUrl, 'application/pdf');
+        }
+        setIsProcessingPdf(false);
+        if (pdfInputRef.current) pdfInputRef.current.value = '';
+      };
+      reader.onerror = () => {
+        alert('PDF 파일을 읽는 중 오류가 발생했습니다.');
+        setIsProcessingPdf(false);
+        if (pdfInputRef.current) pdfInputRef.current.value = '';
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('PDF 업로드 실패:', err);
+      alert('PDF 파일을 불러오지 못했습니다.');
+      setIsProcessingPdf(false);
+      if (pdfInputRef.current) pdfInputRef.current.value = '';
     }
   };
 
@@ -794,12 +858,21 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       }}
       onDrop={handleEditorDrop}
     >
-      {/* 숨겨진 파일 선택 인풋 */}
+      {/* 숨겨진 사진 선택 인풋 (갤러리/카메라) */}
       <input
         type="file"
         ref={fileInputRef}
         onChange={handleFileChange}
         accept="image/*"
+        className="hidden"
+      />
+
+      {/* 숨겨진 PDF 문서 선택 인풋 (스마트폰 파일 관리자/다운로드 폴더) */}
+      <input
+        type="file"
+        ref={pdfInputRef}
+        onChange={handlePdfFileChange}
+        accept="application/pdf,.pdf"
         className="hidden"
       />
 
@@ -1182,6 +1255,22 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                 <ImageIcon size={12} />
               )}
               <span className="hidden xs:inline">사진</span>
+            </button>
+
+            {/* PDF 문서 첨부 버튼 */}
+            <button
+              type="button"
+              onClick={() => pdfInputRef.current?.click()}
+              disabled={isProcessingPdf}
+              className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-rose-300 text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
+              title="커서 위치에 PDF 문서 파일 첨부 (휴대폰 파일 관리자 / 내 파일)"
+            >
+              {isProcessingPdf ? (
+                <Loader2 size={12} className="animate-spin text-rose-400" />
+              ) : (
+                <FileText size={12} />
+              )}
+              <span className="hidden xs:inline">PDF</span>
             </button>
 
             {/* GitHub 동기화 버튼 (Ctrl + S) */}

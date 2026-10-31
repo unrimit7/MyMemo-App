@@ -22,7 +22,7 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
       <span class="truncate">${att.name}</span>
     </div>
     <div class="flex items-center gap-2 shrink-0">
-      <a href="${att.data}" download="${att.name}" target="_blank" rel="noopener noreferrer" class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold no-underline flex items-center gap-1.5 shadow-md shadow-indigo-600/20 active:scale-95 transition-all">
+      <a href="${att.data}" download="${att.name}" class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold no-underline flex items-center gap-1.5 shadow-md shadow-indigo-600/20 active:scale-95 transition-all">
         <span>⬇️ PDF 열기 / 다운로드</span>
       </a>
     </div>
@@ -33,8 +33,8 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
       <div class="p-8 text-center text-xs md:text-sm text-slate-400 space-y-3 bg-slate-950">
         <p class="text-slate-200 font-semibold text-sm">모바일 환경에서는 기기 PDF 앱으로 문서를 바로 열람할 수 있습니다.</p>
         <p class="text-xs text-slate-400">아래 버튼을 누르면 기기에서 즉시 문서를 열람하거나 다운로드합니다.</p>
-        <a href="${att.data}" download="${att.name}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/30">
-          <span>📄 ${att.name} 바로 열기</span>
+        <a href="${att.data}" download="${att.name}" class="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/30">
+          <span>📄 ${att.name} 바로 열기 / 다운로드</span>
         </a>
       </div>
     </object>
