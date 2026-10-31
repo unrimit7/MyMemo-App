@@ -457,30 +457,40 @@ export function App() {
   };
 
   // 캘린더에서 특정 날짜에 새 메모 작성 (+ 버튼)
-  const handleCreateNoteForDate = async (dateStr: string) => {
-    // 1. "다이어리" 또는 "일정" 폴더가 있는지 확인, 없으면 "다이어리" 메인 폴더 자동 생성
-    let diaryProj = projects.find((p) => p.name === '다이어리' || p.name === '일정');
-    if (!diaryProj) {
+  const handleCreateNoteForDate = async (dateStr: string, targetProjectId?: string) => {
+    // 1. 선택된 폴더(targetProjectId)가 있으면 해당 폴더에 작성, 없으면 현재 활성 폴더 또는 "일정"/"다이어리" 폴더
+    let targetProj: Project | undefined;
+    if (targetProjectId && targetProjectId !== 'ALL') {
+      targetProj = projects.find((p) => p.id === targetProjectId);
+    }
+    if (!targetProj && activeProjectId && activeProjectId !== 'ALL') {
+      targetProj = projects.find((p) => p.id === activeProjectId);
+    }
+    if (!targetProj) {
+      targetProj = projects.find((p) => p.name === '일정' || p.name === '다이어리');
+    }
+    if (!targetProj) {
       const newProj: Project = {
         id: `proj-${Date.now()}`,
-        name: '다이어리',
+        name: '일정',
         parentId: null,
         isLocalOnly: false,
         createdAt: new Date().toISOString(),
       };
       await saveProject(newProj);
-      diaryProj = newProj;
+      targetProj = newProj;
       setProjects((prev) => [newProj, ...prev]);
     }
 
-    const noteTitle = `${dateStr} 업무일지`;
+    const isGeneralDiary = targetProj.name === '일정' || targetProj.name === '다이어리';
+    const noteTitle = `${!isGeneralDiary ? `[${targetProj.name}] ` : ''}${dateStr} 업무일지`;
     const newNote: Note = {
       id: `note-${Date.now()}`,
-      projectId: diaryProj.id,
+      projectId: targetProj.id,
       title: noteTitle,
-      content: `# 📋 ${dateStr} (일지)\n\n- [ ] `,
-      isLocalOnly: diaryProj.isLocalOnly,
-      syncStatus: diaryProj.isLocalOnly ? 'local_only' : 'pending',
+      content: `# 📋 ${dateStr} (${targetProj.name})\n\n- [ ] `,
+      isLocalOnly: targetProj.isLocalOnly,
+      syncStatus: targetProj.isLocalOnly ? 'local_only' : 'pending',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
