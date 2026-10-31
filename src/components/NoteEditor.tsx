@@ -17,9 +17,16 @@ import {
   Italic, 
   Heading1, 
   Heading2, 
+  Heading3,
+  Strikethrough,
   CheckSquare, 
+  CheckCheck,
   List, 
+  ListOrdered,
+  Indent,
+  Outdent,
   Code, 
+  FileCode,
   Quote, 
   Image as ImageIcon,
   AlertTriangle,
@@ -30,7 +37,10 @@ import {
   FileDown,
   Keyboard,
   X,
-  Table
+  Table,
+  Link2,
+  Minus,
+  CloudUpload
 } from 'lucide-react';
 
 interface NoteEditorProps {
@@ -44,6 +54,7 @@ interface NoteEditorProps {
   isNoteListCollapsed?: boolean;
   onToggleNoteList?: () => void;
   onSync?: () => void;
+  isSyncing?: boolean;
 }
 
 export const NoteEditor: React.FC<NoteEditorProps> = ({
@@ -57,6 +68,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   isNoteListCollapsed,
   onToggleNoteList,
   onSync,
+  isSyncing,
 }) => {
   const [viewMode, setViewMode] = useState<'edit' | 'preview' | 'split'>('edit');
   const [isProcessingImage, setIsProcessingImage] = useState(false);
@@ -299,6 +311,114 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     }, 0);
   };
 
+  // 들여쓰기 2칸 함수 (아이콘 클릭 및 Tab 키 공용)
+  const handleIndent = () => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = localContent;
+
+    const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+    let lineEnd = text.indexOf('\n', end);
+    if (lineEnd === -1) lineEnd = text.length;
+
+    const selectedBlock = text.substring(lineStart, lineEnd);
+    const lines = selectedBlock.split('\n');
+    const newLines = lines.map((l) => '  ' + l);
+    const replaced = newLines.join('\n');
+
+    const newContent = text.substring(0, lineStart) + replaced + text.substring(lineEnd);
+    setLocalContent(newContent);
+    debouncedSyncToParent({ content: newContent });
+
+    setTimeout(() => {
+      textarea.focus();
+      const added = lines.length * 2;
+      textarea.setSelectionRange(start + 2, end + added);
+    }, 0);
+  };
+
+  // 내어쓰기 2칸 함수 (아이콘 클릭 및 Shift+Tab 키 공용)
+  const handleOutdent = () => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = localContent;
+
+    const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+    let lineEnd = text.indexOf('\n', end);
+    if (lineEnd === -1) lineEnd = text.length;
+
+    const selectedBlock = text.substring(lineStart, lineEnd);
+    const lines = selectedBlock.split('\n');
+    let removedTotal = 0;
+    const newLines = lines.map((l) => {
+      if (l.startsWith('  ')) {
+        removedTotal += 2;
+        return l.substring(2);
+      }
+      if (l.startsWith(' ')) {
+        removedTotal += 1;
+        return l.substring(1);
+      }
+      if (l.startsWith('\t')) {
+        removedTotal += 1;
+        return l.substring(1);
+      }
+      return l;
+    });
+
+    const replaced = newLines.join('\n');
+    const newContent = text.substring(0, lineStart) + replaced + text.substring(lineEnd);
+    setLocalContent(newContent);
+    debouncedSyncToParent({ content: newContent });
+
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(
+        Math.max(lineStart, start - 2),
+        Math.max(lineStart, end - removedTotal)
+      );
+    }, 0);
+  };
+
+  // 즉시 저장 및 GitHub 동기화 실행 (아이콘 클릭 및 Ctrl+S 공용)
+  const handleImmediateSync = () => {
+    if (updateTimerRef.current) {
+      clearTimeout(updateTimerRef.current);
+    }
+    onUpdateNote({ content: localContent, title: localTitle });
+    onSync?.();
+  };
+
+  // 표 서식 템플릿 삽입
+  const insertTable = () => {
+    const tableTpl = '\n\n| 제목 | 내용 | 상태 |\n| :--- | :--- | :---: |\n| 항목1 | 내용1 | 완료 |\n\n';
+    insertMarkdown(tableTpl, '');
+  };
+
+  // 구분선 삽입
+  const insertDivider = () => {
+    insertMarkdown('\n\n---\n\n', '');
+  };
+
+  // 링크 삽입
+  const insertLink = () => {
+    insertMarkdown('[', '](https://)');
+  };
+
+  // 코드 블록 삽입
+  const insertCodeBlock = () => {
+    insertMarkdown('\n```\n', '\n```\n');
+  };
+
+  // 번호 목록 삽입
+  const insertOrderedList = () => {
+    insertMarkdown('1. ');
+  };
+
   // PC 작성 편의를 위한 키보드 단축키 핸들러
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const isCtrlOrCmd = e.ctrlKey || e.metaKey;
@@ -306,11 +426,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     // Ctrl + S: 현재 작성 중인 내용 즉시 확정 저장 후 GitHub 동기화
     if (isCtrlOrCmd && e.key.toLowerCase() === 's') {
       e.preventDefault();
-      if (updateTimerRef.current) {
-        clearTimeout(updateTimerRef.current);
-      }
-      onUpdateNote({ content: localContent, title: localTitle });
-      onSync?.();
+      handleImmediateSync();
       return;
     }
 
@@ -324,30 +440,10 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     // Tab 키 처리 (들여쓰기 2칸)
     if (e.key === 'Tab') {
       e.preventDefault();
-      const textarea = textareaRef.current;
-      if (!textarea) return;
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-
       if (e.shiftKey) {
-        // Shift + Tab: 앞 2칸 공백 제거
-        const before = localContent.substring(0, start);
-        if (before.endsWith('  ')) {
-          const newContent = before.slice(0, -2) + localContent.substring(start);
-          setLocalContent(newContent);
-          debouncedSyncToParent({ content: newContent });
-          setTimeout(() => {
-            textarea.selectionStart = textarea.selectionEnd = Math.max(0, start - 2);
-          }, 0);
-        }
+        handleOutdent();
       } else {
-        // Tab: 2칸 공백 삽입
-        const newContent = localContent.substring(0, start) + '  ' + localContent.substring(end);
-        setLocalContent(newContent);
-        debouncedSyncToParent({ content: newContent });
-        setTimeout(() => {
-          textarea.selectionStart = textarea.selectionEnd = start + 2;
-        }, 0);
+        handleIndent();
       }
       return;
     }
@@ -761,105 +857,234 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         </div>
       </div>
 
-      {/* 상단 툴바 2: 마크다운 빠른 서식 및 [사진 첨부] 버튼바 */}
+      {/* 상단 툴바 2: 마크다운 단축키 툴바 (휴대폰 클릭 지원 및 가로 2줄 레이아웃) */}
       {(viewMode === 'edit' || viewMode === 'split') && (
-        <div className="px-3 py-1.5 border-b border-slate-800/60 bg-slate-950/40 flex items-center gap-1 overflow-x-auto text-slate-400 text-xs scrollbar-none">
-          <button
-            onClick={() => insertMarkdown('# ')}
-            className="p-1 hover:bg-slate-800 hover:text-slate-200 rounded px-1.5 flex items-center gap-0.5"
-            title="큰 제목"
-          >
-            <Heading1 size={13} />
-          </button>
-          <button
-            onClick={() => insertMarkdown('## ')}
-            className="p-1 hover:bg-slate-800 hover:text-slate-200 rounded px-1.5 flex items-center gap-0.5"
-            title="중간 제목"
-          >
-            <Heading2 size={13} />
-          </button>
-          <div className="w-[1px] h-3.5 bg-slate-800 mx-1" />
-          <button
-            onClick={() => insertMarkdown('**', '**')}
-            className="p-1 hover:bg-slate-800 hover:text-slate-200 rounded px-1.5"
-            title="굵게"
-          >
-            <Bold size={13} />
-          </button>
-          <button
-            onClick={() => insertMarkdown('*', '*')}
-            className="p-1 hover:bg-slate-800 hover:text-slate-200 rounded px-1.5"
-            title="기울임"
-          >
-            <Italic size={13} />
-          </button>
-          <div className="w-[1px] h-3.5 bg-slate-800 mx-1" />
-          <button
-            onClick={() => insertMarkdown('- [ ] ')}
-            className="p-1 hover:bg-slate-800 hover:text-indigo-400 rounded px-2 font-medium flex items-center gap-1 text-[11px] bg-slate-900 border border-slate-800"
-            title="할 일(체크리스트)"
-          >
-            <CheckSquare size={12} className="text-indigo-400" />
-            <span>To-Do</span>
-          </button>
-          <button
-            onClick={() => insertMarkdown('- ')}
-            className="p-1 hover:bg-slate-800 hover:text-slate-200 rounded px-1.5"
-            title="글머리 기호 목록"
-          >
-            <List size={13} />
-          </button>
-          <button
-            onClick={() => insertMarkdown('> ')}
-            className="p-1 hover:bg-slate-800 hover:text-slate-200 rounded px-1.5"
-            title="인용구"
-          >
-            <Quote size={13} />
-          </button>
-          <button
-            onClick={() => insertMarkdown('`', '`')}
-            className="p-1 hover:bg-slate-800 hover:text-slate-200 rounded px-1.5"
-            title="인라인 코드"
-          >
-            <Code size={13} />
-          </button>
-          <button
-            onClick={() => {
-              const tableTpl = '\n\n| 문제점 | 원인 및 해결 방법 | 상태 |\n| :--- | :--- | :---: |\n| 프로그램 종료 시 RACK 기동상태 유지 | 시퀀스 수정하여 전체 OFF 처리 | 진행중 |\n\n';
-              insertMarkdown(tableTpl, '');
-            }}
-            className="p-1 hover:bg-slate-800 hover:text-indigo-300 rounded px-1.5 flex items-center gap-1 text-[11px]"
-            title="마크다운 표(Table) 서식 삽입"
-          >
-            <Table size={13} className="text-indigo-400" />
-            <span className="hidden sm:inline">표</span>
-          </button>
-          <div className="w-[1px] h-3.5 bg-slate-800 mx-1" />
+        <div className="border-b border-slate-800/80 bg-slate-950/70 select-none">
+          {/* 1번째 줄: 제목 서식, 텍스트 스타일, 목록 및 들여쓰기 */}
+          <div className="px-3 py-1 border-b border-slate-800/40 flex items-center gap-1 overflow-x-auto text-slate-400 text-xs scrollbar-none">
+            {/* H1 */}
+            <button
+              type="button"
+              onClick={() => insertMarkdown('# ')}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
+              title="큰 제목 H1 (Ctrl + 1)"
+            >
+              <Heading1 size={14} />
+            </button>
+            {/* H2 */}
+            <button
+              type="button"
+              onClick={() => insertMarkdown('## ')}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
+              title="중간 제목 H2 (Ctrl + 2)"
+            >
+              <Heading2 size={14} />
+            </button>
+            {/* H3 */}
+            <button
+              type="button"
+              onClick={() => insertMarkdown('### ')}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
+              title="소제목 H3 (Ctrl + 3)"
+            >
+              <Heading3 size={14} />
+            </button>
 
-          {/* 🖼️ 사진 첨부 버튼 */}
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isProcessingImage}
-            className="p-1 hover:bg-slate-800 text-indigo-400 hover:text-indigo-300 rounded px-2 font-semibold flex items-center gap-1 text-[11px] bg-indigo-500/10 border border-indigo-500/20 active:scale-95"
-            title="커서 위치에 사진/이미지 첨부 (또는 복사 후 Ctrl+V)"
-          >
-            {isProcessingImage ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <ImageIcon size={12} />
+            <div className="w-[1px] h-3.5 bg-slate-800/80 mx-1 shrink-0" />
+
+            {/* Bold */}
+            <button
+              type="button"
+              onClick={() => insertMarkdown('**', '**')}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
+              title="굵게 Bold (Ctrl + B)"
+            >
+              <Bold size={13} />
+            </button>
+            {/* Italic */}
+            <button
+              type="button"
+              onClick={() => insertMarkdown('*', '*')}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
+              title="기울임 Italic (Ctrl + I)"
+            >
+              <Italic size={13} />
+            </button>
+            {/* Strikethrough */}
+            <button
+              type="button"
+              onClick={() => insertMarkdown('~~', '~~')}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
+              title="취소선 (Ctrl + Shift + X)"
+            >
+              <Strikethrough size={13} />
+            </button>
+            {/* Inline Code */}
+            <button
+              type="button"
+              onClick={() => insertMarkdown('`', '`')}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
+              title="인라인 코드 (Ctrl + Shift + K)"
+            >
+              <Code size={13} />
+            </button>
+
+            <div className="w-[1px] h-3.5 bg-slate-800/80 mx-1 shrink-0" />
+
+            {/* Bullet List */}
+            <button
+              type="button"
+              onClick={() => insertMarkdown('- ')}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
+              title="글머리 기호 목록 (Ctrl + Shift + L)"
+            >
+              <List size={13} />
+            </button>
+            {/* Numbered List */}
+            <button
+              type="button"
+              onClick={insertOrderedList}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
+              title="번호 매기기 목록 (1. 2. 3.)"
+            >
+              <ListOrdered size={13} />
+            </button>
+            {/* Indent (Tab) */}
+            <button
+              type="button"
+              onClick={handleIndent}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
+              title="들여쓰기 2칸 (Tab)"
+            >
+              <Indent size={13} />
+            </button>
+            {/* Outdent (Shift + Tab) */}
+            <button
+              type="button"
+              onClick={handleOutdent}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
+              title="내어쓰기 (Shift + Tab)"
+            >
+              <Outdent size={13} />
+            </button>
+          </div>
+
+          {/* 2번째 줄: To-Do 체크리스트, 체크토글, 표, 링크, 코드블록, 인용구, 구분선, 사진, 동기화, 안내 */}
+          <div className="px-3 py-1 flex items-center gap-1 overflow-x-auto text-slate-400 text-xs scrollbar-none">
+            {/* To-Do 할 일 추가 */}
+            <button
+              type="button"
+              onClick={() => insertMarkdown('- [ ] ')}
+              className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-indigo-300 text-indigo-400 bg-indigo-950/40 border border-indigo-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
+              title="To-Do 체크리스트 추가 (Ctrl + Shift + T)"
+            >
+              <CheckSquare size={12} />
+              <span>To-Do</span>
+            </button>
+            {/* 체크박스 토글 */}
+            <button
+              type="button"
+              onClick={toggleCheckboxAtCursor}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-emerald-300 text-emerald-400 rounded-md transition-colors shrink-0 active:scale-90"
+              title="체크박스 체크 / 해제 토글 (Ctrl + Enter)"
+            >
+              <CheckCheck size={14} />
+            </button>
+
+            <div className="w-[1px] h-3.5 bg-slate-800/80 mx-1 shrink-0" />
+
+            {/* 표 (Table) */}
+            <button
+              type="button"
+              onClick={insertTable}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-cyan-300 text-cyan-400 rounded-md transition-colors shrink-0 active:scale-90"
+              title="마크다운 표(Table) 서식 삽입"
+            >
+              <Table size={13} />
+            </button>
+            {/* 링크 */}
+            <button
+              type="button"
+              onClick={insertLink}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-sky-300 text-sky-400 rounded-md transition-colors shrink-0 active:scale-90"
+              title="하이퍼링크 삽입 (Ctrl + K)"
+            >
+              <Link2 size={13} />
+            </button>
+            {/* 코드 블록 */}
+            <button
+              type="button"
+              onClick={insertCodeBlock}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-purple-300 text-purple-400 rounded-md transition-colors shrink-0 active:scale-90"
+              title="코드 블록(```) 삽입"
+            >
+              <FileCode size={13} />
+            </button>
+            {/* 인용구 */}
+            <button
+              type="button"
+              onClick={() => insertMarkdown('> ')}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-amber-300 text-amber-400 rounded-md transition-colors shrink-0 active:scale-90"
+              title="인용구(>) 삽입"
+            >
+              <Quote size={13} />
+            </button>
+            {/* 구분선 */}
+            <button
+              type="button"
+              onClick={insertDivider}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
+              title="구분선(---) 삽입"
+            >
+              <Minus size={13} />
+            </button>
+
+            <div className="w-[1px] h-3.5 bg-slate-800/80 mx-1 shrink-0" />
+
+            {/* 사진 첨부 버튼 */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isProcessingImage}
+              className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-indigo-300 text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
+              title="커서 위치에 사진/이미지 첨부 (또는 복사 후 Ctrl + V)"
+            >
+              {isProcessingImage ? (
+                <Loader2 size={12} className="animate-spin text-indigo-400" />
+              ) : (
+                <ImageIcon size={12} />
+              )}
+              <span className="hidden xs:inline">사진</span>
+            </button>
+
+            {/* GitHub 동기화 버튼 (Ctrl + S) */}
+            {onSync && (
+              <button
+                type="button"
+                onClick={handleImmediateSync}
+                disabled={isSyncing}
+                className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-emerald-300 text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
+                title="메모 즉시 저장 및 GitHub 동기화 (Ctrl + S)"
+              >
+                {isSyncing ? (
+                  <Loader2 size={12} className="animate-spin text-emerald-400" />
+                ) : (
+                  <CloudUpload size={13} />
+                )}
+                <span className="hidden xs:inline">동기화</span>
+              </button>
             )}
-            <span>사진 첨부</span>
-          </button>
 
-          {/* ⌨️ 단축키 안내 버튼 */}
-          <button
-            onClick={() => setShowShortcutsModal(true)}
-            className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded px-1.5 flex items-center gap-1 text-[11px] border border-slate-800 transition-colors ml-auto shrink-0"
-            title="PC 마크다운 단축키 안내 (Ctrl + /)"
-          >
-            <Keyboard size={12} className="text-indigo-400" />
-            <span className="hidden sm:inline">단축키</span>
-          </button>
+            {/* ⌨️ 단축키 안내 버튼 */}
+            <button
+              type="button"
+              onClick={() => setShowShortcutsModal(true)}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 text-slate-400 hover:text-indigo-400 rounded-md transition-colors ml-auto shrink-0"
+              title="PC 마크다운 단축키 안내 (Ctrl + /)"
+            >
+              <Keyboard size={13} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -960,16 +1185,20 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                   <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl+Shift+X</kbd>
                 </div>
                 <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
-                  <span className="text-slate-400">단축키 안내 창</span>
-                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl + /</kbd>
-                </div>
-                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
                   <span className="text-slate-400">큰 제목 (H1)</span>
                   <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl + 1</kbd>
                 </div>
                 <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
                   <span className="text-slate-400">중간 제목 (H2)</span>
                   <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl + 2</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-400">소제목 (H3)</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl + 3</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-400">단축키 안내 창</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl + /</kbd>
                 </div>
                 <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
                   <span className="text-slate-400">들여쓰기 2칸</span>

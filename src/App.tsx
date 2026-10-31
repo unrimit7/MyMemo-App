@@ -633,6 +633,7 @@ export function App() {
           isNoteListCollapsed={isNoteListCollapsed}
           onToggleNoteList={toggleNoteList}
           onSync={handleManualSync}
+          isSyncing={isSyncing}
         />
       </div>
 
