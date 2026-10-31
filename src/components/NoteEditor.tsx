@@ -186,6 +186,73 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     }
   }, [note?.id]);
 
+  // 보기 모드 순환 토글 함수 (단일 단축키로 번갈아 가며 전환)
+  const cycleViewMode = () => {
+    const isLargeScreen = window.innerWidth >= 1024;
+    setViewMode((prev) => {
+      if (isLargeScreen) {
+        // PC/대화면: 편집 -> 미리보기 -> 분할 -> 편집 순환
+        if (prev === 'edit') return 'preview';
+        if (prev === 'preview') return 'split';
+        return 'edit';
+      } else {
+        // 모바일/소화면: 편집 <-> 미리보기 순환
+        return prev === 'edit' ? 'preview' : 'edit';
+      }
+    });
+  };
+
+  // 모드 변경 시 편집 가능 상태면 textarea에 포커스 자동 복원
+  useEffect(() => {
+    if (viewMode === 'edit' || viewMode === 'split') {
+      setTimeout(() => {
+        textareaRef.current?.focus();
+      }, 50);
+    }
+  }, [viewMode]);
+
+  // 전역 단축키 이벤트 리스너 (미리보기 화면에서도 모드 전환 가능하도록 window 레벨 등록)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      // 일반 input(제목 등)에 포커스되어 있을 때는 텍스트 입력을 방해하지 않음
+      if (target && target.tagName === 'INPUT') return;
+
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+      // 1. 단일 단축키 순환 토글: Ctrl + M 또는 Alt + V
+      if ((isCtrlOrCmd && e.key.toLowerCase() === 'm') || (e.altKey && e.key.toLowerCase() === 'v')) {
+        e.preventDefault();
+        cycleViewMode();
+        return;
+      }
+
+      // 2. 각각의 모드 직행 단축키: Alt + 1(편집), Alt + 2(미리보기), Alt + 3(분할)
+      if (e.altKey && !e.ctrlKey && !e.metaKey) {
+        if (e.key === '1') {
+          e.preventDefault();
+          setViewMode('edit');
+          return;
+        }
+        if (e.key === '2') {
+          e.preventDefault();
+          setViewMode('preview');
+          return;
+        }
+        if (e.key === '3') {
+          e.preventDefault();
+          setViewMode('split');
+          return;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  }, []);
+
   // 부모 컴포넌트에 안전하게 디바운스 업데이트 전송
   const debouncedSyncToParent = (updatedFields: Partial<Note>) => {
     if (updatedFields.content !== undefined) {
@@ -982,7 +1049,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               className={`p-1.5 rounded text-xs transition-colors ${
                 viewMode === 'edit' ? 'bg-indigo-600 text-white' : 'hover:text-slate-200'
               }`}
-              title="편집 모드"
+              title="편집 모드 (단축키: Alt + 1 또는 Ctrl + M)"
             >
               <Edit3 size={13} />
             </button>
@@ -991,7 +1058,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               className={`p-1.5 rounded text-xs transition-colors ${
                 viewMode === 'preview' ? 'bg-indigo-600 text-white' : 'hover:text-slate-200'
               }`}
-              title="미리보기 모드"
+              title="미리보기 모드 (단축키: Alt + 2 또는 Ctrl + M)"
             >
               <Eye size={13} />
             </button>
@@ -1000,7 +1067,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               className={`hidden lg:block p-1.5 rounded text-xs transition-colors ${
                 viewMode === 'split' ? 'bg-indigo-600 text-white' : 'hover:text-slate-200'
               }`}
-              title="분할 보기 모드"
+              title="분할 보기 모드 (단축키: Alt + 3 또는 Ctrl + M)"
             >
               <Columns size={13} />
             </button>
@@ -1364,6 +1431,18 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             
             <div className="py-3 space-y-2 text-xs">
               <div className="grid grid-cols-2 gap-2">
+                <div className="flex items-center justify-between p-2 bg-indigo-950/40 rounded-lg border border-indigo-500/30 col-span-2">
+                  <span className="text-indigo-300 font-semibold">보기 모드 순환 (편집 ➔ 미리보기 ➔ 분할)</span>
+                  <kbd className="px-2 py-0.5 bg-indigo-600 border border-indigo-400 text-white rounded font-mono text-[11px] font-bold">Ctrl + M / Alt + V</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-indigo-950/40 rounded-lg border border-indigo-500/30 col-span-2">
+                  <span className="text-indigo-300 font-semibold">모드 직접 전환: 편집 / 미리보기 / 분할</span>
+                  <div className="flex gap-1">
+                    <kbd className="px-1.5 py-0.5 bg-indigo-800 border border-indigo-400 text-white rounded font-mono text-[10px] font-bold">Alt+1</kbd>
+                    <kbd className="px-1.5 py-0.5 bg-indigo-800 border border-indigo-400 text-white rounded font-mono text-[10px] font-bold">Alt+2</kbd>
+                    <kbd className="px-1.5 py-0.5 bg-indigo-800 border border-indigo-400 text-white rounded font-mono text-[10px] font-bold">Alt+3</kbd>
+                  </div>
+                </div>
                 <div className="flex items-center justify-between p-2 bg-indigo-950/40 rounded-lg border border-indigo-500/30 col-span-2">
                   <span className="text-indigo-300 font-semibold">GitHub 동기화 (클라우드 저장)</span>
                   <kbd className="px-2 py-0.5 bg-indigo-600 border border-indigo-400 text-white rounded font-mono text-[11px] font-bold">Ctrl + S</kbd>
