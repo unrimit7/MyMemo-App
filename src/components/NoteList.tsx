@@ -150,8 +150,8 @@ export const NoteList: React.FC<NoteListProps> = ({
       }}
     >
       {/* 상단 헤더 & 모바일 햄버거 & 새 메모 버튼 */}
-      <div className="p-3.5 border-b border-slate-800 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 truncate">
+      <div className="p-3 border-b border-slate-800 flex items-center justify-between gap-1.5">
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
           <button
             onClick={onOpenSidebar}
             className="md:hidden p-1.5 -ml-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 shrink-0"
@@ -175,43 +175,42 @@ export const NoteList: React.FC<NoteListProps> = ({
           {parentProject && (
             <button
               onClick={() => onSelectProject?.(parentProject.id)}
-              className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 flex items-center gap-0.5 text-xs shrink-0"
-              title={`${parentProject.name} 폴더로 이동`}
+              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg flex items-center text-xs shrink-0 transition-colors"
+              title={`상위 폴더 (${parentProject.name}) 로 이동`}
             >
-              <ChevronLeft size={16} />
-              <span className="truncate max-w-[70px] hidden sm:inline">{parentProject.name}</span>
+              <ChevronLeft size={16} className="text-indigo-400" />
             </button>
           )}
 
-          <div className="truncate">
-            <h2 className="font-semibold text-slate-100 text-sm truncate flex items-center gap-1.5">
+          <div className="min-w-0 flex-1">
+            <h2 className="font-semibold text-slate-100 text-sm truncate flex items-center gap-1" title={projectTitle}>
               {currentProject?.isLocalOnly && <Lock size={13} className="text-amber-400 shrink-0" />}
-              <span>{projectTitle}</span>
+              <span className="truncate">{projectTitle}</span>
             </h2>
-            <span className="text-xs text-slate-400 font-mono">
+            <span className="text-[11px] text-slate-400 font-mono block truncate">
               {filteredNotes.length}개의 메모
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-1 shrink-0">
           {currentProject && onRequestCreateSubfolder && (
             <button
               onClick={() => onRequestCreateSubfolder(currentProject.id)}
-              className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-indigo-300 border border-slate-700/80 rounded-lg text-xs font-semibold shadow-sm transition-all active:scale-95"
+              className="p-1.5 bg-slate-800 hover:bg-slate-750 text-indigo-300 hover:text-white border border-slate-700/80 rounded-lg text-xs font-medium shadow-sm transition-all active:scale-95 flex items-center gap-1"
               title={`${currentProject.name}의 하위 폴더 생성`}
             >
-              <FolderPlus size={14} className="text-indigo-400" />
-              <span className="hidden sm:inline">하위 폴더</span>
+              <FolderPlus size={15} className="text-indigo-400" />
             </button>
           )}
 
           <button
             onClick={onCreateNote}
-            className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-sm transition-all active:scale-95"
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-sm transition-all active:scale-95"
+            title="새 메모 작성"
           >
             <Plus size={15} />
-            <span>새 메모</span>
+            <span className="hidden xs:inline">새 메모</span>
           </button>
 
           {/* 동기화 버튼 (사이드바가 접혔을 때도 즉시 동기화 가능) */}
