@@ -14,7 +14,8 @@ import {
   ChevronRight,
   ChevronDown,
   Pencil,
-  PanelLeftClose
+  PanelLeftClose,
+  Calendar
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -38,6 +39,8 @@ interface SidebarProps {
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
   pendingCount?: number;
+  isCalendarActive?: boolean;
+  onOpenCalendar?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -61,6 +64,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isCollapsed,
   onToggleCollapse,
   pendingCount,
+  isCalendarActive,
+  onOpenCalendar,
 }) => {
   // 드래그 오버 중인 폴더 ID
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
@@ -459,7 +464,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onCloseMobile();
             }}
             className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-              activeProjectId === 'ALL'
+              !isCalendarActive && activeProjectId === 'ALL'
                 ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
                 : 'text-slate-300 hover:bg-slate-900 hover:text-slate-100'
             }`}
@@ -470,6 +475,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
             <span className="text-xs bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded-full font-mono">
               {totalNotes}
+            </span>
+          </button>
+
+          {/* 📅 캘린더 / 일정 보기 */}
+          <button
+            onClick={() => {
+              onOpenCalendar?.();
+              onCloseMobile();
+            }}
+            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              isCalendarActive
+                ? 'bg-indigo-600/25 text-indigo-300 border border-indigo-500/40 shadow-sm'
+                : 'text-slate-300 hover:bg-slate-900 hover:text-slate-100'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <Calendar size={16} className="text-rose-400" />
+              <span className="font-semibold">캘린더 / 일정</span>
+            </div>
+            <span className="text-[10px] bg-rose-500/10 text-rose-300 border border-rose-500/25 px-1.5 py-0.5 rounded-md font-mono">
+              View
             </span>
           </button>
 

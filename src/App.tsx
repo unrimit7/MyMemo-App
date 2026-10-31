@@ -18,6 +18,7 @@ import { NoteList } from './components/NoteList';
 import { NoteEditor } from './components/NoteEditor';
 import { SettingsModal } from './components/SettingsModal';
 import { ConfirmModal } from './components/ConfirmModal';
+import { CalendarView } from './components/CalendarView';
 import { processFileForNote } from './utils/file';
 
 interface DeleteConfirmState {
@@ -44,6 +45,7 @@ export function App() {
   const [isSidebarOpenMobile, setIsSidebarOpenMobile] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncToast, setSyncToast] = useState<string | null>(null);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
 
   // 모바일 화면 뷰 모드 ('list' 또는 'editor')
   const [mobileScreen, setMobileScreen] = useState<'list' | 'editor'>(() => {
@@ -436,6 +438,57 @@ export function App() {
   const handleSelectProject = (id: string) => {
     setActiveProjectId(id);
     localStorage.setItem('mymemo_active_project_id', id);
+    setIsCalendarOpen(false);
+  };
+
+  // 캘린더 뷰 열기 / 닫기 핸들러
+  const handleOpenCalendar = () => {
+    setIsCalendarOpen(true);
+  };
+
+  const handleCloseCalendar = () => {
+    setIsCalendarOpen(false);
+  };
+
+  // 캘린더에서 특정 메모를 클릭하여 열기
+  const handleSelectNoteFromCalendar = (noteId: string) => {
+    setIsCalendarOpen(false);
+    handleSelectNote(noteId);
+  };
+
+  // 캘린더에서 특정 날짜에 새 메모 작성 (+ 버튼)
+  const handleCreateNoteForDate = async (dateStr: string) => {
+    // 1. "다이어리" 또는 "일정" 폴더가 있는지 확인, 없으면 "다이어리" 메인 폴더 자동 생성
+    let diaryProj = projects.find((p) => p.name === '다이어리' || p.name === '일정');
+    if (!diaryProj) {
+      const newProj: Project = {
+        id: `proj-${Date.now()}`,
+        name: '다이어리',
+        parentId: null,
+        isLocalOnly: false,
+        createdAt: new Date().toISOString(),
+      };
+      await saveProject(newProj);
+      diaryProj = newProj;
+      setProjects((prev) => [newProj, ...prev]);
+    }
+
+    const noteTitle = `${dateStr} 업무일지`;
+    const newNote: Note = {
+      id: `note-${Date.now()}`,
+      projectId: diaryProj.id,
+      title: noteTitle,
+      content: `# 📋 ${dateStr} (일지)\n\n- [ ] `,
+      isLocalOnly: diaryProj.isLocalOnly,
+      syncStatus: diaryProj.isLocalOnly ? 'local_only' : 'pending',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await saveNote(newNote);
+    setNotes((prev) => [newNote, ...prev]);
+    setIsCalendarOpen(false);
+    handleSelectNote(newNote.id);
   };
 
   // 모바일 목록으로 복귀 핸들러
@@ -584,58 +637,74 @@ export function App() {
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={toggleSidebar}
         pendingCount={pendingCount}
+        isCalendarActive={isCalendarOpen}
+        onOpenCalendar={handleOpenCalendar}
       />
 
-      {/* 2단: 메모 목록 (소주제 목록) */}
-      <div className={`
-        ${mobileScreen === 'list' ? 'flex' : 'hidden'} 
-        ${isNoteListCollapsed ? 'md:hidden' : 'md:flex'}
-        w-full md:w-80 lg:w-96 h-full shrink-0
-      `}>
-        <NoteList
+      {/* 2단 & 3단 영역: 캘린더 모드일 때는 대형 캘린더 뷰, 일반 모드일 때는 메모 목록 & 에디터 */}
+      {isCalendarOpen ? (
+        <CalendarView
           notes={notes}
           projects={projects}
           activeProjectId={activeProjectId}
-          activeNoteId={activeNoteId}
-          noteCounts={noteCounts}
-          onSelectProject={handleSelectProject}
-          onSelectNote={handleSelectNote}
-          onCreateNote={handleCreateNote}
-          onDeleteNote={requestDeleteNote}
-          onOpenSidebar={() => setIsSidebarOpenMobile(true)}
-          onRequestCreateSubfolder={(parentId) => {
-            setExternalAddTarget({ parentId, key: Date.now() });
-            setIsSidebarOpenMobile(true);
-          }}
-          onDropFiles={(files) => handleDropFilesToProject(activeProjectId, files)}
-          isSidebarCollapsed={isSidebarCollapsed}
-          onToggleSidebar={toggleSidebar}
-          onToggleCollapse={toggleNoteList}
-          pendingCount={pendingCount}
-          onSync={handleManualSync}
-          isSyncing={isSyncing}
+          onSelectNote={handleSelectNoteFromCalendar}
+          onCreateNoteForDate={handleCreateNoteForDate}
+          onClose={handleCloseCalendar}
         />
-      </div>
+      ) : (
+        <>
+          {/* 2단: 메모 목록 (소주제 목록) */}
+          <div className={`
+            ${mobileScreen === 'list' ? 'flex' : 'hidden'} 
+            ${isNoteListCollapsed ? 'md:hidden' : 'md:flex'}
+            w-full md:w-80 lg:w-96 h-full shrink-0
+          `}>
+            <NoteList
+              notes={notes}
+              projects={projects}
+              activeProjectId={activeProjectId}
+              activeNoteId={activeNoteId}
+              noteCounts={noteCounts}
+              onSelectProject={handleSelectProject}
+              onSelectNote={handleSelectNote}
+              onCreateNote={handleCreateNote}
+              onDeleteNote={requestDeleteNote}
+              onOpenSidebar={() => setIsSidebarOpenMobile(true)}
+              onRequestCreateSubfolder={(parentId) => {
+                setExternalAddTarget({ parentId, key: Date.now() });
+                setIsSidebarOpenMobile(true);
+              }}
+              onDropFiles={(files) => handleDropFilesToProject(activeProjectId, files)}
+              isSidebarCollapsed={isSidebarCollapsed}
+              onToggleSidebar={toggleSidebar}
+              onToggleCollapse={toggleNoteList}
+              pendingCount={pendingCount}
+              onSync={handleManualSync}
+              isSyncing={isSyncing}
+            />
+          </div>
 
-      {/* 3단: 메모 에디터 & 본문 내용 */}
-      <div className={`
-        ${mobileScreen === 'editor' ? 'flex' : 'hidden'} md:flex
-        flex-1 h-full overflow-hidden
-      `}>
-        <NoteEditor
-          note={activeNote}
-          projects={projects}
-          onUpdateNote={handleUpdateNote}
-          onBackToList={handleBackToList}
-          onDeleteNote={requestDeleteNote}
-          isSidebarCollapsed={isSidebarCollapsed}
-          onToggleSidebar={toggleSidebar}
-          isNoteListCollapsed={isNoteListCollapsed}
-          onToggleNoteList={toggleNoteList}
-          onSync={handleManualSync}
-          isSyncing={isSyncing}
-        />
-      </div>
+          {/* 3단: 메모 에디터 & 본문 내용 */}
+          <div className={`
+            ${mobileScreen === 'editor' ? 'flex' : 'hidden'} md:flex
+            flex-1 h-full overflow-hidden
+          `}>
+            <NoteEditor
+              note={activeNote}
+              projects={projects}
+              onUpdateNote={handleUpdateNote}
+              onBackToList={handleBackToList}
+              onDeleteNote={requestDeleteNote}
+              isSidebarCollapsed={isSidebarCollapsed}
+              onToggleSidebar={toggleSidebar}
+              isNoteListCollapsed={isNoteListCollapsed}
+              onToggleNoteList={toggleNoteList}
+              onSync={handleManualSync}
+              isSyncing={isSyncing}
+            />
+          </div>
+        </>
+      )}
 
       {/* 설정 모달 */}
       <SettingsModal
