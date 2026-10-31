@@ -110,36 +110,54 @@
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
 }
 
-/* 마크다운 표(Table) 스타일 */
-.markdown-preview table {
+/* 마크다운 표(Table) 가로 스크롤 래퍼 및 반응형 스타일 */
+.table-scroll-container {
   width: 100%;
-  border-collapse: collapse;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   margin: 1.25rem 0;
-  font-size: 0.875rem;
-  border: 1px solid #334155;
   border-radius: 0.5rem;
-  overflow: hidden;
+  border: 1px solid #334155;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
+.table-scroll-container table,
+.markdown-preview table {
+  width: 100%;
+  min-width: 500px; /* 모바일에서도 컬럼이 비정상적으로 찌그러지는 현상 방지 */
+  border-collapse: collapse;
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.table-scroll-container th,
 .markdown-preview th {
   background-color: #1e293b;
   color: #f8fafc;
   font-weight: 600;
   text-align: left;
-  padding: 0.65rem 0.85rem;
+  padding: 0.7rem 0.9rem;
   border: 1px solid #334155;
+  word-break: keep-all;
+  white-space: nowrap;
 }
 
+.table-scroll-container td,
 .markdown-preview td {
-  padding: 0.6rem 0.85rem;
+  padding: 0.65rem 0.9rem;
   border: 1px solid #334155;
   color: #cbd5e1;
+  word-break: keep-all; /* 단어가 글자 단위로 쪼개져 한 줄에 한 글자만 나오는 현상 완벽 방지 */
+  min-width: 120px;     /* 각 컬럼의 최소 너비 보장 */
+  line-height: 1.5;
 }
 
+.table-scroll-container tr:nth-child(even),
 .markdown-preview tr:nth-child(even) {
   background-color: rgba(30, 41, 59, 0.45);
 }
 
+.table-scroll-container tr:hover,
 .markdown-preview tr:hover {
   background-color: rgba(99, 102, 241, 0.08);
 }

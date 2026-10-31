@@ -174,6 +174,40 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     return chain;
   }, [note?.projectId, projects]);
 
+  // 사이드바와 100% 동일한 계층 트리 순서로 정렬된 폴더 목록 생성
+  const hierarchicalProjects = useMemo(() => {
+    const rootProjects: Project[] = [];
+    const childrenMap: Record<string, Project[]> = {};
+
+    projects.forEach((p) => {
+      if (!p.parentId) {
+        rootProjects.push(p);
+      } else {
+        if (!childrenMap[p.parentId]) childrenMap[p.parentId] = [];
+        childrenMap[p.parentId].push(p);
+      }
+    });
+
+    const result: { project: Project; depth: number }[] = [];
+
+    const traverse = (proj: Project, depth: number) => {
+      result.push({ project: proj, depth });
+      const children = childrenMap[proj.id] || [];
+      children.forEach((child) => traverse(child, depth + 1));
+    };
+
+    rootProjects.forEach((root) => traverse(root, 0));
+
+    // 혹시 parentId가 유효하지 않아 누락된 고아 폴더가 있다면 맨 뒤에 안전하게 추가
+    projects.forEach((p) => {
+      if (!result.some((r) => r.project.id === p.id)) {
+        result.push({ project: p, depth: 0 });
+      }
+    });
+
+    return result;
+  }, [projects]);
+
   if (!note) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-slate-950 text-slate-500 p-6 text-center">
@@ -530,7 +564,11 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     try {
       // 마크다운 체크박스(- [ ] 또는 - [x]) 뒤에 띄어쓰기를 빠뜨린 경우에도 정상 체크박스로 렌더링되도록 자동 보정
       const normalizedContent = (content || '').replace(/^(\s*-\s*\[[ xX]\])([^\s\n])/gm, '$1 $2');
-      const rawHtml = marked.parse(normalizedContent, { breaks: true, gfm: true }) as string;
+      let rawHtml = marked.parse(normalizedContent, { breaks: true, gfm: true }) as string;
+
+      // 표(table)를 모바일 가로 스크롤 컨테이너로 감싸 좁은 화면에서 컬럼이 찌그러지는 현상 방지
+      rawHtml = rawHtml.replace(/<table>([\s\S]*?)<\/table>/g, '<div class="table-scroll-container"><table>$1</table></div>');
+
       return { __html: renderAttachmentsInHtml(rawHtml, localAttachments) };
     } catch {
       return { __html: '<p>마크다운을 렌더링할 수 없습니다.</p>' };
@@ -627,12 +665,11 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer truncate max-w-full font-medium"
               title="클릭하여 다른 폴더를 선택하면 메모가 해당 폴더로 이동합니다."
             >
-              {projects.map((p) => {
-                const depth = p.parentId ? 1 : 0;
-                const prefix = depth === 1 ? '　└ ' : '';
+              {hierarchicalProjects.map(({ project: p, depth }) => {
+                const indent = '　'.repeat(depth) + (depth > 0 ? '└ ' : '');
                 return (
                   <option key={p.id} value={p.id} className="bg-slate-900 text-slate-200">
-                    {prefix}{p.isLocalOnly ? `🔒 ${p.name}` : p.name}
+                    {indent}{p.isLocalOnly ? `🔒 ${p.name}` : p.name}
                   </option>
                 );
               })}

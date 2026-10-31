@@ -186,7 +186,8 @@ export function App() {
         localStorage.setItem('mymemo_active_note_id', targetNote.id);
       }
 
-      if (config && config.isConnected) {
+      // 설정이 연결되어 있고 자동 동기화 옵션이 켜져 있을 때만 앱 시작 시 동기화
+      if (config && config.isConnected && config.autoSync) {
         runSync(true, config);
       }
     };
@@ -262,7 +263,7 @@ export function App() {
       prev.map((n) => (n.projectId === id && !n.isLocalOnly ? { ...n, syncStatus: 'pending' } : n))
     );
 
-    if (gitHubConfig?.isConnected) {
+    if (gitHubConfig?.isConnected && gitHubConfig.autoSync) {
       setTimeout(() => runSync(true), 1500);
     }
   };
@@ -307,7 +308,7 @@ export function App() {
       setSyncToast(`${createdNotes.length}개의 파일이 새 메모로 등록되었습니다!`);
       setTimeout(() => setSyncToast(null), 3500);
 
-      if (gitHubConfig?.isConnected && !isLocalOnly) {
+      if (gitHubConfig?.isConnected && !isLocalOnly && gitHubConfig.autoSync) {
         setTimeout(() => runSync(true), 2000);
       }
     }
@@ -390,8 +391,8 @@ export function App() {
         localStorage.removeItem('mymemo_active_note_id');
       }
 
-      // GitHub 자동 삭제 동기화 예약
-      if (gitHubConfig?.isConnected) {
+      // GitHub 자동 삭제 동기화 예약 (autoSync 설정 시에만)
+      if (gitHubConfig?.isConnected && gitHubConfig.autoSync) {
         setTimeout(() => runSync(true), 1500);
       }
     } else if (type === 'project') {
@@ -424,8 +425,8 @@ export function App() {
         handleSelectProject('ALL');
       }
 
-      // GitHub 자동 삭제 동기화 예약
-      if (gitHubConfig?.isConnected) {
+      // GitHub 자동 삭제 동기화 예약 (autoSync 설정 시에만)
+      if (gitHubConfig?.isConnected && gitHubConfig.autoSync) {
         setTimeout(() => runSync(true), 1500);
       }
     }
