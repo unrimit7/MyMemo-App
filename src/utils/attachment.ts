@@ -206,7 +206,37 @@ export function renderAttachmentsInHtml(
       if (!att) {
         return `<span class="inline-block p-2 rounded bg-rose-950/40 text-rose-400 text-xs border border-rose-800">⚠️ 첨부 이미지(${attId})를 찾을 수 없습니다.</span>`;
       }
-      return `<img ${pre}src="${att.data}" alt="${att.name}" class="rounded-xl max-w-full my-3 border border-slate-800 shadow-md cursor-pointer hover:opacity-95 transition-opacity"${post} />`;
+
+      // alt 속성에 지정된 크기 옵션 파싱 (예: ![사진|작게], ![사진|보통], ![사진|300], ![사진|50%])
+      let widthStyle = '';
+      const fullTag = `${pre} ${post}`;
+      const altMatch = fullTag.match(/alt=["']([^"']*)["']/i);
+      let cleanAlt = att.name;
+
+      if (altMatch) {
+        const rawAlt = altMatch[1];
+        const pipeIdx = rawAlt.indexOf('|');
+        if (pipeIdx !== -1) {
+          cleanAlt = rawAlt.slice(0, pipeIdx).trim() || att.name;
+          const sizeSpec = rawAlt.slice(pipeIdx + 1).trim().toLowerCase();
+          if (sizeSpec === '작게' || sizeSpec === 'small' || sizeSpec === 's') {
+            widthStyle = 'max-width: 220px; width: 100%;';
+          } else if (sizeSpec === '보통' || sizeSpec === '중간' || sizeSpec === 'medium' || sizeSpec === 'm') {
+            widthStyle = 'max-width: 380px; width: 100%;';
+          } else if (sizeSpec === '크게' || sizeSpec === 'large' || sizeSpec === 'l') {
+            widthStyle = 'max-width: 580px; width: 100%;';
+          } else if (sizeSpec === '전체' || sizeSpec === 'full' || sizeSpec === '100%') {
+            widthStyle = 'max-width: 100%; width: 100%; max-height: none;';
+          } else if (/^\d+(px)?$/.test(sizeSpec)) {
+            const pxVal = sizeSpec.replace('px', '');
+            widthStyle = `max-width: ${pxVal}px; width: 100%;`;
+          } else if (/^\d+%$/.test(sizeSpec)) {
+            widthStyle = `max-width: ${sizeSpec}; width: ${sizeSpec};`;
+          }
+        }
+      }
+
+      return `<img ${pre}src="${att.data}" alt="${cleanAlt}" style="${widthStyle}" class="rounded-xl my-3 border border-slate-800 shadow-md cursor-zoom-in hover:opacity-95 transition-opacity note-image" data-att-id="${attId}"${post} />`;
     }
   );
 

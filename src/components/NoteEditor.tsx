@@ -90,6 +90,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const [isProcessingPdf, setIsProcessingPdf] = useState(false);
   const [isDragOverEditor, setIsDragOverEditor] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+  const [lightboxImage, setLightboxImage] = useState<{ attId: string; src: string; alt: string } | null>(null);
 
   // 한글 IME 조합 깨짐 방지를 위한 로컬 버퍼 상태
   const [localTitle, setLocalTitle] = useState(note?.title || '');
@@ -937,13 +938,42 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
   const handlePreviewClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
+    // 1. 체크박스 클릭 처리
     if (target && target.tagName === 'INPUT' && (target as HTMLInputElement).type === 'checkbox') {
       const taskIndex = target.getAttribute('data-task-index');
       if (taskIndex !== null) {
         const idx = parseInt(taskIndex, 10);
         toggleTaskCheckbox(idx);
       }
+      return;
     }
+
+    // 2. 이미지 클릭 시 확대 및 크기 조절 라이트박스 열기
+    if (target && target.tagName === 'IMG') {
+      const img = target as HTMLImageElement;
+      const attId = img.getAttribute('data-att-id') || '';
+      if (img.src) {
+        setLightboxImage({
+          attId,
+          src: img.src,
+          alt: img.alt || '첨부 이미지',
+        });
+      }
+    }
+  };
+
+  // 본문 내 첨부 이미지 크기 조절 (|작게, |보통, |크게, |전체)
+  const handleResizeImageInContent = (attId: string, sizeLabel: '작게' | '보통' | '크게' | '전체') => {
+    if (!attId) return;
+    const regex = new RegExp(`!\\[([^\\]]*?)\\]\\(attachment:${attId}\\)`, 'g');
+    const newContent = localContent.replace(regex, (_match, rawAlt) => {
+      const cleanAlt = (rawAlt.split('|')[0] || '').trim() || '이미지';
+      return `![${cleanAlt}|${sizeLabel}](attachment:${attId})`;
+    });
+
+    setLocalContent(newContent);
+    onUpdateNote({ content: newContent });
+    setLightboxImage((prev) => (prev ? { ...prev, alt: `${prev.alt.split('|')[0]}|${sizeLabel}` } : null));
   };
 
   const renderMarkdown = (content: string) => {
@@ -1498,6 +1528,65 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <Edit3 size={15} />
           <span>편집</span>
         </button>
+      )}
+
+      {/* 이미지 확대 및 크기 조절 모달 (Lightbox) */}
+      {lightboxImage && (
+        <div 
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center p-3 md:p-6 bg-black/85 backdrop-blur-md animate-in fade-in"
+          onClick={() => setLightboxImage(null)}
+        >
+          {/* 상단 컨트롤 바 */}
+          <div 
+            className="w-full max-w-xl bg-slate-900 border border-slate-700/80 rounded-2xl p-3 mb-3 shadow-2xl flex flex-wrap items-center justify-between gap-2 z-10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <ImageIcon size={16} className="text-indigo-400 shrink-0" />
+              <span className="text-xs font-semibold text-slate-200 truncate">{lightboxImage.alt.split('|')[0]}</span>
+            </div>
+
+            {/* 크기 조절 원클릭 버튼 그룹 */}
+            {lightboxImage.attId && (
+              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                <span className="text-[11px] text-slate-400 px-1 font-medium">크기:</span>
+                {(['작게', '보통', '크게', '전체'] as const).map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={() => handleResizeImageInContent(lightboxImage.attId, size)}
+                    className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white transition-all active:scale-95"
+                    title={`본문에서 이 이미지 크기를 '${size}'으로 변경`}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* 닫기 버튼 */}
+            <button
+              type="button"
+              onClick={() => setLightboxImage(null)}
+              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors ml-auto"
+              title="닫기"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* 원본 이미지 뷰어 */}
+          <div 
+            className="relative max-w-full max-h-[75vh] flex items-center justify-center overflow-auto rounded-2xl shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={lightboxImage.src}
+              alt={lightboxImage.alt}
+              className="max-w-full max-h-[75vh] object-contain rounded-xl border border-slate-700/60"
+            />
+          </div>
+        </div>
       )}
 
       {/* 단축키 안내 팝업 모달 */}

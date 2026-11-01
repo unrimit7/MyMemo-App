@@ -308,106 +308,111 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
             <span>메모 닫기</span>
           </button>
 
-          {/* 계층형 트리 체크박스 팝오버 창 */}
+          {/* 계층형 트리 체크박스 팝오버 창 (모바일에서는 화면 중앙 팝업 모달, 데스크톱에서는 버튼 아래 드롭다운) */}
           {isFolderFilterOpen && (
             <div 
-              className="absolute right-0 top-full mt-1.5 w-72 md:w-80 bg-slate-900 border border-slate-700/90 rounded-2xl shadow-2xl z-50 p-3 space-y-2 animate-in fade-in zoom-in-95 duration-150"
-              onClick={(e) => e.stopPropagation()}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs md:bg-transparent md:p-0 md:absolute md:inset-auto md:right-0 md:top-full md:mt-1.5"
+              onClick={() => setIsFolderFilterOpen(false)}
             >
-              <div className="flex items-center justify-between pb-2 border-b border-slate-800 px-1">
-                <span className="text-xs font-bold text-slate-200">표시할 폴더 선택</span>
-                <div className="flex items-center gap-2">
+              <div 
+                className="w-full max-w-sm md:w-80 bg-slate-900 border border-slate-700/90 rounded-2xl shadow-2xl p-4 md:p-3 space-y-2.5 animate-in fade-in zoom-in-95 duration-150"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800 px-1">
+                  <span className="text-xs font-bold text-slate-200">표시할 폴더 선택</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedFolderIds(new Set(projects.map((p) => p.id)))}
+                      className="text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold"
+                    >
+                      전체 선택
+                    </button>
+                    <span className="text-slate-700 text-xs">|</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedFolderIds(new Set())}
+                      className="text-[11px] text-slate-400 hover:text-slate-200"
+                    >
+                      전체 해제
+                    </button>
+                  </div>
+                </div>
+
+                {/* 계층형 트리 목록 (들여쓰기 └ 구조) */}
+                <div className="max-h-64 overflow-y-auto space-y-1 pr-1 scrollbar-thin">
+                  {hierarchicalProjects.map(({ project: p, depth }) => {
+                    const isChecked = selectedFolderIds.has(p.id);
+                    const count = notes.filter((n) => n.projectId === p.id).length;
+
+                    return (
+                      <div
+                        key={p.id}
+                        className={`flex items-center justify-between py-2 px-2.5 rounded-lg hover:bg-slate-800/90 transition-colors text-xs cursor-pointer select-none group ${
+                          isChecked ? 'text-slate-100 font-medium bg-slate-800/40' : 'text-slate-400'
+                        }`}
+                        style={{ paddingLeft: `${Math.min(depth * 14 + 10, 48)}px` }}
+                        onClick={() => {
+                          const next = new Set(selectedFolderIds);
+                          if (next.has(p.id)) {
+                            next.delete(p.id);
+                          } else {
+                            next.add(p.id);
+                          }
+                          setSelectedFolderIds(next);
+                        }}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {}} // 부모 div onClick으로 처리
+                            className="accent-indigo-500 rounded cursor-pointer shrink-0 w-4 h-4"
+                          />
+                          {depth > 0 && (
+                            <span className="text-slate-500 font-mono text-[11px] shrink-0">└</span>
+                          )}
+                          {p.isLocalOnly ? (
+                            <Lock size={13} className="text-amber-400 shrink-0" />
+                          ) : (
+                            <Folder size={13} className="text-indigo-400 shrink-0" />
+                          )}
+                          <span className="truncate">{p.name}</span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0 pl-1">
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            {count}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedFolderIds(new Set([p.id]));
+                            }}
+                            className="text-[10px] text-indigo-400 hover:text-indigo-300 hover:bg-indigo-950/60 border border-indigo-500/20 px-1.5 py-0.5 rounded md:opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="이 폴더만 단독 보기"
+                          >
+                            단독
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-xs">
+                  <span className="text-[11px] text-slate-400">
+                    {selectedFolderIds.size}개 폴더 활성화
+                  </span>
                   <button
                     type="button"
-                    onClick={() => setSelectedFolderIds(new Set(projects.map((p) => p.id)))}
-                    className="text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold"
+                    onClick={() => setIsFolderFilterOpen(false)}
+                    className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-sm"
                   >
-                    전체 선택
-                  </button>
-                  <span className="text-slate-700 text-xs">|</span>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedFolderIds(new Set())}
-                    className="text-[11px] text-slate-400 hover:text-slate-200"
-                  >
-                    전체 해제
+                    적용
                   </button>
                 </div>
-              </div>
-
-              {/* 계층형 트리 목록 (들여쓰기 └ 구조) */}
-              <div className="max-h-64 overflow-y-auto space-y-1 pr-1 scrollbar-thin">
-                {hierarchicalProjects.map(({ project: p, depth }) => {
-                  const isChecked = selectedFolderIds.has(p.id);
-                  const count = notes.filter((n) => n.projectId === p.id).length;
-
-                  return (
-                    <div
-                      key={p.id}
-                      className={`flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-slate-800/90 transition-colors text-xs cursor-pointer select-none group ${
-                        isChecked ? 'text-slate-100 font-medium' : 'text-slate-500'
-                      }`}
-                      style={{ paddingLeft: `${depth * 14 + 6}px` }}
-                      onClick={() => {
-                        const next = new Set(selectedFolderIds);
-                        if (next.has(p.id)) {
-                          next.delete(p.id);
-                        } else {
-                          next.add(p.id);
-                        }
-                        setSelectedFolderIds(next);
-                      }}
-                    >
-                      <div className="flex items-center gap-2 truncate">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => {}} // 부모 div onClick으로 처리
-                          className="accent-indigo-500 rounded cursor-pointer shrink-0"
-                        />
-                        {depth > 0 && (
-                          <span className="text-slate-500 font-mono text-[11px] shrink-0">└</span>
-                        )}
-                        {p.isLocalOnly ? (
-                          <Lock size={12} className="text-amber-400 shrink-0" />
-                        ) : (
-                          <Folder size={12} className="text-indigo-400 shrink-0" />
-                        )}
-                        <span className="truncate">{p.name}</span>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 shrink-0 pl-1">
-                        <span className="text-[10px] text-slate-500 font-mono">
-                          {count}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedFolderIds(new Set([p.id]));
-                          }}
-                          className="text-[10px] text-indigo-400 hover:text-indigo-300 hover:bg-indigo-950/60 border border-indigo-500/20 px-1 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="이 폴더만 단독 보기"
-                        >
-                          단독
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-xs">
-                <span className="text-[11px] text-slate-400">
-                  {selectedFolderIds.size}개 폴더 활성화
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setIsFolderFilterOpen(false)}
-                  className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold"
-                >
-                  적용
-                </button>
               </div>
             </div>
           )}

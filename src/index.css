@@ -107,11 +107,20 @@
 
 .markdown-preview img {
   max-width: 100%;
+  max-height: 420px; /* 휴대전화 캡처 등 세로로 긴 이미지가 화면 전체를 뒤덮는 현상 방지 */
+  width: auto;
   height: auto;
-  border-radius: 0.5rem;
-  margin: 1rem 0;
+  object-fit: contain;
+  border-radius: 0.75rem;
+  margin: 0.75rem 0;
   border: 1px solid #334155;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+  cursor: zoom-in;
+  transition: all 0.2s ease;
+}
+
+.markdown-preview img:hover {
+  border-color: #6366f1;
 }
 
 /* 마크다운 표(Table) 가로 스크롤 래퍼 및 반응형 스타일 */
