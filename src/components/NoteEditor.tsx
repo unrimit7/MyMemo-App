@@ -965,7 +965,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   // 본문 내 첨부 이미지 크기 조절 (|작게, |보통, |크게, |전체)
   const handleResizeImageInContent = (attId: string, sizeLabel: '작게' | '보통' | '크게' | '전체') => {
     if (!attId) return;
-    const regex = new RegExp(`!\\[([^\\]]*?)\\]\\(attachment:${attId}\\)`, 'g');
+    const regex = new RegExp(`!\\[([^\\]]*?)\\]\\((?:attachment:)?${attId}\\)`, 'g');
     const newContent = localContent.replace(regex, (_match, rawAlt) => {
       const cleanAlt = (rawAlt.split('|')[0] || '').trim() || '이미지';
       return `![${cleanAlt}|${sizeLabel}](attachment:${attId})`;
@@ -1550,17 +1550,24 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {lightboxImage.attId && (
               <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
                 <span className="text-[11px] text-slate-400 px-1 font-medium">크기:</span>
-                {(['작게', '보통', '크게', '전체'] as const).map((size) => (
-                  <button
-                    key={size}
-                    type="button"
-                    onClick={() => handleResizeImageInContent(lightboxImage.attId, size)}
-                    className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white transition-all active:scale-95"
-                    title={`본문에서 이 이미지 크기를 '${size}'으로 변경`}
-                  >
-                    {size}
-                  </button>
-                ))}
+                {(['작게', '보통', '크게', '전체'] as const).map((size) => {
+                  const isCurrent = lightboxImage.alt.includes(`|${size}`);
+                  return (
+                    <button
+                      key={size}
+                      type="button"
+                      onClick={() => handleResizeImageInContent(lightboxImage.attId, size)}
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all active:scale-95 ${
+                        isCurrent
+                          ? 'bg-indigo-600 text-white ring-1 ring-indigo-400 shadow-sm'
+                          : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white'
+                      }`}
+                      title={`본문에서 이 이미지 크기를 '${size}'으로 변경 (가로/세로 동시 조절)`}
+                    >
+                      {size}
+                    </button>
+                  );
+                })}
               </div>
             )}
 

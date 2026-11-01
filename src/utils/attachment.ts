@@ -220,18 +220,18 @@ export function renderAttachmentsInHtml(
           cleanAlt = rawAlt.slice(0, pipeIdx).trim() || att.name;
           const sizeSpec = rawAlt.slice(pipeIdx + 1).trim().toLowerCase();
           if (sizeSpec === '작게' || sizeSpec === 'small' || sizeSpec === 's') {
-            widthStyle = 'max-width: 220px; width: 100%;';
+            widthStyle = 'max-width: 180px; max-height: 260px; width: auto; height: auto; display: block;';
           } else if (sizeSpec === '보통' || sizeSpec === '중간' || sizeSpec === 'medium' || sizeSpec === 'm') {
-            widthStyle = 'max-width: 380px; width: 100%;';
+            widthStyle = 'max-width: 340px; max-height: 480px; width: auto; height: auto; display: block;';
           } else if (sizeSpec === '크게' || sizeSpec === 'large' || sizeSpec === 'l') {
-            widthStyle = 'max-width: 580px; width: 100%;';
+            widthStyle = 'max-width: 560px; max-height: 750px; width: auto; height: auto; display: block;';
           } else if (sizeSpec === '전체' || sizeSpec === 'full' || sizeSpec === '100%') {
-            widthStyle = 'max-width: 100%; width: 100%; max-height: none;';
+            widthStyle = 'max-width: 100%; max-height: none; width: auto; height: auto; display: block;';
           } else if (/^\d+(px)?$/.test(sizeSpec)) {
-            const pxVal = sizeSpec.replace('px', '');
-            widthStyle = `max-width: ${pxVal}px; width: 100%;`;
+            const pxVal = parseInt(sizeSpec.replace('px', ''), 10);
+            widthStyle = `max-width: ${pxVal}px; max-height: ${Math.round(pxVal * 1.6)}px; width: auto; height: auto; display: block;`;
           } else if (/^\d+%$/.test(sizeSpec)) {
-            widthStyle = `max-width: ${sizeSpec}; width: ${sizeSpec};`;
+            widthStyle = `max-width: ${sizeSpec}; max-height: none; width: auto; height: auto; display: block;`;
           }
         }
       }
