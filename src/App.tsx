@@ -807,13 +807,11 @@ export function App() {
       {!isSidebarCollapsed && (
         <div
           onMouseDown={handleSidebarResizeStart}
-          className={`hidden md:flex w-1.5 hover:w-2 -ml-0.5 z-30 cursor-col-resize transition-all select-none items-center justify-center shrink-0 group ${
-            isResizingSidebar ? 'bg-indigo-500' : 'hover:bg-indigo-500/50 bg-slate-900 border-r border-slate-800'
+          className={`hidden md:block w-1 z-30 cursor-col-resize select-none shrink-0 transition-colors ${
+            isResizingSidebar ? 'bg-indigo-500' : 'bg-slate-800 hover:bg-indigo-500'
           }`}
           title="마우스로 드래그하여 폴더 목록 너비 조절"
-        >
-          <div className="w-0.5 h-6 bg-slate-600 group-hover:bg-indigo-300 rounded-full" />
-        </div>
+        />
       )}
 
       {/* 2단 & 3단 영역: 캘린더 모드일 때는 대형 캘린더 뷰, 일반 모드일 때는 메모 목록 & 에디터 */}
@@ -835,7 +833,7 @@ export function App() {
               ${mobileScreen === 'list' ? 'flex' : 'hidden'} 
               ${isNoteListCollapsed ? 'md:hidden' : 'md:flex'}
               ${isResizingNoteList ? 'select-none transition-none' : ''}
-              w-full md:w-auto h-full shrink-0
+              w-full h-full shrink-0 overflow-hidden
             `}
           >
             <NoteList
@@ -867,19 +865,17 @@ export function App() {
           {!isNoteListCollapsed && (
             <div
               onMouseDown={handleNoteListResizeStart}
-              className={`hidden md:flex w-1.5 hover:w-2 -ml-0.5 z-30 cursor-col-resize transition-all select-none items-center justify-center shrink-0 group ${
-                isResizingNoteList ? 'bg-indigo-500' : 'hover:bg-indigo-500/50 bg-slate-900 border-r border-slate-800'
+              className={`hidden md:block w-1 z-30 cursor-col-resize select-none shrink-0 transition-colors ${
+                isResizingNoteList ? 'bg-indigo-500' : 'bg-slate-800 hover:bg-indigo-500'
               }`}
               title="마우스로 드래그하여 메모 목록 너비 조절"
-            >
-              <div className="w-0.5 h-6 bg-slate-600 group-hover:bg-indigo-300 rounded-full" />
-            </div>
+            />
           )}
 
           {/* 3단: 메모 에디터 & 본문 내용 */}
           <div className={`
             ${mobileScreen === 'editor' ? 'flex' : 'hidden'} md:flex
-            flex-1 h-full overflow-hidden
+            flex-1 min-w-0 h-full overflow-hidden
           `}>
             <NoteEditor
               note={activeNote}

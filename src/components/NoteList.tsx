@@ -127,7 +127,7 @@ export const NoteList: React.FC<NoteListProps> = ({
 
   return (
     <div 
-      className={`w-full md:w-80 lg:w-96 bg-slate-900 border-r border-slate-800 flex flex-col h-full shrink-0 transition-colors ${
+      className={`w-full bg-slate-900 border-r border-slate-800 flex flex-col h-full transition-colors ${
         isDragOverList ? 'ring-2 ring-indigo-500 ring-inset bg-indigo-950/20' : ''
       }`}
       onDragOver={(e) => {
