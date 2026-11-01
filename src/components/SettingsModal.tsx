@@ -8,7 +8,10 @@ import {
   ExternalLink,
   CheckCircle,
   AlertCircle,
-  Loader2
+  Loader2,
+  FolderTree,
+  Tag,
+  RotateCcw
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -16,6 +19,9 @@ interface SettingsModalProps {
   onClose: () => void;
   config: GitHubConfig | null;
   onSaveConfig: (config: GitHubConfig) => void;
+  noteCount?: number;
+  onApplyFolderPrefixes?: () => Promise<number>;
+  onRemoveFolderPrefixes?: () => Promise<number>;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -23,6 +29,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   config,
   onSaveConfig,
+  noteCount = 0,
+  onApplyFolderPrefixes,
+  onRemoveFolderPrefixes,
 }) => {
   const [owner, setOwner] = useState('');
   const [repo, setRepo] = useState('');
@@ -34,6 +43,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const [isBatchProcessing, setIsBatchProcessing] = useState(false);
+  const [batchResult, setBatchResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const handleApplyPrefixes = async () => {
+    if (!onApplyFolderPrefixes) return;
+    if (!window.confirm('모든 기존 메모의 제목에 현재 소속 폴더의 전체 경로 [상위-하위]를 일괄 적용하시겠습니까?')) return;
+    setIsBatchProcessing(true);
+    setBatchResult(null);
+    try {
+      const count = await onApplyFolderPrefixes();
+      setBatchResult({ success: true, message: `총 ${count}개의 메모 제목에 [폴더경로]가 일괄 적용되었습니다.` });
+    } catch {
+      setBatchResult({ success: false, message: '일괄 적용 중 오류가 발생했습니다.' });
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const handleRemovePrefixes = async () => {
+    if (!onRemoveFolderPrefixes) return;
+    if (!window.confirm('모든 메모의 제목에서 [폴더경로] 대괄호 접두어를 제거하고 순수 제목만 남기시겠습니까?')) return;
+    setIsBatchProcessing(true);
+    setBatchResult(null);
+    try {
+      const count = await onRemoveFolderPrefixes();
+      setBatchResult({ success: true, message: `총 ${count}개의 메모 제목에서 [폴더경로]를 제거했습니다.` });
+    } catch {
+      setBatchResult({ success: false, message: '일괄 제거 중 오류가 발생했습니다.' });
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
 
   useEffect(() => {
     if (config) {
@@ -251,6 +293,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 )}
               </p>
             </div>
+          </div>
+
+          {/* 메모 제목 및 폴더 전체경로 일괄 관리 */}
+          <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60 space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                <FolderTree size={14} className="text-indigo-400" />
+                <span>메모 제목의 폴더 전체경로 관리</span>
+              </h4>
+              <span className="text-[11px] text-slate-500 font-mono">총 {noteCount}개 메모</span>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              기존 메모들의 제목에 속한 폴더의 전체 경로(예: <code className="text-indigo-300 bg-indigo-950/60 px-1 py-0.5 rounded border border-indigo-500/20 font-mono">[일정-개인] 결혼식</code>)를 일괄 적용하거나 깔끔하게 정리할 수 있습니다.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleApplyPrefixes}
+                disabled={isBatchProcessing}
+                className="flex items-center justify-center gap-1.5 py-2 px-3 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-xl text-xs font-semibold transition-all active:scale-95 disabled:opacity-50"
+              >
+                {isBatchProcessing ? <Loader2 size={13} className="animate-spin" /> : <Tag size={13} />}
+                <span>모든 메모에 [폴더경로] 일괄 적용</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleRemovePrefixes}
+                disabled={isBatchProcessing}
+                className="flex items-center justify-center gap-1.5 py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-xl text-xs font-semibold transition-all active:scale-95 disabled:opacity-50"
+              >
+                {isBatchProcessing ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+                <span>제목에서 [폴더경로] 일괄 제거</span>
+              </button>
+            </div>
+
+            {batchResult && (
+              <div className={`p-2.5 rounded-lg border text-[11px] flex items-center gap-1.5 animate-in fade-in ${
+                batchResult.success 
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' 
+                  : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+              }`}>
+                {batchResult.success ? <CheckCircle size={14} className="shrink-0" /> : <AlertCircle size={14} className="shrink-0" />}
+                <span>{batchResult.message}</span>
+              </div>
+            )}
           </div>
 
           {/* 연결 테스트 결과 메시지 */}

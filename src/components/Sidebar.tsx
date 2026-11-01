@@ -41,6 +41,8 @@ interface SidebarProps {
   pendingCount?: number;
   isCalendarActive?: boolean;
   onOpenCalendar?: () => void;
+  width?: number;
+  isResizing?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -66,6 +68,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   pendingCount,
   isCalendarActive,
   onOpenCalendar,
+  width,
+  isResizing,
 }) => {
   // 드래그 오버 중인 폴더 ID
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
@@ -359,13 +363,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
 
-      <aside className={`
-        fixed md:static inset-y-0 left-0 z-50
-        w-72 bg-slate-950 border-r border-slate-800
-        flex flex-col h-full transition-all duration-200 ease-in-out
-        ${isOpenMobile ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-        ${isCollapsed ? 'md:hidden' : 'md:flex'}
-      `}>
+      <aside 
+        style={width ? { width: `${width}px` } : undefined}
+        className={`
+          fixed md:static inset-y-0 left-0 z-50
+          ${!width ? 'w-72' : 'w-72 md:w-auto'} bg-slate-950 border-r border-slate-800
+          flex flex-col h-full
+          ${isResizing ? 'select-none transition-none' : 'transition-transform duration-200 ease-in-out'}
+          ${isOpenMobile ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+          ${isCollapsed ? 'md:hidden' : 'md:flex'}
+        `}
+      >
         {/* 상단 타이틀 */}
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
           <div>

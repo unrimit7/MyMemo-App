@@ -20,6 +20,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { ConfirmModal } from './components/ConfirmModal';
 import { CalendarView } from './components/CalendarView';
 import { processFileForNote } from './utils/file';
+import { getFolderHierarchyPath, updateTitleWithFolderPath, stripFolderPrefixFromTitle } from './utils/folderPath';
 
 interface DeleteConfirmState {
   isOpen: boolean;
@@ -76,6 +77,75 @@ export function App() {
       localStorage.setItem('mymemo_notelist_collapsed', String(next));
       return next;
     });
+  };
+
+  // 좌측 1단(사이드바) 및 2단(메모목록) 마우스 드래그 너비 조절 상태
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const saved = localStorage.getItem('mymemo_sidebar_width');
+    return saved ? parseInt(saved, 10) : 260;
+  });
+  const [noteListWidth, setNoteListWidth] = useState<number>(() => {
+    const saved = localStorage.getItem('mymemo_notelist_width');
+    return saved ? parseInt(saved, 10) : 320;
+  });
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const [isResizingNoteList, setIsResizingNoteList] = useState(false);
+
+  // 사이드바 너비 마우스 드래그 리사이징 핸들러
+  const handleSidebarResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingSidebar(true);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const newWidth = Math.max(180, Math.min(moveEvent.clientX, Math.min(500, window.innerWidth * 0.4)));
+      setSidebarWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingSidebar(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      setSidebarWidth((w) => {
+        localStorage.setItem('mymemo_sidebar_width', String(w));
+        return w;
+      });
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  // 메모목록 너비 마우스 드래그 리사이징 핸들러
+  const handleNoteListResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingNoteList(true);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const currentSidebarW = isSidebarCollapsed ? 0 : sidebarWidth;
+      const newWidth = Math.max(220, Math.min(moveEvent.clientX - currentSidebarW, Math.min(650, window.innerWidth * 0.5)));
+      setNoteListWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingNoteList(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      setNoteListWidth((w) => {
+        localStorage.setItem('mymemo_notelist_width', String(w));
+        return w;
+      });
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
   };
 
   // 삭제 확인 모달 상태
@@ -252,17 +322,37 @@ export function App() {
     if (!target || target.name === newName) return;
 
     const updatedProject: Project = { ...target, name: newName };
+    const updatedProjects = projects.map((p) => (p.id === id ? updatedProject : p));
     await saveProject(updatedProject);
-    setProjects((prev) => prev.map((p) => (p.id === id ? updatedProject : p)));
+    setProjects(updatedProjects);
 
-    const affectedNotes = notes.filter((n) => n.projectId === id);
-    for (const note of affectedNotes) {
-      if (!note.isLocalOnly) {
-        await saveNote({ ...note, syncStatus: 'pending' });
+    // 하위 폴더 및 해당 폴더에 속한 메모들의 제목 접두어([상위-하위]) 자동 갱신
+    const affectedNotes = notes.filter((n) => {
+      let curr: Project | undefined = projects.find((p) => p.id === n.projectId);
+      while (curr) {
+        if (curr.id === id) return true;
+        if (!curr.parentId) break;
+        curr = projects.find((p) => p.id === curr?.parentId);
       }
+      return false;
+    });
+
+    const updatedNotesMap = new Map<string, Note>();
+    for (const note of affectedNotes) {
+      const newFolderPath = getFolderHierarchyPath(note.projectId, updatedProjects);
+      const newTitle = updateTitleWithFolderPath(note.title, newFolderPath);
+      const updatedNote: Note = {
+        ...note,
+        title: newTitle,
+        syncStatus: note.isLocalOnly ? 'local_only' : 'pending',
+        updatedAt: new Date().toISOString(),
+      };
+      await saveNote(updatedNote);
+      updatedNotesMap.set(note.id, updatedNote);
     }
+
     setNotes((prev) =>
-      prev.map((n) => (n.projectId === id && !n.isLocalOnly ? { ...n, syncStatus: 'pending' } : n))
+      prev.map((n) => updatedNotesMap.get(n.id) || (n.projectId === id && !n.isLocalOnly ? { ...n, syncStatus: 'pending' } : n))
     );
 
     if (gitHubConfig?.isConnected && gitHubConfig.autoSync) {
@@ -482,8 +572,8 @@ export function App() {
       setProjects((prev) => [newProj, ...prev]);
     }
 
-    const isGeneralDiary = targetProj.name === '일정' || targetProj.name === '다이어리';
-    const noteTitle = `${!isGeneralDiary ? `[${targetProj.name}] ` : ''}${dateStr} 업무일지`;
+    const folderPath = getFolderHierarchyPath(targetProj.id, projects);
+    const noteTitle = folderPath ? `[${folderPath}] ${dateStr} 업무일지` : `${dateStr} 업무일지`;
     const newNote: Note = {
       id: `note-${Date.now()}`,
       projectId: targetProj.id,
@@ -516,7 +606,8 @@ export function App() {
 
     const currentProj = projects.find((p) => p.id === targetProjId);
     const isLocalOnly = currentProj?.isLocalOnly || false;
-    const initialTitle = currentProj ? `${currentProj.name} - 새 메모` : '새 메모';
+    const folderPath = targetProjId ? getFolderHierarchyPath(targetProjId, projects) : '';
+    const initialTitle = folderPath ? `[${folderPath}] 새 메모` : '새 메모';
 
     const newNote: Note = {
       id: `note-${Date.now()}`,
@@ -589,6 +680,65 @@ export function App() {
     runSync(false);
   };
 
+  // 모든 기존 메모의 제목에 현재 소속 폴더 전체 경로 [상위-하위] 일괄 적용
+  const handleApplyAllFolderPrefixes = async (): Promise<number> => {
+    let updatedCount = 0;
+    const nextNotes = [...notes];
+
+    for (let i = 0; i < nextNotes.length; i++) {
+      const note = nextNotes[i];
+      const folderPath = getFolderHierarchyPath(note.projectId, projects);
+      const newTitle = updateTitleWithFolderPath(note.title, folderPath);
+      if (newTitle !== note.title) {
+        const updated: Note = {
+          ...note,
+          title: newTitle,
+          updatedAt: new Date().toISOString(),
+          syncStatus: note.isLocalOnly ? 'local_only' : 'pending',
+        };
+        await saveNote(updated);
+        nextNotes[i] = updated;
+        updatedCount++;
+      }
+    }
+
+    if (updatedCount > 0) {
+      setNotes(nextNotes);
+      setSyncToast(`총 ${updatedCount}개의 메모에 [폴더경로]가 일괄 적용되었습니다.`);
+      setTimeout(() => setSyncToast(null), 3000);
+    }
+    return updatedCount;
+  };
+
+  // 모든 기존 메모의 제목에서 [폴더경로] 대괄호 접두어 일괄 제거
+  const handleRemoveAllFolderPrefixes = async (): Promise<number> => {
+    let updatedCount = 0;
+    const nextNotes = [...notes];
+
+    for (let i = 0; i < nextNotes.length; i++) {
+      const note = nextNotes[i];
+      const pureTitle = stripFolderPrefixFromTitle(note.title);
+      if (pureTitle !== note.title) {
+        const updated: Note = {
+          ...note,
+          title: pureTitle,
+          updatedAt: new Date().toISOString(),
+          syncStatus: note.isLocalOnly ? 'local_only' : 'pending',
+        };
+        await saveNote(updated);
+        nextNotes[i] = updated;
+        updatedCount++;
+      }
+    }
+
+    if (updatedCount > 0) {
+      setNotes(nextNotes);
+      setSyncToast(`총 ${updatedCount}개의 메모에서 [폴더경로]가 제거되었습니다.`);
+      setTimeout(() => setSyncToast(null), 3000);
+    }
+    return updatedCount;
+  };
+
   // 전역 단축키 핸들러 (Ctrl + S: 언제 어디서나 GitHub 동기화 실행)
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -649,7 +799,22 @@ export function App() {
         pendingCount={pendingCount}
         isCalendarActive={isCalendarOpen}
         onOpenCalendar={handleOpenCalendar}
+        width={sidebarWidth}
+        isResizing={isResizingSidebar}
       />
+
+      {/* 1단 사이드바 너비 조절 바 (Resizer 1) */}
+      {!isSidebarCollapsed && (
+        <div
+          onMouseDown={handleSidebarResizeStart}
+          className={`hidden md:flex w-1.5 hover:w-2 -ml-0.5 z-30 cursor-col-resize transition-all select-none items-center justify-center shrink-0 group ${
+            isResizingSidebar ? 'bg-indigo-500' : 'hover:bg-indigo-500/50 bg-slate-900 border-r border-slate-800'
+          }`}
+          title="마우스로 드래그하여 폴더 목록 너비 조절"
+        >
+          <div className="w-0.5 h-6 bg-slate-600 group-hover:bg-indigo-300 rounded-full" />
+        </div>
+      )}
 
       {/* 2단 & 3단 영역: 캘린더 모드일 때는 대형 캘린더 뷰, 일반 모드일 때는 메모 목록 & 에디터 */}
       {isCalendarOpen ? (
@@ -664,11 +829,15 @@ export function App() {
       ) : (
         <>
           {/* 2단: 메모 목록 (소주제 목록) */}
-          <div className={`
-            ${mobileScreen === 'list' ? 'flex' : 'hidden'} 
-            ${isNoteListCollapsed ? 'md:hidden' : 'md:flex'}
-            w-full md:w-80 lg:w-96 h-full shrink-0
-          `}>
+          <div 
+            style={typeof window !== 'undefined' && window.innerWidth >= 768 && !isNoteListCollapsed ? { width: `${noteListWidth}px` } : undefined}
+            className={`
+              ${mobileScreen === 'list' ? 'flex' : 'hidden'} 
+              ${isNoteListCollapsed ? 'md:hidden' : 'md:flex'}
+              ${isResizingNoteList ? 'select-none transition-none' : ''}
+              w-full md:w-auto h-full shrink-0
+            `}
+          >
             <NoteList
               notes={notes}
               projects={projects}
@@ -693,6 +862,19 @@ export function App() {
               isSyncing={isSyncing}
             />
           </div>
+
+          {/* 2단 메모 목록 너비 조절 바 (Resizer 2) */}
+          {!isNoteListCollapsed && (
+            <div
+              onMouseDown={handleNoteListResizeStart}
+              className={`hidden md:flex w-1.5 hover:w-2 -ml-0.5 z-30 cursor-col-resize transition-all select-none items-center justify-center shrink-0 group ${
+                isResizingNoteList ? 'bg-indigo-500' : 'hover:bg-indigo-500/50 bg-slate-900 border-r border-slate-800'
+              }`}
+              title="마우스로 드래그하여 메모 목록 너비 조절"
+            >
+              <div className="w-0.5 h-6 bg-slate-600 group-hover:bg-indigo-300 rounded-full" />
+            </div>
+          )}
 
           {/* 3단: 메모 에디터 & 본문 내용 */}
           <div className={`
@@ -722,6 +904,9 @@ export function App() {
         onClose={() => setIsSettingsOpen(false)}
         config={gitHubConfig}
         onSaveConfig={handleSaveConfig}
+        noteCount={notes.length}
+        onApplyFolderPrefixes={handleApplyAllFolderPrefixes}
+        onRemoveFolderPrefixes={handleRemoveAllFolderPrefixes}
       />
 
       {/* 삭제 확인 전용 모달 */}

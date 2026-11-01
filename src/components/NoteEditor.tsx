@@ -5,6 +5,7 @@ import { compressImageToDataUrl } from '../utils/image';
 import { processFileForNote } from '../utils/file';
 import { cleanLegacyAttachments, renderAttachmentsInHtml } from '../utils/attachment';
 import { exportNoteToPdf } from '../utils/exportPdf';
+import { getFolderHierarchyPath, updateTitleWithFolderPath } from '../utils/folderPath';
 import type { AttachmentItem } from '../types';
 import { 
   Lock, 
@@ -969,6 +970,20 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     }
   };
 
+  // 소속 폴더 변경 시 제목 접두어([상위-하위]) 자동 갱신
+  const handleFolderChange = (newProjectId: string) => {
+    if (!note) return;
+    const newFolderPath = getFolderHierarchyPath(newProjectId, projects);
+    const newTitle = updateTitleWithFolderPath(localTitle || note.title, newFolderPath);
+
+    setLocalTitle(newTitle);
+    lastSentTitleRef.current = newTitle;
+    onUpdateNote({ 
+      projectId: newProjectId, 
+      title: newTitle 
+    });
+  };
+
   return (
     <div 
       className={`flex-1 flex flex-col h-full bg-slate-950 overflow-hidden transition-all ${
@@ -1064,7 +1079,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             <span className="text-[11px] text-slate-400 font-medium shrink-0">폴더:</span>
             <select
               value={note.projectId}
-              onChange={(e) => onUpdateNote({ projectId: e.target.value })}
+              onChange={(e) => handleFolderChange(e.target.value)}
               className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer truncate max-w-full font-medium"
               title="클릭하여 다른 폴더를 선택하면 메모가 해당 폴더로 이동합니다."
             >
