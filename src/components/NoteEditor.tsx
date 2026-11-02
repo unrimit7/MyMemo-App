@@ -44,7 +44,8 @@ import {
   CloudUpload,
   Undo2,
   Redo2,
-  FileText
+  FileText,
+  Palette
 } from 'lucide-react';
 
 // 마크다운 번호 매기기 목록 렌더링 시 사용자가 직접 입력한 번호(예: 1., 2., 3.)와 보기 모드의 번호가 일치하도록 커스텀 렌더러 설정
@@ -57,6 +58,24 @@ marked.use({
     }
   }
 });
+
+// 에디터 지원 폰트 색상 및 형광펜 배경색 팔레트 상수
+const TEXT_COLORS = [
+  { name: '빨강', value: '#ef4444' },
+  { name: '주황', value: '#f97316' },
+  { name: '노랑', value: '#eab308' },
+  { name: '초록', value: '#10b981' },
+  { name: '파랑', value: '#3b82f6' },
+  { name: '보라', value: '#a855f7' },
+  { name: '회색', value: '#94a3b8' },
+];
+
+const HIGHLIGHT_COLORS = [
+  { name: '노랑', value: '#fef08a' },
+  { name: '연두', value: '#bbf7d0' },
+  { name: '하늘', value: '#bae6fd' },
+  { name: '분홍', value: '#fbcfe8' },
+];
 
 interface NoteEditorProps {
   note: Note | null;
@@ -406,7 +425,9 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const renderMarkdown = (content: string) => {
     try {
       // 마크다운 체크박스(- [ ] 또는 - [x]) 뒤에 띄어쓰기를 빠뜨린 경우에도 정상 체크박스로 렌더링되도록 자동 보정
-      const normalizedContent = (content || '').replace(/^(\s*-\s*\[[ xX]\])([^\s\n])/gm, '$1 $2');
+      let normalizedContent = (content || '').replace(/^(\s*-\s*\[[ xX]\])([^\s\n])/gm, '$1 $2');
+      // ==형광펜== 문법 지원
+      normalizedContent = normalizedContent.replace(/==([^=\n]+)==/g, '<mark style="background-color: #fef08a; color: #0f172a; padding: 2px 5px; border-radius: 4px;">$1</mark>');
       let rawHtml = marked.parse(normalizedContent, { breaks: true, gfm: true }) as string;
 
       // 표(table)를 모바일 가로 스크롤 컨테이너로 감싸 좁은 화면에서 컬럼이 찌그러지는 현상 방지
@@ -489,6 +510,21 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     };
   }, [renderedPreviewHtml]);
 
+  // 글자 색상 및 형광펜 팔레트 팝업 상태 (훅은 조건문 위에 위치)
+  const [showColorPicker, setShowColorPicker] = useState(false);
+  const colorPickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showColorPicker) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (colorPickerRef.current && !colorPickerRef.current.contains(e.target as Node)) {
+        setShowColorPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showColorPicker]);
+
   if (!note) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-slate-950 text-slate-500 p-6 text-center">
@@ -526,6 +562,54 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const newCursorStart = start + prefix.length;
     const newCursorEnd = start + prefix.length + (selected.length || 2);
     pushHistory(newContent, newCursorEnd);
+
+    setTimeout(() => {
+      textarea.focus({ preventScroll: true });
+      textarea.setSelectionRange(newCursorStart, newCursorEnd);
+      textarea.scrollTop = prevScrollTop;
+      textarea.scrollLeft = prevScrollLeft;
+    }, 0);
+  };
+
+  // 글자 색상 또는 형광펜 배경 적용 함수
+  const applyTextColor = (colorValue: string, isBackground: boolean = false) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const prevScrollTop = textarea.scrollTop;
+    const prevScrollLeft = textarea.scrollLeft;
+
+    const selected = localContent.substring(start, end);
+    const targetText = selected || '색상 텍스트';
+
+    let replacement: string;
+    if (isBackground) {
+      replacement = `<mark style="background-color: ${colorValue}; color: #0f172a; padding: 2px 5px; border-radius: 4px;">${targetText}</mark>`;
+    } else {
+      replacement = `<span style="color: ${colorValue};">${targetText}</span>`;
+    }
+
+    pushHistory(localContent, start);
+
+    const newContent = 
+      localContent.substring(0, start) + 
+      replacement + 
+      localContent.substring(end);
+
+    setLocalContent(newContent);
+    debouncedSyncToParent({ content: newContent });
+
+    const openTagLength = isBackground 
+      ? `<mark style="background-color: ${colorValue}; color: #0f172a; padding: 2px 5px; border-radius: 4px;">`.length
+      : `<span style="color: ${colorValue};">`.length;
+
+    const newCursorStart = start + openTagLength;
+    const newCursorEnd = newCursorStart + targetText.length;
+    pushHistory(newContent, newCursorEnd);
+
+    setShowColorPicker(false);
 
     setTimeout(() => {
       textarea.focus({ preventScroll: true });
@@ -1785,6 +1869,66 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             >
               <Code size={13} />
             </button>
+
+            {/* 글자 색상 및 형광펜 팔레트 */}
+            <div className="relative inline-block" ref={colorPickerRef}>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setShowColorPicker((prev) => !prev)}
+                className={`w-7 h-7 flex items-center justify-center rounded-md transition-colors shrink-0 active:scale-90 ${
+                  showColorPicker ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/50' : 'hover:bg-slate-800 text-slate-400 hover:text-amber-300'
+                }`}
+                title="글자 색상 및 형광펜 배경 (HTML span/mark)"
+              >
+                <Palette size={13} />
+              </button>
+
+              {showColorPicker && (
+                <div 
+                  className="absolute top-full left-0 mt-1 z-50 bg-slate-900 border border-slate-700/80 rounded-xl p-2.5 shadow-2xl w-56 animate-in fade-in slide-in-from-top-1"
+                  onMouseDown={(e) => e.preventDefault()}
+                >
+                  <div className="text-[10px] font-bold text-slate-300 mb-1.5 flex items-center justify-between">
+                    <span>글자 색상</span>
+                    <span className="text-[9px] text-slate-500 font-normal">선택 텍스트 적용</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 mb-2.5 flex-wrap">
+                    {TEXT_COLORS.map((c) => (
+                      <button
+                        key={c.name}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => applyTextColor(c.value, false)}
+                        className="w-5 h-5 rounded-full border border-slate-700 hover:scale-125 transition-transform shadow-xs cursor-pointer"
+                        style={{ backgroundColor: c.value }}
+                        title={`${c.name} 글자색`}
+                      />
+                    ))}
+                  </div>
+
+                  <div className="text-[10px] font-bold text-slate-300 mb-1.5 flex items-center justify-between border-t border-slate-800 pt-2">
+                    <span>형광펜 배경색</span>
+                    <span className="text-[9px] text-slate-500 font-normal">==문법 지원==</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {HIGHLIGHT_COLORS.map((c) => (
+                      <button
+                        key={c.name}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => applyTextColor(c.value, true)}
+                        className="px-2 py-0.5 rounded text-[10px] font-bold text-slate-950 border border-slate-600/40 hover:scale-105 transition-transform cursor-pointer shadow-xs"
+                        style={{ backgroundColor: c.value }}
+                        title={`${c.name} 형광펜`}
+                      >
+                        {c.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
 
             <div className="w-[1px] h-3.5 bg-slate-800/80 mx-1 shrink-0" />
 
