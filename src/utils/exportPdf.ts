@@ -13,7 +13,7 @@ export function exportNoteToPdf(
   const contentToRender = customContent !== undefined ? customContent : note.content;
   let normalizedContent = (contentToRender || '').replace(/^(\s*-\s*\[[ xX]\])([^\s\n])/gm, '$1 $2');
   normalizedContent = normalizedContent.replace(/==([^=\n]+)==/g, '<mark style="background-color: #fef08a; color: #0f172a; padding: 2px 5px; border-radius: 4px;">$1</mark>');
-  const rawHtml = marked.parse(normalizedContent) as string;
+  const rawHtml = marked.parse(normalizedContent, { breaks: true, gfm: true }) as string;
   const renderedHtml = renderAttachmentsInHtml(rawHtml, note.attachments);
 
   const createdDate = new Date(note.createdAt).toLocaleDateString('ko-KR', {
