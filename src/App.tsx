@@ -10,7 +10,8 @@ import {
   deleteNote, 
   getGitHubConfig, 
   saveGitHubConfig,
-  trackDeletedNote
+  trackDeletedNote,
+  trackDeletedProject
 } from './services/db';
 import { syncWithGitHub, getProjectFolderPath } from './services/github';
 import { Sidebar } from './components/Sidebar';
@@ -508,6 +509,8 @@ export function App() {
       }
 
       for (const projId of targetIds) {
+        const pObj = projects.find((p) => p.id === projId);
+        await trackDeletedProject(projId, pObj?.name);
         await deleteProject(projId);
       }
 

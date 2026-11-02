@@ -6,8 +6,10 @@ import {
   getAllNotes, 
   getAllProjects, 
   saveProject, 
+  deleteProject,
   getDeletedTombstones, 
-  clearDeletedTombstones 
+  clearDeletedTombstones,
+  getDeletedProjects 
 } from './db';
 
 // UTF-8 안전한 Base64 인코딩/디코딩
@@ -286,10 +288,17 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
 
   const remoteFileMap = new Map(remoteFiles.map((f) => [f.path, f]));
 
-  // 1-1) 원격 폴더 구조(.folders.json) 동기화: 메모가 0개인 빈 폴더도 기기 간에 사라지지 않도록 복원
+  // 1-1) 원격 폴더 구조(.folders.json) 동기화 (폴더 톰스톤 및 이름 변경 양방향 지원)
+  const projectTombstones = await getDeletedProjects();
+  const deletedProjIdSet = new Set(projectTombstones.map((t) => t.id));
+  const deletedProjNameSet = new Set(projectTombstones.filter((t) => t.name).map((t) => t.name!));
+
   const foldersJsonFile = (treeData.tree || []).find(
     (item: any) => item.type === 'blob' && item.path === `${notesDir}/.folders.json`
   );
+
+  let remoteProjects: Project[] = [];
+  let remoteDeletedIds: string[] = [];
 
   if (foldersJsonFile) {
     try {
@@ -297,13 +306,45 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
       if (foldersRes.ok) {
         const foldersData = await foldersRes.json();
         const rawFolders = base64ToUtf8(foldersData.content);
-        const remoteProjects: Project[] = JSON.parse(rawFolders);
+        const parsedData = JSON.parse(rawFolders);
+        if (Array.isArray(parsedData)) {
+          remoteProjects = parsedData;
+        } else if (parsedData && Array.isArray(parsedData.projects)) {
+          remoteProjects = parsedData.projects;
+          remoteDeletedIds = Array.isArray(parsedData.deletedProjectIds) ? parsedData.deletedProjectIds : [];
+        }
 
+        // 1) 원격에서 삭제된 폴더가 로컬에 남아있다면 로컬에서도 즉시 삭제!
+        for (const delId of remoteDeletedIds) {
+          deletedProjIdSet.add(delId);
+          const localTarget = projects.find((p) => p.id === delId);
+          if (localTarget) {
+            await deleteProject(delId);
+            const idx = projects.indexOf(localTarget);
+            if (idx !== -1) projects.splice(idx, 1);
+          }
+        }
+
+        // 2) 로컬에서 이미 삭제된 톰스톤 폴더는 원격 리스트에서도 배제
+        remoteProjects = remoteProjects.filter((rp) => !deletedProjIdSet.has(rp.id) && !deletedProjNameSet.has(rp.name));
+
+        // 3) 원격 폴더 반영 (이름 변경 갱신 & 신규 폴더 추가)
         for (const rp of remoteProjects) {
-          const localExists = projects.find((p) => p.id === rp.id || (p.name === rp.name && p.parentId === rp.parentId));
-          if (!localExists) {
-            await saveProject(rp);
-            projects.push(rp);
+          const localById = projects.find((p) => p.id === rp.id);
+          if (localById) {
+            // 이미 존재하는 폴더 -> 이름이나 상위 폴더가 변경되었다면 즉시 갱신하여 중복 폴더 방지!
+            if (localById.name !== rp.name || localById.parentId !== rp.parentId) {
+              localById.name = rp.name;
+              localById.parentId = rp.parentId;
+              await saveProject(localById);
+            }
+          } else {
+            // 이름과 상위 폴더가 같은 로컬 폴더가 있다면 ID 매핑 일치화
+            const localByName = projects.find((p) => p.name === rp.name && (p.parentId || null) === (rp.parentId || null));
+            if (!localByName) {
+              await saveProject(rp);
+              projects.push(rp);
+            }
           }
         }
       }
@@ -605,6 +646,10 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
       const segName = folderSegments[i];
       let found = projects.find((p) => p.name === segName && (p.parentId || null) === parentId);
       if (!found) {
+        // 이미 삭제된 폴더명이라면 부활시키지 않고 기본 폴더('빠른 메모')로 우회
+        if (deletedProjNameSet.has(segName)) {
+          break;
+        }
         found = {
           id: `proj-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           name: segName,
@@ -643,10 +688,17 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
     await clearDeletedTombstones(deletedSuccessTombstones);
   }
 
-  // 4) 원격에 전체 폴더 구조(.folders.json) 동기화 보관 (메모가 하나도 없는 빈 폴더도 기기 간 완벽 유지)
+  // 4) 원격에 전체 폴더 구조(.folders.json) 동기화 보관 (삭제된 폴더 ID 목록 포함하여 타 기기에 자동 전파)
   try {
-    const syncableProjects = projects.filter((p) => !p.isLocalOnly);
-    const serializedProjects = JSON.stringify(syncableProjects, null, 2);
+    const allDeletedIds = Array.from(new Set([...remoteDeletedIds, ...deletedProjIdSet]));
+    const syncableProjects = projects.filter((p) => !p.isLocalOnly && !deletedProjIdSet.has(p.id));
+    const foldersPayload = {
+      version: 2,
+      updatedAt: new Date().toISOString(),
+      projects: syncableProjects,
+      deletedProjectIds: allDeletedIds,
+    };
+    const serializedProjects = JSON.stringify(foldersPayload, null, 2);
     const foldersPath = `${notesDir}/.folders.json`;
 
     await uploadFileToGitHub(

@@ -236,3 +236,33 @@ export async function clearDeletedRemotePaths(pathsToRemove: string[]): Promise<
   const remaining = current.filter((p) => !pathsToRemove.includes(p));
   await db.put('settings', remaining, 'deleted_remote_paths');
 }
+
+// 폴더(프로젝트) 삭제 추적 큐 (폴더 톰스톤 시스템)
+export interface DeletedProjectTombstone {
+  id: string;
+  name?: string;
+  deletedAt: string;
+}
+
+export async function trackDeletedProject(id: string, name?: string): Promise<void> {
+  if (!id) return;
+  const db = await getDB();
+  const current: DeletedProjectTombstone[] = (await db.get('settings', 'deleted_project_tombstones')) || [];
+  const exists = current.some((t) => t.id === id);
+  if (!exists) {
+    current.push({ id, name, deletedAt: new Date().toISOString() });
+    await db.put('settings', current, 'deleted_project_tombstones');
+  }
+}
+
+export async function getDeletedProjects(): Promise<DeletedProjectTombstone[]> {
+  const db = await getDB();
+  return (await db.get('settings', 'deleted_project_tombstones')) || [];
+}
+
+export async function clearDeletedProjects(idsToRemove: string[]): Promise<void> {
+  const db = await getDB();
+  const current: DeletedProjectTombstone[] = (await db.get('settings', 'deleted_project_tombstones')) || [];
+  const remaining = current.filter((t) => !idsToRemove.includes(t.id));
+  await db.put('settings', remaining, 'deleted_project_tombstones');
+}
