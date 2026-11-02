@@ -47,6 +47,17 @@ import {
   FileText
 } from 'lucide-react';
 
+// 마크다운 번호 매기기 목록 렌더링 시 사용자가 직접 입력한 번호(예: 1., 2., 3.)와 보기 모드의 번호가 일치하도록 커스텀 렌더러 설정
+marked.use({
+  renderer: {
+    listitem(item: any) {
+      const match = item.raw.match(/^\s*(\d+)\.\s+/);
+      const val = match ? ` value="${match[1]}"` : '';
+      return `<li${val}>${(this as any).parser.parse(item.tokens)}</li>\n`;
+    }
+  }
+});
+
 interface NoteEditorProps {
   note: Note | null;
   projects: Project[];
@@ -465,7 +476,26 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       return false;
     });
 
+    // 번호 매기기('ordered')인 경우, 이전 라인들에 이미 작성된 번호가 있으면 그 번호에 이어서 순차 번호 부여
     let orderedCounter = 1;
+    if (type === 'ordered') {
+      const textBefore = text.substring(0, lineStart);
+      const prevLines = textBefore.split('\n');
+      let emptyCount = 0;
+      for (let i = prevLines.length - 2; i >= 0; i--) {
+        const prev = prevLines[i];
+        if (prev.trim() === '') {
+          emptyCount++;
+          if (emptyCount > 1) break; // 빈 줄이 2개 이상이면 새 목록으로 간주
+          continue;
+        }
+        const match = prev.match(/^\s*(\d+)\.\s+/);
+        if (match) {
+          orderedCounter = parseInt(match[1], 10) + 1;
+        }
+        break;
+      }
+    }
     const newLines = lines.map((line) => {
       const { indent, content } = stripExistingPrefix(line);
 
