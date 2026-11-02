@@ -403,6 +403,57 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     return result;
   }, [projects]);
 
+  const renderMarkdown = (content: string) => {
+    try {
+      // 마크다운 체크박스(- [ ] 또는 - [x]) 뒤에 띄어쓰기를 빠뜨린 경우에도 정상 체크박스로 렌더링되도록 자동 보정
+      const normalizedContent = (content || '').replace(/^(\s*-\s*\[[ xX]\])([^\s\n])/gm, '$1 $2');
+      let rawHtml = marked.parse(normalizedContent, { breaks: true, gfm: true }) as string;
+
+      // 표(table)를 모바일 가로 스크롤 컨테이너로 감싸 좁은 화면에서 컬럼이 찌그러지는 현상 방지
+      rawHtml = rawHtml.replace(/<table>([\s\S]*?)<\/table>/g, '<div class="table-scroll-container"><table>$1</table></div>');
+
+      // 마크다운 체크박스를 보기 모드에서도 직접 클릭해 체크/해제할 수 있도록 속성 변환
+      let taskCounter = 0;
+      rawHtml = rawHtml.replace(/<input\s+([^>]*?)type="checkbox"([^>]*?)>/g, (_match, before, after) => {
+        const currentIndex = taskCounter++;
+        const cleanBefore = before.replace(/disabled(?:="[^"]*")?/g, '');
+        const cleanAfter = after.replace(/disabled(?:="[^"]*")?/g, '');
+        return `<input ${cleanBefore}type="checkbox"${cleanAfter} data-task-index="${currentIndex}" class="task-checkbox cursor-pointer">`;
+      });
+
+      return { __html: renderAttachmentsInHtml(rawHtml, localAttachments) };
+    } catch {
+      return { __html: '<p>마크다운을 렌더링할 수 없습니다.</p>' };
+    }
+  };
+
+  // 분할 모드 타이핑 중 미리보기(PDF 및 마크다운) 잦은 갱신 및 깜빡임 방지 디바운스
+  const [debouncedPreviewContent, setDebouncedPreviewContent] = useState(localContent);
+  const previewTimerRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (viewMode === 'preview') {
+      setDebouncedPreviewContent(localContent);
+      return;
+    }
+    if (previewTimerRef.current) {
+      clearTimeout(previewTimerRef.current);
+    }
+    previewTimerRef.current = setTimeout(() => {
+      setDebouncedPreviewContent(localContent);
+    }, 280);
+
+    return () => {
+      if (previewTimerRef.current) {
+        clearTimeout(previewTimerRef.current);
+      }
+    };
+  }, [localContent, viewMode]);
+
+  const renderedPreviewHtml = useMemo(() => {
+    return renderMarkdown(debouncedPreviewContent);
+  }, [debouncedPreviewContent, localAttachments]);
+
   if (!note) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-slate-950 text-slate-500 p-6 text-center">
@@ -1349,56 +1400,6 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     setLightboxImage((prev) => (prev ? { ...prev, alt: `${prev.alt.split('|')[0]}|${sizeLabel}` } : null));
   };
 
-  const renderMarkdown = (content: string) => {
-    try {
-      // 마크다운 체크박스(- [ ] 또는 - [x]) 뒤에 띄어쓰기를 빠뜨린 경우에도 정상 체크박스로 렌더링되도록 자동 보정
-      const normalizedContent = (content || '').replace(/^(\s*-\s*\[[ xX]\])([^\s\n])/gm, '$1 $2');
-      let rawHtml = marked.parse(normalizedContent, { breaks: true, gfm: true }) as string;
-
-      // 표(table)를 모바일 가로 스크롤 컨테이너로 감싸 좁은 화면에서 컬럼이 찌그러지는 현상 방지
-      rawHtml = rawHtml.replace(/<table>([\s\S]*?)<\/table>/g, '<div class="table-scroll-container"><table>$1</table></div>');
-
-      // 마크다운 체크박스를 보기 모드에서도 직접 클릭해 체크/해제할 수 있도록 속성 변환
-      let taskCounter = 0;
-      rawHtml = rawHtml.replace(/<input\s+([^>]*?)type="checkbox"([^>]*?)>/g, (_match, before, after) => {
-        const currentIndex = taskCounter++;
-        const cleanBefore = before.replace(/disabled(?:="[^"]*")?/g, '');
-        const cleanAfter = after.replace(/disabled(?:="[^"]*")?/g, '');
-        return `<input ${cleanBefore}type="checkbox"${cleanAfter} data-task-index="${currentIndex}" class="task-checkbox cursor-pointer">`;
-      });
-
-      return { __html: renderAttachmentsInHtml(rawHtml, localAttachments) };
-    } catch {
-      return { __html: '<p>마크다운을 렌더링할 수 없습니다.</p>' };
-    }
-  };
-
-  // 분할 모드 타이핑 중 미리보기(PDF 및 마크다운) 잦은 갱신 및 깜빡임 방지 디바운스
-  const [debouncedPreviewContent, setDebouncedPreviewContent] = useState(localContent);
-  const previewTimerRef = useRef<any>(null);
-
-  useEffect(() => {
-    if (viewMode === 'preview') {
-      setDebouncedPreviewContent(localContent);
-      return;
-    }
-    if (previewTimerRef.current) {
-      clearTimeout(previewTimerRef.current);
-    }
-    previewTimerRef.current = setTimeout(() => {
-      setDebouncedPreviewContent(localContent);
-    }, 280);
-
-    return () => {
-      if (previewTimerRef.current) {
-        clearTimeout(previewTimerRef.current);
-      }
-    };
-  }, [localContent, viewMode]);
-
-  const renderedPreviewHtml = useMemo(() => {
-    return renderMarkdown(debouncedPreviewContent);
-  }, [debouncedPreviewContent, localAttachments]);
 
   // 소속 폴더 변경 시 제목 접두어([상위-하위]) 자동 갱신
   const handleFolderChange = (newProjectId: string) => {
