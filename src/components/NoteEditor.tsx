@@ -512,17 +512,28 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
   // 글자 색상 및 형광펜 팔레트 팝업 상태 (훅은 조건문 위에 위치)
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [pickerPosition, setPickerPosition] = useState<{ top: number; left: number } | null>(null);
   const colorPickerRef = useRef<HTMLDivElement>(null);
+  const paletteButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!showColorPicker) return;
     const handleClickOutside = (e: MouseEvent) => {
-      if (colorPickerRef.current && !colorPickerRef.current.contains(e.target as Node)) {
+      if (
+        colorPickerRef.current && 
+        !colorPickerRef.current.contains(e.target as Node) &&
+        !paletteButtonRef.current?.contains(e.target as Node)
+      ) {
         setShowColorPicker(false);
       }
     };
+    const handleClose = () => setShowColorPicker(false);
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    window.addEventListener('resize', handleClose);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('resize', handleClose);
+    };
   }, [showColorPicker]);
 
   if (!note) {
@@ -569,6 +580,21 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       textarea.scrollTop = prevScrollTop;
       textarea.scrollLeft = prevScrollLeft;
     }, 0);
+  };
+
+  // 색상 팔레트 열기 / 닫기 토글 (버튼 위치 기반 고정 팝업)
+  const toggleColorPicker = () => {
+    if (!showColorPicker) {
+      if (paletteButtonRef.current) {
+        const rect = paletteButtonRef.current.getBoundingClientRect();
+        const popupWidth = 224; // 14rem (w-56)
+        const left = Math.min(window.innerWidth - popupWidth - 12, Math.max(10, rect.left));
+        setPickerPosition({ top: rect.bottom + 6, left });
+      }
+      setShowColorPicker(true);
+    } else {
+      setShowColorPicker(false);
+    }
   };
 
   // 글자 색상 또는 형광펜 배경 적용 함수
@@ -1870,65 +1896,19 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               <Code size={13} />
             </button>
 
-            {/* 글자 색상 및 형광펜 팔레트 */}
-            <div className="relative inline-block" ref={colorPickerRef}>
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => setShowColorPicker((prev) => !prev)}
-                className={`w-7 h-7 flex items-center justify-center rounded-md transition-colors shrink-0 active:scale-90 ${
-                  showColorPicker ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/50' : 'hover:bg-slate-800 text-slate-400 hover:text-amber-300'
-                }`}
-                title="글자 색상 및 형광펜 배경 (HTML span/mark)"
-              >
-                <Palette size={13} />
-              </button>
-
-              {showColorPicker && (
-                <div 
-                  className="absolute top-full left-0 mt-1 z-50 bg-slate-900 border border-slate-700/80 rounded-xl p-2.5 shadow-2xl w-56 animate-in fade-in slide-in-from-top-1"
-                  onMouseDown={(e) => e.preventDefault()}
-                >
-                  <div className="text-[10px] font-bold text-slate-300 mb-1.5 flex items-center justify-between">
-                    <span>글자 색상</span>
-                    <span className="text-[9px] text-slate-500 font-normal">선택 텍스트 적용</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 mb-2.5 flex-wrap">
-                    {TEXT_COLORS.map((c) => (
-                      <button
-                        key={c.name}
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => applyTextColor(c.value, false)}
-                        className="w-5 h-5 rounded-full border border-slate-700 hover:scale-125 transition-transform shadow-xs cursor-pointer"
-                        style={{ backgroundColor: c.value }}
-                        title={`${c.name} 글자색`}
-                      />
-                    ))}
-                  </div>
-
-                  <div className="text-[10px] font-bold text-slate-300 mb-1.5 flex items-center justify-between border-t border-slate-800 pt-2">
-                    <span>형광펜 배경색</span>
-                    <span className="text-[9px] text-slate-500 font-normal">==문법 지원==</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {HIGHLIGHT_COLORS.map((c) => (
-                      <button
-                        key={c.name}
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => applyTextColor(c.value, true)}
-                        className="px-2 py-0.5 rounded text-[10px] font-bold text-slate-950 border border-slate-600/40 hover:scale-105 transition-transform cursor-pointer shadow-xs"
-                        style={{ backgroundColor: c.value }}
-                        title={`${c.name} 형광펜`}
-                      >
-                        {c.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+            {/* 글자 색상 및 형광펜 팔레트 버튼 */}
+            <button
+              ref={paletteButtonRef}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={toggleColorPicker}
+              className={`w-7 h-7 flex items-center justify-center rounded-md transition-colors shrink-0 active:scale-90 ${
+                showColorPicker ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/50' : 'hover:bg-slate-800 text-slate-400 hover:text-amber-300'
+              }`}
+              title="글자 색상 및 형광펜 배경 (HTML span/mark)"
+            >
+              <Palette size={13} />
+            </button>
 
             <div className="w-[1px] h-3.5 bg-slate-800/80 mx-1 shrink-0" />
 
@@ -2139,6 +2119,60 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             >
               <Keyboard size={13} />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 글자 색상 및 형광펜 팔레트 플로팅 팝업 (툴바의 overflow-x-auto에 잘리지 않도록 fixed 렌더링) */}
+      {showColorPicker && pickerPosition && (
+        <div 
+          ref={colorPickerRef}
+          style={{ top: `${pickerPosition.top}px`, left: `${pickerPosition.left}px` }}
+          className="fixed z-50 bg-slate-900 border border-slate-700/90 rounded-2xl p-3 shadow-2xl w-60 animate-in fade-in zoom-in-95 backdrop-blur-md"
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <div className="text-[11px] font-bold text-slate-300 mb-2 flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+              글자 색상
+            </span>
+            <span className="text-[10px] text-slate-500 font-normal">선택 텍스트에 적용</span>
+          </div>
+          <div className="grid grid-cols-7 gap-1.5 mb-3">
+            {TEXT_COLORS.map((c) => (
+              <button
+                key={c.name}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => applyTextColor(c.value, false)}
+                className="w-6 h-6 rounded-lg border border-slate-700/80 hover:scale-115 transition-transform shadow-sm cursor-pointer flex items-center justify-center"
+                style={{ backgroundColor: c.value }}
+                title={`${c.name} 글자색`}
+              />
+            ))}
+          </div>
+
+          <div className="text-[11px] font-bold text-slate-300 mb-2 flex items-center justify-between border-t border-slate-800 pt-2.5">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-yellow-300"></span>
+              형광펜 배경색
+            </span>
+            <span className="text-[10px] text-slate-500 font-normal">==문법 지원==</span>
+          </div>
+          <div className="grid grid-cols-4 gap-1.5">
+            {HIGHLIGHT_COLORS.map((c) => (
+              <button
+                key={c.name}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => applyTextColor(c.value, true)}
+                className="py-1 rounded-md text-[11px] font-bold text-slate-950 border border-slate-600/40 hover:scale-105 transition-transform cursor-pointer shadow-xs text-center"
+                style={{ backgroundColor: c.value }}
+                title={`${c.name} 형광펜`}
+              >
+                {c.name}
+              </button>
+            ))}
           </div>
         </div>
       )}
