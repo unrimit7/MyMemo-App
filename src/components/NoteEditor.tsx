@@ -398,6 +398,130 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     }, 0);
   };
 
+  type LinePrefixType = 'bullet' | 'ordered' | 'todo' | 'h1' | 'h2' | 'h3' | 'quote';
+
+  // 줄(행) 단위 마크다운 서식 적용 함수 (글머리 기호, 번호 매기기, To-Do, 제목, 인용구 등)
+  const applyLinePrefix = (type: LinePrefixType) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = localContent;
+
+    // 실행 취소를 위해 변경 전 스냅샷 저장
+    pushHistory(localContent, start);
+
+    // 선택 영역이 걸쳐 있는 모든 라인의 시작과 끝 인덱스 찾기
+    const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+    let lineEnd = text.indexOf('\n', end);
+    if (lineEnd === -1) lineEnd = text.length;
+
+    const selectedBlock = text.substring(lineStart, lineEnd);
+    const lines = selectedBlock.split('\n');
+
+    // 기존 접두어 정규식 패턴들
+    const todoRegex = /^(\s*)-\s*\[[ xX]\]\s*/;
+    const bulletRegex = /^(\s*)[-*+]\s+/;
+    const orderedRegex = /^(\s*)\d+\.\s+/;
+    const headingRegex = /^(\s*)#{1,6}\s+/;
+    const quoteRegex = /^(\s*)>\s+/;
+
+    // 기존 접두어(체크박스, 글머리, 번호, 제목, 인용) 제거 후 { indent, content } 반환
+    const stripExistingPrefix = (line: string): { indent: string; content: string } => {
+      if (todoRegex.test(line)) {
+        const match = line.match(todoRegex)!;
+        return { indent: match[1], content: line.slice(match[0].length) };
+      }
+      if (bulletRegex.test(line)) {
+        const match = line.match(bulletRegex)!;
+        return { indent: match[1], content: line.slice(match[0].length) };
+      }
+      if (orderedRegex.test(line)) {
+        const match = line.match(orderedRegex)!;
+        return { indent: match[1], content: line.slice(match[0].length) };
+      }
+      if (headingRegex.test(line)) {
+        const match = line.match(headingRegex)!;
+        return { indent: match[1], content: line.slice(match[0].length) };
+      }
+      if (quoteRegex.test(line)) {
+        const match = line.match(quoteRegex)!;
+        return { indent: match[1], content: line.slice(match[0].length) };
+      }
+      const indentMatch = line.match(/^(\s*)(.*)$/)!;
+      return { indent: indentMatch[1], content: indentMatch[2] };
+    };
+
+    // 선택된 모든 줄이 이미 해당 타입인지 확인 (전부 이미 해당 타입이면 토글하여 접두어 제거)
+    const isAllSameType = lines.every((line) => {
+      if (type === 'bullet') return bulletRegex.test(line) && !todoRegex.test(line);
+      if (type === 'ordered') return orderedRegex.test(line);
+      if (type === 'todo') return todoRegex.test(line);
+      if (type === 'h1') return /^(\s*)#\s+/.test(line);
+      if (type === 'h2') return /^(\s*)##\s+/.test(line);
+      if (type === 'h3') return /^(\s*)###\s+/.test(line);
+      if (type === 'quote') return quoteRegex.test(line);
+      return false;
+    });
+
+    let orderedCounter = 1;
+    const newLines = lines.map((line) => {
+      const { indent, content } = stripExistingPrefix(line);
+
+      // 이미 전부 같은 타입이면 토글하여 일반 텍스트로 복원
+      if (isAllSameType) {
+        return `${indent}${content}`;
+      }
+
+      switch (type) {
+        case 'bullet':
+          return `${indent}- ${content}`;
+        case 'ordered':
+          return `${indent}${orderedCounter++}. ${content}`;
+        case 'todo':
+          return `${indent}- [ ] ${content}`;
+        case 'h1':
+          return `${indent}# ${content}`;
+        case 'h2':
+          return `${indent}## ${content}`;
+        case 'h3':
+          return `${indent}### ${content}`;
+        case 'quote':
+          return `${indent}> ${content}`;
+        default:
+          return line;
+      }
+    });
+
+    const replacedBlock = newLines.join('\n');
+    const newContent = text.substring(0, lineStart) + replacedBlock + text.substring(lineEnd);
+
+    setLocalContent(newContent);
+    debouncedSyncToParent({ content: newContent });
+
+    // 커서 위치 스마트 복원
+    let newCursorPos: number;
+    if (lines.length === 1 && lines[0].trim() === '') {
+      // 빈 줄이었던 경우 -> 접두어 바로 뒤에 커서 위치 (바로 타이핑 가능)
+      newCursorPos = lineStart + newLines[0].length;
+    } else {
+      // 텍스트가 있던 줄인 경우 -> 줄의 맨 끝에 안전하게 위치
+      newCursorPos = Math.min(newContent.length, lineStart + replacedBlock.length);
+    }
+
+    pushHistory(newContent, newCursorPos);
+
+    setTimeout(() => {
+      textarea.focus();
+      if (start === end) {
+        textarea.setSelectionRange(newCursorPos, newCursorPos);
+      } else {
+        textarea.setSelectionRange(lineStart, lineStart + replacedBlock.length);
+      }
+    }, 0);
+  };
+
   // 체크박스(- [ ] <-> - [x]) 토글 함수 (현재 커서 라인 또는 선택된 여러 줄 일괄 토글)
   const toggleCheckboxAtCursor = () => {
     const textarea = textareaRef.current;
@@ -605,7 +729,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
   // 번호 목록 삽입
   const insertOrderedList = () => {
-    insertMarkdown('1. ');
+    applyLinePrefix('ordered');
   };
 
   // PC 작성 편의를 위한 키보드 단축키 핸들러
@@ -624,6 +748,119 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       e.preventDefault();
       toggleCheckboxAtCursor();
       return;
+    }
+
+    // Enter 키 목록(글머리 기호, 번호 매기기, To-Do) 자동 이어쓰기 및 빈 줄에서 탈출
+    if (e.key === 'Enter' && !isCtrlOrCmd && !e.altKey && !e.shiftKey) {
+      if (e.nativeEvent.isComposing || e.keyCode === 229) {
+        return; // 한글 조합(IME) 중에는 엔터 인터셉트하지 않음
+      }
+
+      const textarea = textareaRef.current;
+      if (textarea && textarea.selectionStart === textarea.selectionEnd) {
+        const cursor = textarea.selectionStart;
+        const text = localContent;
+        const lineStart = text.lastIndexOf('\n', cursor - 1) + 1;
+        const currentLine = text.substring(lineStart, cursor);
+
+        // 1. To-Do 항목
+        const todoMatch = currentLine.match(/^(\s*)-\s*\[[ xX]\]\s*(.*)$/);
+        if (todoMatch) {
+          e.preventDefault();
+          const indent = todoMatch[1];
+          const textAfter = todoMatch[2];
+          if (textAfter.trim() === '') {
+            // 내용 없는 빈 To-Do에서 엔터 -> To-Do 접두어 제거하고 일반 빈 줄로 복원
+            const newContent = text.substring(0, lineStart) + text.substring(cursor);
+            setLocalContent(newContent);
+            debouncedSyncToParent({ content: newContent });
+            pushHistory(newContent, lineStart);
+            setTimeout(() => {
+              textarea.focus();
+              textarea.setSelectionRange(lineStart, lineStart);
+            }, 0);
+          } else {
+            // 내용이 있는 경우 다음 줄에 '- [ ] ' 자동 생성
+            const nextPrefix = `\n${indent}- [ ] `;
+            const newContent = text.substring(0, cursor) + nextPrefix + text.substring(cursor);
+            const nextCursor = cursor + nextPrefix.length;
+            setLocalContent(newContent);
+            debouncedSyncToParent({ content: newContent });
+            pushHistory(newContent, nextCursor);
+            setTimeout(() => {
+              textarea.focus();
+              textarea.setSelectionRange(nextCursor, nextCursor);
+            }, 0);
+          }
+          return;
+        }
+
+        // 2. 글머리 기호 항목 (- 또는 * 또는 +)
+        const bulletMatch = currentLine.match(/^(\s*)([-*+])\s+(.*)$/);
+        if (bulletMatch) {
+          e.preventDefault();
+          const indent = bulletMatch[1];
+          const bulletChar = bulletMatch[2];
+          const textAfter = bulletMatch[3];
+          if (textAfter.trim() === '') {
+            // 내용 없는 빈 글머리 기호에서 엔터 -> 접두어 제거하고 탈출
+            const newContent = text.substring(0, lineStart) + text.substring(cursor);
+            setLocalContent(newContent);
+            debouncedSyncToParent({ content: newContent });
+            pushHistory(newContent, lineStart);
+            setTimeout(() => {
+              textarea.focus();
+              textarea.setSelectionRange(lineStart, lineStart);
+            }, 0);
+          } else {
+            // 다음 줄에 같은 불릿 기호 추가
+            const nextPrefix = `\n${indent}${bulletChar} `;
+            const newContent = text.substring(0, cursor) + nextPrefix + text.substring(cursor);
+            const nextCursor = cursor + nextPrefix.length;
+            setLocalContent(newContent);
+            debouncedSyncToParent({ content: newContent });
+            pushHistory(newContent, nextCursor);
+            setTimeout(() => {
+              textarea.focus();
+              textarea.setSelectionRange(nextCursor, nextCursor);
+            }, 0);
+          }
+          return;
+        }
+
+        // 3. 번호 매기기 목록 (1. , 2. ...)
+        const orderedMatch = currentLine.match(/^(\s*)(\d+)\.\s+(.*)$/);
+        if (orderedMatch) {
+          e.preventDefault();
+          const indent = orderedMatch[1];
+          const currentNum = parseInt(orderedMatch[2], 10);
+          const textAfter = orderedMatch[3];
+          if (textAfter.trim() === '') {
+            // 내용 없는 번호 목록에서 엔터 -> 번호 제거하고 탈출
+            const newContent = text.substring(0, lineStart) + text.substring(cursor);
+            setLocalContent(newContent);
+            debouncedSyncToParent({ content: newContent });
+            pushHistory(newContent, lineStart);
+            setTimeout(() => {
+              textarea.focus();
+              textarea.setSelectionRange(lineStart, lineStart);
+            }, 0);
+          } else {
+            // 다음 번호 자동 증가 (예: 1. -> 2.)
+            const nextPrefix = `\n${indent}${currentNum + 1}. `;
+            const newContent = text.substring(0, cursor) + nextPrefix + text.substring(cursor);
+            const nextCursor = cursor + nextPrefix.length;
+            setLocalContent(newContent);
+            debouncedSyncToParent({ content: newContent });
+            pushHistory(newContent, nextCursor);
+            setTimeout(() => {
+              textarea.focus();
+              textarea.setSelectionRange(nextCursor, nextCursor);
+            }, 0);
+          }
+          return;
+        }
+      }
     }
 
     // Tab 키 처리 (들여쓰기 2칸)
@@ -681,34 +918,40 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         insertMarkdown('~~', '~~');
         return;
       }
-      // Ctrl + Shift + T 또는 Alt + T: To-Do 체크리스트
+      // Ctrl + Shift + T 또는 Alt + T: To-Do 체크리스트 (행 단위 적용/해제)
       if ((e.key.toLowerCase() === 't' && e.shiftKey) || (e.altKey && e.key.toLowerCase() === 't')) {
         e.preventDefault();
-        insertMarkdown('- [ ] ');
+        applyLinePrefix('todo');
         return;
       }
-      // Ctrl + Shift + L: 글머리 기호 목록
+      // Ctrl + Shift + L: 글머리 기호 목록 (행 단위 적용/해제)
       if (e.key.toLowerCase() === 'l' && e.shiftKey) {
         e.preventDefault();
-        insertMarkdown('- ');
+        applyLinePrefix('bullet');
+        return;
+      }
+      // Ctrl + Shift + O: 번호 매기기 목록 (행 단위 적용/해제)
+      if (e.key.toLowerCase() === 'o' && e.shiftKey) {
+        e.preventDefault();
+        applyLinePrefix('ordered');
         return;
       }
       // Ctrl + 1: 큰 제목 (# )
       if (e.key === '1') {
         e.preventDefault();
-        insertMarkdown('# ');
+        applyLinePrefix('h1');
         return;
       }
       // Ctrl + 2: 중간 제목 (## )
       if (e.key === '2') {
         e.preventDefault();
-        insertMarkdown('## ');
+        applyLinePrefix('h2');
         return;
       }
       // Ctrl + 3: 소제목 (### )
       if (e.key === '3') {
         e.preventDefault();
-        insertMarkdown('### ');
+        applyLinePrefix('h3');
         return;
       }
       // Ctrl + / 또는 Ctrl + ?: 단축키 안내 창 토글
@@ -1219,7 +1462,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* H1 */}
             <button
               type="button"
-              onClick={() => insertMarkdown('# ')}
+              onClick={() => applyLinePrefix('h1')}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
               title="큰 제목 H1 (Ctrl + 1)"
             >
@@ -1228,7 +1471,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* H2 */}
             <button
               type="button"
-              onClick={() => insertMarkdown('## ')}
+              onClick={() => applyLinePrefix('h2')}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
               title="중간 제목 H2 (Ctrl + 2)"
             >
@@ -1237,7 +1480,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* H3 */}
             <button
               type="button"
-              onClick={() => insertMarkdown('### ')}
+              onClick={() => applyLinePrefix('h3')}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
               title="소제목 H3 (Ctrl + 3)"
             >
@@ -1288,7 +1531,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* Bullet List */}
             <button
               type="button"
-              onClick={() => insertMarkdown('- ')}
+              onClick={() => applyLinePrefix('bullet')}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
               title="글머리 기호 목록 (Ctrl + Shift + L)"
             >
@@ -1349,7 +1592,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* To-Do 할 일 추가 */}
             <button
               type="button"
-              onClick={() => insertMarkdown('- [ ] ')}
+              onClick={() => applyLinePrefix('todo')}
               className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-indigo-300 text-indigo-400 bg-indigo-950/40 border border-indigo-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
               title="To-Do 체크리스트 추가 (Ctrl + Shift + T)"
             >
@@ -1398,7 +1641,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* 인용구 */}
             <button
               type="button"
-              onClick={() => insertMarkdown('> ')}
+              onClick={() => applyLinePrefix('quote')}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-amber-300 text-amber-400 rounded-md transition-colors shrink-0 active:scale-90"
               title="인용구(>) 삽입"
             >
@@ -1672,6 +1915,10 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                 <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
                   <span className="text-slate-400">글머리 목록</span>
                   <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl+Shift+L</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
+                  <span className="text-slate-400">번호 매기기 목록</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl+Shift+O</kbd>
                 </div>
                 <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
                   <span className="text-slate-400">취소선</span>
