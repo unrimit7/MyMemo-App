@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import type { Note, Project } from '../types';
 import { marked } from 'marked';
 import { compressImageToDataUrl } from '../utils/image';
@@ -273,7 +273,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   useEffect(() => {
     if (viewMode === 'edit' || viewMode === 'split') {
       setTimeout(() => {
-        textareaRef.current?.focus();
+        textareaRef.current?.focus({ preventScroll: true });
       }, 50);
     }
   }, [viewMode]);
@@ -454,6 +454,41 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     return renderMarkdown(debouncedPreviewContent);
   }, [debouncedPreviewContent, localAttachments]);
 
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+  const previewScrollTopRef = useRef<number>(0);
+
+  // 메모 변경 시 미리보기 스크롤 상단 리셋
+  useEffect(() => {
+    previewScrollTopRef.current = 0;
+    if (previewContainerRef.current) {
+      previewContainerRef.current.scrollTop = 0;
+    }
+  }, [note?.id]);
+
+  // 미리보기 갱신 시 스크롤 위치 유지 (PDF 임베드 등 리렌더링으로 인한 하단 스크롤 튐 원천 방지)
+  useLayoutEffect(() => {
+    if (previewContainerRef.current) {
+      previewContainerRef.current.scrollTop = previewScrollTopRef.current;
+    }
+  }, [renderedPreviewHtml]);
+
+  useEffect(() => {
+    const timer1 = setTimeout(() => {
+      if (previewContainerRef.current) {
+        previewContainerRef.current.scrollTop = previewScrollTopRef.current;
+      }
+    }, 50);
+    const timer2 = setTimeout(() => {
+      if (previewContainerRef.current) {
+        previewContainerRef.current.scrollTop = previewScrollTopRef.current;
+      }
+    }, 200);
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+    };
+  }, [renderedPreviewHtml]);
+
   if (!note) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-slate-950 text-slate-500 p-6 text-center">
@@ -471,6 +506,9 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
+    const prevScrollTop = textarea.scrollTop;
+    const prevScrollLeft = textarea.scrollLeft;
+
     const selected = localContent.substring(start, end);
     const replacement = `${prefix}${selected || '내용'}${suffix}`;
 
@@ -484,14 +522,16 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
     setLocalContent(newContent);
     debouncedSyncToParent({ content: newContent });
-    pushHistory(newContent, start + prefix.length + (selected.length || 2));
+
+    const newCursorStart = start + prefix.length;
+    const newCursorEnd = start + prefix.length + (selected.length || 2);
+    pushHistory(newContent, newCursorEnd);
 
     setTimeout(() => {
-      textarea.focus();
-      textarea.setSelectionRange(
-        start + prefix.length,
-        start + prefix.length + (selected.length || 2)
-      );
+      textarea.focus({ preventScroll: true });
+      textarea.setSelectionRange(newCursorStart, newCursorEnd);
+      textarea.scrollTop = prevScrollTop;
+      textarea.scrollLeft = prevScrollLeft;
     }, 0);
   };
 
@@ -505,6 +545,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
     const text = localContent;
+    const prevScrollTop = textarea.scrollTop;
+    const prevScrollLeft = textarea.scrollLeft;
 
     // 실행 취소를 위해 변경 전 스냅샷 저장
     pushHistory(localContent, start);
@@ -616,25 +658,32 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     setLocalContent(newContent);
     debouncedSyncToParent({ content: newContent });
 
-    // 커서 위치 스마트 복원
-    let newCursorPos: number;
-    if (lines.length === 1 && lines[0].trim() === '') {
-      // 빈 줄이었던 경우 -> 접두어 바로 뒤에 커서 위치 (바로 타이핑 가능)
-      newCursorPos = lineStart + newLines[0].length;
+    // 커서 위치 스마트 복원 (줄 끝이나 문서 맨 아래로 튀지 않고 기존 상대 위치 정밀 유지)
+    const diff = replacedBlock.length - selectedBlock.length;
+    let newCursorStart: number;
+    let newCursorEnd: number;
+
+    if (start === end) {
+      if (lines.length === 1 && lines[0].trim() === '') {
+        // 빈 줄이었던 경우 -> 접두어 바로 뒤에 커서 위치 (바로 타이핑 가능)
+        newCursorStart = lineStart + newLines[0].length;
+      } else {
+        // 원래 커서가 있던 위치를 prefix 길이 변화만큼 보정하여 정확히 유지
+        newCursorStart = Math.max(lineStart, Math.min(newContent.length, start + diff));
+      }
+      newCursorEnd = newCursorStart;
     } else {
-      // 텍스트가 있던 줄인 경우 -> 줄의 맨 끝에 안전하게 위치
-      newCursorPos = Math.min(newContent.length, lineStart + replacedBlock.length);
+      newCursorStart = lineStart;
+      newCursorEnd = lineStart + replacedBlock.length;
     }
 
-    pushHistory(newContent, newCursorPos);
+    pushHistory(newContent, newCursorStart);
 
     setTimeout(() => {
-      textarea.focus();
-      if (start === end) {
-        textarea.setSelectionRange(newCursorPos, newCursorPos);
-      } else {
-        textarea.setSelectionRange(lineStart, lineStart + replacedBlock.length);
-      }
+      textarea.focus({ preventScroll: true });
+      textarea.setSelectionRange(newCursorStart, newCursorEnd);
+      textarea.scrollTop = prevScrollTop;
+      textarea.scrollLeft = prevScrollLeft;
     }, 0);
   };
 
@@ -646,6 +695,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
     const text = localContent;
+    const prevScrollTop = textarea.scrollTop;
+    const prevScrollLeft = textarea.scrollLeft;
 
     // 실행 취소를 위해 변경 전 스냅샷 저장
     pushHistory(localContent, start);
@@ -687,12 +738,14 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
     // 커서 위치 복원
     setTimeout(() => {
-      textarea.focus();
+      textarea.focus({ preventScroll: true });
       const lengthDiff = replacedBlock.length - selectedBlock.length;
       textarea.setSelectionRange(
         Math.max(lineStart, start),
         Math.max(lineStart, end + lengthDiff)
       );
+      textarea.scrollTop = prevScrollTop;
+      textarea.scrollLeft = prevScrollLeft;
     }, 0);
   };
 
@@ -703,6 +756,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
     const text = localContent;
+    const prevScrollTop = textarea.scrollTop;
+    const prevScrollLeft = textarea.scrollLeft;
 
     pushHistory(localContent, start);
 
@@ -721,9 +776,11 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     pushHistory(newContent, start + 2);
 
     setTimeout(() => {
-      textarea.focus();
+      textarea.focus({ preventScroll: true });
       const added = lines.length * 2;
       textarea.setSelectionRange(start + 2, end + added);
+      textarea.scrollTop = prevScrollTop;
+      textarea.scrollLeft = prevScrollLeft;
     }, 0);
   };
 
@@ -734,6 +791,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
     const text = localContent;
+    const prevScrollTop = textarea.scrollTop;
+    const prevScrollLeft = textarea.scrollLeft;
 
     pushHistory(localContent, start);
 
@@ -767,11 +826,13 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     pushHistory(newContent, Math.max(lineStart, start - 2));
 
     setTimeout(() => {
-      textarea.focus();
+      textarea.focus({ preventScroll: true });
       textarea.setSelectionRange(
         Math.max(lineStart, start - 2),
         Math.max(lineStart, end - removedTotal)
       );
+      textarea.scrollTop = prevScrollTop;
+      textarea.scrollLeft = prevScrollLeft;
     }, 0);
   };
 
@@ -787,7 +848,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         isUndoRedoActionRef.current = false;
         const textarea = textareaRef.current;
         if (textarea && target.cursorPos !== undefined) {
-          textarea.focus();
+          textarea.focus({ preventScroll: true });
           textarea.setSelectionRange(target.cursorPos, target.cursorPos);
         }
       }, 0);
@@ -806,7 +867,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         isUndoRedoActionRef.current = false;
         const textarea = textareaRef.current;
         if (textarea && target.cursorPos !== undefined) {
-          textarea.focus();
+          textarea.focus({ preventScroll: true });
           textarea.setSelectionRange(target.cursorPos, target.cursorPos);
         }
       }, 0);
@@ -957,7 +1018,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             debouncedSyncToParent({ content: newContent });
             pushHistory(newContent, lineStart);
             setTimeout(() => {
-              textarea.focus();
+              textarea.focus({ preventScroll: true });
               textarea.setSelectionRange(lineStart, lineStart);
             }, 0);
           } else {
@@ -969,7 +1030,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             debouncedSyncToParent({ content: newContent });
             pushHistory(newContent, nextCursor);
             setTimeout(() => {
-              textarea.focus();
+              textarea.focus({ preventScroll: true });
               textarea.setSelectionRange(nextCursor, nextCursor);
             }, 0);
           }
@@ -990,7 +1051,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             debouncedSyncToParent({ content: newContent });
             pushHistory(newContent, lineStart);
             setTimeout(() => {
-              textarea.focus();
+              textarea.focus({ preventScroll: true });
               textarea.setSelectionRange(lineStart, lineStart);
             }, 0);
           } else {
@@ -1002,7 +1063,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             debouncedSyncToParent({ content: newContent });
             pushHistory(newContent, nextCursor);
             setTimeout(() => {
-              textarea.focus();
+              textarea.focus({ preventScroll: true });
               textarea.setSelectionRange(nextCursor, nextCursor);
             }, 0);
           }
@@ -1023,7 +1084,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             debouncedSyncToParent({ content: newContent });
             pushHistory(newContent, lineStart);
             setTimeout(() => {
-              textarea.focus();
+              textarea.focus({ preventScroll: true });
               textarea.setSelectionRange(lineStart, lineStart);
             }, 0);
           } else {
@@ -1035,7 +1096,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             debouncedSyncToParent({ content: newContent });
             pushHistory(newContent, nextCursor);
             setTimeout(() => {
-              textarea.focus();
+              textarea.focus({ preventScroll: true });
               textarea.setSelectionRange(nextCursor, nextCursor);
             }, 0);
           }
@@ -1195,7 +1256,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     pushHistory(newContent, nextPos);
 
     setTimeout(() => {
-      textarea.focus();
+      textarea.focus({ preventScroll: true });
       textarea.setSelectionRange(nextPos, nextPos);
     }, 0);
   };
@@ -1620,6 +1681,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* H1 */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => applyLinePrefix('h1')}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
               title="큰 제목 H1 (Ctrl + 1)"
@@ -1629,6 +1691,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* H2 */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => applyLinePrefix('h2')}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
               title="중간 제목 H2 (Ctrl + 2)"
@@ -1638,6 +1701,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* H3 */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => applyLinePrefix('h3')}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
               title="소제목 H3 (Ctrl + 3)"
@@ -1650,6 +1714,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* Bold */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => insertMarkdown('**', '**')}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
               title="굵게 Bold (Ctrl + B)"
@@ -1659,6 +1724,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* Italic */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => insertMarkdown('*', '*')}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
               title="기울임 Italic (Ctrl + I)"
@@ -1668,6 +1734,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* Strikethrough */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => insertMarkdown('~~', '~~')}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
               title="취소선 (Ctrl + Shift + X)"
@@ -1677,6 +1744,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* Inline Code */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => insertMarkdown('`', '`')}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
               title="인라인 코드 (Ctrl + Shift + K)"
@@ -1689,6 +1757,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* Bullet List */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => applyLinePrefix('bullet')}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
               title="글머리 기호 목록 (Ctrl + Shift + L)"
@@ -1698,6 +1767,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* Numbered List */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={insertOrderedList}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
               title="번호 매기기 목록 (1. 2. 3.)"
@@ -1707,6 +1777,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* Indent (Tab) */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={handleIndent}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
               title="들여쓰기 2칸 (Tab)"
@@ -1716,6 +1787,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* Outdent (Shift + Tab) */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={handleOutdent}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
               title="내어쓰기 (Shift + Tab)"
@@ -1728,6 +1800,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* 실행 취소 (Undo) */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={handleUndo}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-amber-300 text-slate-400 rounded-md transition-colors shrink-0 active:scale-90"
               title="실행 취소 Undo (Ctrl + Z)"
@@ -1737,6 +1810,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* 다시 실행 (Redo) */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={handleRedo}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-amber-300 text-slate-400 rounded-md transition-colors shrink-0 active:scale-90"
               title="다시 실행 Redo (Ctrl + Y 또는 Ctrl + Shift + Z)"
@@ -1750,6 +1824,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* To-Do 할 일 추가 */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => applyLinePrefix('todo')}
               className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-indigo-300 text-indigo-400 bg-indigo-950/40 border border-indigo-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
               title="To-Do 체크리스트 추가 (Ctrl + Shift + T)"
@@ -1760,6 +1835,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* 체크박스 토글 */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={toggleCheckboxAtCursor}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-emerald-300 text-emerald-400 rounded-md transition-colors shrink-0 active:scale-90"
               title="체크박스 체크 / 해제 토글 (Ctrl + Enter)"
@@ -1772,6 +1848,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* 표 (Table) */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={insertTable}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-cyan-300 text-cyan-400 rounded-md transition-colors shrink-0 active:scale-90"
               title="마크다운 표(Table) 서식 삽입"
@@ -1781,6 +1858,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* 링크 */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={insertLink}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-sky-300 text-sky-400 rounded-md transition-colors shrink-0 active:scale-90"
               title="하이퍼링크 삽입 (Ctrl + K)"
@@ -1790,6 +1868,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* 코드 블록 */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={insertCodeBlock}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-purple-300 text-purple-400 rounded-md transition-colors shrink-0 active:scale-90"
               title="코드 블록(```) 삽입"
@@ -1799,6 +1878,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* 인용구 */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => applyLinePrefix('quote')}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-amber-300 text-amber-400 rounded-md transition-colors shrink-0 active:scale-90"
               title="인용구(>) 삽입"
@@ -1808,6 +1888,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* 구분선 */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={insertDivider}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-slate-100 rounded-md transition-colors shrink-0 active:scale-90"
               title="구분선(---) 삽입"
@@ -1820,6 +1901,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* 사진 첨부 버튼 */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => fileInputRef.current?.click()}
               disabled={isProcessingImage}
               className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-indigo-300 text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
@@ -1836,6 +1918,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* PDF 문서 첨부 버튼 */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => pdfInputRef.current?.click()}
               disabled={isProcessingPdf}
               className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-rose-300 text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
@@ -1853,6 +1936,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {onSync && (
               <button
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={handleImmediateSync}
                 disabled={isSyncing}
                 className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-emerald-300 text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
@@ -1870,6 +1954,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             {/* ⌨️ 단축키 안내 버튼 */}
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => setShowShortcutsModal(true)}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 text-slate-400 hover:text-indigo-400 rounded-md transition-colors ml-auto shrink-0"
               title="PC 마크다운 단축키 안내 (Ctrl + /)"
@@ -1947,6 +2032,10 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
         {(viewMode === 'preview' || viewMode === 'split') && (
           <div 
+            ref={previewContainerRef}
+            onScroll={(e) => {
+              previewScrollTopRef.current = e.currentTarget.scrollTop;
+            }}
             style={viewMode === 'split' ? { width: `calc(${100 - splitRatio}% - 0px)` } : undefined}
             className={`flex-1 h-full overflow-y-auto markdown-preview prose prose-invert max-w-none ${
               viewMode === 'split' ? 'pl-3 pr-2' : 'pr-2'

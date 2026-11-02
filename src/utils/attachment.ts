@@ -70,7 +70,7 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
   </div>
   <!-- 본문 인라인 PDF 뷰어 (PC 데스크톱 브라우저는 바로 임베드 표시, 모바일은 기기 뷰어 열기 카드 표시) -->
   <div class="w-full bg-slate-950">
-    <object data="${targetUrl}" type="application/pdf" width="100%" class="w-full h-[650px] md:h-[750px] block border-0 bg-slate-950">
+    <object data="${targetUrl}" type="application/pdf" tabindex="-1" width="100%" class="w-full h-[650px] md:h-[750px] block border-0 bg-slate-950" style="overflow: hidden;">
       <div class="p-8 text-center text-xs md:text-sm text-slate-400 space-y-3 bg-slate-950">
         <p class="text-slate-200 font-semibold text-sm">모바일 환경에서는 기기 PDF 앱으로 문서를 바로 열람할 수 있습니다.</p>
         <p class="text-xs text-slate-400">아래 버튼을 누르면 기기에서 즉시 문서를 열람하거나 다운로드합니다.</p>
