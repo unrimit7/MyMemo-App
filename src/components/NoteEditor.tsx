@@ -992,6 +992,40 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       return;
     }
 
+    // Shift + Enter: 표(Table) 내부 셀 줄바꿈 (<br> 자동 삽입)
+    if (e.key === 'Enter' && e.shiftKey && !isCtrlOrCmd && !e.altKey) {
+      if (e.nativeEvent.isComposing || e.keyCode === 229) {
+        return; // 한글 조합(IME) 중에는 인터셉트하지 않음
+      }
+
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const text = localContent;
+      const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+      let lineEnd = text.indexOf('\n', end);
+      if (lineEnd === -1) lineEnd = text.length;
+      const currentFullLine = text.substring(lineStart, lineEnd);
+
+      // 표(Table) 행 내부인 경우 (| 가 포함된 행) -> <br> 자동 삽입
+      if (currentFullLine.includes('|')) {
+        e.preventDefault();
+        const insertText = '<br>';
+        const newContent = text.substring(0, start) + insertText + text.substring(end);
+        setLocalContent(newContent);
+        debouncedSyncToParent({ content: newContent });
+        const nextPos = start + insertText.length;
+        pushHistory(newContent, nextPos);
+        setTimeout(() => {
+          textarea.focus({ preventScroll: true });
+          textarea.setSelectionRange(nextPos, nextPos);
+        }, 0);
+        return;
+      }
+    }
+
     // Enter 키 목록(글머리 기호, 번호 매기기, To-Do) 자동 이어쓰기 및 빈 줄에서 탈출
     if (e.key === 'Enter' && !isCtrlOrCmd && !e.altKey && !e.shiftKey) {
       if (e.nativeEvent.isComposing || e.keyCode === 229) {
@@ -2171,6 +2205,13 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                   <span className="text-indigo-300 font-semibold">체크박스 체크 / 해제 토글</span>
                   <kbd className="px-2 py-0.5 bg-indigo-600 border border-indigo-400 text-white rounded font-mono text-[11px] font-bold">Ctrl + Enter</kbd>
                 </div>
+                <div className="flex items-center justify-between p-2 bg-indigo-950/40 rounded-lg border border-indigo-500/30 col-span-2">
+                  <span className="text-indigo-300 font-semibold">표(Table) 셀 내부 줄바꿈</span>
+                  <div className="flex items-center gap-1.5">
+                    <kbd className="px-2 py-0.5 bg-indigo-600 border border-indigo-400 text-white rounded font-mono text-[11px] font-bold">Shift + Enter</kbd>
+                    <span className="text-slate-400 text-[10px]">(또는 &lt;br&gt;)</span>
+                  </div>
+                </div>
                 <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80">
                   <span className="text-slate-400">실행 취소 (Undo)</span>
                   <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl + Z</kbd>
@@ -2238,14 +2279,6 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                 <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80 col-span-2">
                   <span className="text-slate-400">클립보드 스크린샷 붙여넣기</span>
                   <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl + V</kbd>
-                </div>
-                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80 col-span-2">
-                  <span className="text-slate-400">표(Table) 셀 내부 줄바꿈</span>
-                  <div className="flex items-center gap-1">
-                    <span className="text-slate-500 text-[11px]">셀 안에</span>
-                    <kbd className="px-1.5 py-0.5 bg-indigo-950/60 border border-indigo-500/40 rounded font-mono text-[11px] text-indigo-300 font-bold">&lt;br&gt;</kbd>
-                    <span className="text-slate-500 text-[11px]">입력</span>
-                  </div>
                 </div>
               </div>
             </div>
