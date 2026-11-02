@@ -103,6 +103,19 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<{ attId: string; src: string; alt: string } | null>(null);
 
+  // 편집창 & 미리보기 분할(Split) 비율 (기본 50%, 15%~85% 조절 가능, 로컬 스토리지 보존)
+  const [splitRatio, setSplitRatio] = useState<number>(() => {
+    if (typeof window === 'undefined') return 50;
+    const saved = localStorage.getItem('mymemo_editor_split_ratio');
+    if (saved) {
+      const parsed = parseFloat(saved);
+      if (!isNaN(parsed) && parsed >= 15 && parsed <= 85) return parsed;
+    }
+    return 50;
+  });
+  const [isResizingSplit, setIsResizingSplit] = useState(false);
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+
   // 한글 IME 조합 깨짐 방지를 위한 로컬 버퍼 상태
   const [localTitle, setLocalTitle] = useState(note?.title || '');
   const [localContent, setLocalContent] = useState(note?.content || '');
@@ -734,6 +747,71 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     }
     onUpdateNote({ content: localContent, title: localTitle });
     onSync?.();
+  };
+
+  // 편집창 & 미리보기 분할 바 마우스 드래그 조절 핸들러
+  const handleSplitResizeMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingSplit(true);
+    const container = splitContainerRef.current;
+    if (!container) return;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const rect = container.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const rawRatio = ((moveEvent.clientX - rect.left) / rect.width) * 100;
+      const clampedRatio = Math.max(15, Math.min(85, rawRatio));
+      setSplitRatio(clampedRatio);
+    };
+
+    const onMouseUp = () => {
+      setIsResizingSplit(false);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      setSplitRatio((r) => {
+        localStorage.setItem('mymemo_editor_split_ratio', String(r));
+        return r;
+      });
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
+  // 편집창 & 미리보기 분할 바 터치 드래그 조절 핸들러 (태블릿 / 모바일 지원)
+  const handleSplitResizeTouchStart = (_e: React.TouchEvent) => {
+    setIsResizingSplit(true);
+    const container = splitContainerRef.current;
+    if (!container) return;
+
+    const onTouchMove = (moveEvent: TouchEvent) => {
+      if (!moveEvent.touches || moveEvent.touches.length === 0) return;
+      const clientX = moveEvent.touches[0].clientX;
+      const rect = container.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const rawRatio = ((clientX - rect.left) / rect.width) * 100;
+      const clampedRatio = Math.max(15, Math.min(85, rawRatio));
+      setSplitRatio(clampedRatio);
+    };
+
+    const onTouchEnd = () => {
+      setIsResizingSplit(false);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+      setSplitRatio((r) => {
+        localStorage.setItem('mymemo_editor_split_ratio', String(r));
+        return r;
+      });
+    };
+
+    window.addEventListener('touchmove', onTouchMove);
+    window.addEventListener('touchend', onTouchEnd);
+  };
+
+  // 분할 바 더블 클릭 시 5:5 (50%) 균등 분할로 리셋
+  const handleSplitDoubleClick = () => {
+    setSplitRatio(50);
+    localStorage.setItem('mymemo_editor_split_ratio', '50');
   };
 
   // 표 서식 템플릿 삽입
@@ -1445,7 +1523,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             </button>
             <button
               onClick={() => setViewMode('split')}
-              className={`hidden lg:block p-1.5 rounded text-xs transition-colors ${
+              className={`hidden md:block p-1.5 rounded text-xs transition-colors ${
                 viewMode === 'split' ? 'bg-indigo-600 text-white font-semibold' : 'hover:text-slate-200'
               }`}
               title="분할 보기 모드 (단축키: Alt + 3 또는 Ctrl + M)"
@@ -1763,10 +1841,18 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         />
       </div>
 
-      {/* 본문 영역: 편집창 / 미리보기 / 분할 */}
-      <div className="flex-1 flex overflow-hidden p-4 md:px-6 gap-6">
+      {/* 본문 영역: 편집창 / 미리보기 / 분할(드래그 너비 조절 가능) */}
+      <div 
+        ref={splitContainerRef}
+        className={`flex-1 flex overflow-hidden p-4 md:px-6 relative ${
+          viewMode === 'split' ? 'gap-0' : 'gap-6'
+        } ${isResizingSplit ? 'select-none cursor-col-resize' : ''}`}
+      >
         {(viewMode === 'edit' || viewMode === 'split') && (
-          <div className={`flex-1 flex flex-col h-full ${viewMode === 'split' ? 'border-r border-slate-800/80 pr-6' : ''}`}>
+          <div 
+            style={viewMode === 'split' ? { width: `${splitRatio}%` } : undefined}
+            className={`${viewMode === 'split' ? 'shrink-0 pr-3' : 'flex-1'} flex flex-col h-full overflow-hidden`}
+          >
             <textarea
               ref={textareaRef}
               value={localContent}
@@ -1780,9 +1866,41 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           </div>
         )}
 
+        {/* 편집창과 미리보기 사이 좌우 조절 드래그 바 (분할 모드에서만 표시) */}
+        {viewMode === 'split' && (
+          <div
+            onMouseDown={handleSplitResizeMouseDown}
+            onTouchStart={handleSplitResizeTouchStart}
+            onDoubleClick={handleSplitDoubleClick}
+            title="마우스로 좌우 드래그하여 분할 너비 조절 (더블 클릭 시 5:5 초기화)"
+            className={`group relative flex items-center justify-center w-4 -mx-2 cursor-col-resize select-none shrink-0 z-30 transition-colors ${
+              isResizingSplit ? 'bg-indigo-600/20' : 'hover:bg-slate-800/40'
+            }`}
+          >
+            {/* 세로 분할 선 */}
+            <div className={`w-[1px] h-full transition-colors ${
+              isResizingSplit ? 'bg-indigo-500' : 'bg-slate-800/90 group-hover:bg-indigo-500/70'
+            }`} />
+
+            {/* 손잡이 그립 핀 (가운데 점 3개) */}
+            <div className={`absolute top-1/2 -translate-y-1/2 w-4 h-8 rounded-full flex flex-col items-center justify-center gap-1 border shadow-md transition-all ${
+              isResizingSplit 
+                ? 'bg-indigo-600 border-indigo-400 text-white scale-110 shadow-indigo-500/30' 
+                : 'bg-slate-900 border-slate-700/80 group-hover:border-indigo-400 group-hover:bg-slate-800 text-slate-500 group-hover:text-indigo-400'
+            }`}>
+              <div className="w-1.5 h-[1.5px] bg-current rounded-full" />
+              <div className="w-1.5 h-[1.5px] bg-current rounded-full" />
+              <div className="w-1.5 h-[1.5px] bg-current rounded-full" />
+            </div>
+          </div>
+        )}
+
         {(viewMode === 'preview' || viewMode === 'split') && (
           <div 
-            className="flex-1 h-full overflow-y-auto markdown-preview prose prose-invert max-w-none pr-2"
+            style={viewMode === 'split' ? { width: `calc(${100 - splitRatio}% - 0px)` } : undefined}
+            className={`flex-1 h-full overflow-y-auto markdown-preview prose prose-invert max-w-none ${
+              viewMode === 'split' ? 'pl-3 pr-2' : 'pr-2'
+            } ${isResizingSplit ? 'pointer-events-none' : ''}`}
             onClick={handlePreviewClick}
           >
             <div dangerouslySetInnerHTML={renderMarkdown(localContent)} />
