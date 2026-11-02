@@ -128,6 +128,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const currentNoteIdRef = useRef(note?.id);
   const lastSentContentRef = useRef<string | null>(null);
   const lastSentTitleRef = useRef<string | null>(null);
+  const sentContentsHistoryRef = useRef<Set<string>>(new Set());
 
   // 실행 취소(Undo) / 다시 실행(Redo) 전용 히스토리 스택
   const historyRef = useRef<{ content: string; cursorPos?: number }[]>([]);
@@ -190,18 +191,34 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         }
       } else {
         // 같은 메모를 보고 있는 경우:
-        // 내가 직접 타이핑 중인 내용이 아닐 때(외부 동기화로 변경되었을 때)만 덮어쓰기
         if (note.title !== localTitle && note.title !== lastSentTitleRef.current) {
           setLocalTitle(note.title);
         }
-        if (note.content !== localContent && note.content !== lastSentContentRef.current) {
+
+        // 사용자가 현재 textarea에 포커스하여 타이핑 중이거나,
+        // 내가 방금 상위로 보낸 내용(sentContentsHistoryRef)의 에코인 경우 덮어쓰지 않음 (커서 튐 방지!)
+        const isEditingNow = typeof document !== 'undefined' && textareaRef.current === document.activeElement;
+        const isSentByMe = sentContentsHistoryRef.current.has(note.content);
+
+        if (note.content !== localContent && !isSentByMe && !isEditingNow) {
+          const textarea = textareaRef.current;
+          const prevStart = textarea ? textarea.selectionStart : 0;
+          const prevEnd = textarea ? textarea.selectionEnd : 0;
+
           const { content: cleanedContent, attachments: cleanedAttachments } = cleanLegacyAttachments(
             note.content,
             note.attachments
           );
           setLocalContent(cleanedContent);
           setLocalAttachments(cleanedAttachments);
-          pushHistory(cleanedContent, 0);
+          pushHistory(cleanedContent, prevStart);
+
+          // 외부 동기화로 갱신되더라도 커서 위치 보존
+          if (textarea) {
+            setTimeout(() => {
+              textarea.setSelectionRange(prevStart, prevEnd);
+            }, 0);
+          }
         }
       }
     }
@@ -307,6 +324,11 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const debouncedSyncToParent = (updatedFields: Partial<Note>) => {
     if (updatedFields.content !== undefined) {
       lastSentContentRef.current = updatedFields.content;
+      sentContentsHistoryRef.current.add(updatedFields.content);
+      if (sentContentsHistoryRef.current.size > 30) {
+        const first = sentContentsHistoryRef.current.values().next().value;
+        if (first) sentContentsHistoryRef.current.delete(first);
+      }
     }
     if (updatedFields.title !== undefined) {
       lastSentTitleRef.current = updatedFields.title;
@@ -1351,6 +1373,33 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     }
   };
 
+  // 분할 모드 타이핑 중 미리보기(PDF 및 마크다운) 잦은 갱신 및 깜빡임 방지 디바운스
+  const [debouncedPreviewContent, setDebouncedPreviewContent] = useState(localContent);
+  const previewTimerRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (viewMode === 'preview') {
+      setDebouncedPreviewContent(localContent);
+      return;
+    }
+    if (previewTimerRef.current) {
+      clearTimeout(previewTimerRef.current);
+    }
+    previewTimerRef.current = setTimeout(() => {
+      setDebouncedPreviewContent(localContent);
+    }, 280);
+
+    return () => {
+      if (previewTimerRef.current) {
+        clearTimeout(previewTimerRef.current);
+      }
+    };
+  }, [localContent, viewMode]);
+
+  const renderedPreviewHtml = useMemo(() => {
+    return renderMarkdown(debouncedPreviewContent);
+  }, [debouncedPreviewContent, localAttachments]);
+
   // 소속 폴더 변경 시 제목 접두어([상위-하위]) 자동 갱신
   const handleFolderChange = (newProjectId: string) => {
     if (!note) return;
@@ -1903,7 +1952,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             } ${isResizingSplit ? 'pointer-events-none' : ''}`}
             onClick={handlePreviewClick}
           >
-            <div dangerouslySetInnerHTML={renderMarkdown(localContent)} />
+            <div dangerouslySetInnerHTML={renderedPreviewHtml} />
           </div>
         )}
       </div>

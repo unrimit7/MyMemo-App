@@ -1,5 +1,37 @@
 import type { AttachmentItem } from '../types';
 
+// Blob URL 캐시 (대용량 Base64 문자열 반복 파싱 부하 및 메모리 낭비 방지)
+const blobUrlCache = new Map<string, string>();
+
+export function getAttachmentBlobUrl(att: AttachmentItem): string {
+  if (!att.data) return '';
+  if (att.data.startsWith('blob:') || att.data.startsWith('http')) return att.data;
+  
+  if (blobUrlCache.has(att.id)) {
+    return blobUrlCache.get(att.id)!;
+  }
+
+  try {
+    const commaIdx = att.data.indexOf(',');
+    if (commaIdx === -1) return att.data;
+    const header = att.data.substring(0, commaIdx);
+    const base64 = att.data.substring(commaIdx + 1);
+    const mimeMatch = header.match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : att.type || 'application/octet-stream';
+    const binary = atob(base64);
+    const array = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      array[i] = binary.charCodeAt(i);
+    }
+    const blob = new Blob([array], { type: mime });
+    const url = URL.createObjectURL(blob);
+    blobUrlCache.set(att.id, url);
+    return url;
+  } catch {
+    return att.data;
+  }
+}
+
 /**
  * 첨부파일 객체를 HTML 마크업으로 변환합니다.
  * PDF인 경우: 헤더(제목 + 열기/다운로드 버튼) + 반응형 PDF 뷰어(데스크톱 인라인 뷰어 / 모바일 다이렉트 뷰어)
@@ -19,6 +51,7 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
     .trim();
   const displayName = cleanLabel || att.name;
   const downloadName = isPdf && !displayName.toLowerCase().endsWith('.pdf') ? `${displayName}.pdf` : displayName;
+  const targetUrl = isPdf ? getAttachmentBlobUrl(att) : att.data;
 
   if (isPdf) {
     return `
@@ -30,18 +63,18 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
       <span class="truncate">${displayName}</span>
     </div>
     <div class="flex items-center gap-2 shrink-0">
-      <a href="${att.data}" download="${downloadName}" class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold no-underline flex items-center gap-1.5 shadow-md shadow-indigo-600/20 active:scale-95 transition-all">
+      <a href="${targetUrl}" download="${downloadName}" class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold no-underline flex items-center gap-1.5 shadow-md shadow-indigo-600/20 active:scale-95 transition-all">
         <span>⬇️ PDF 열기 / 다운로드</span>
       </a>
     </div>
   </div>
   <!-- 본문 인라인 PDF 뷰어 (PC 데스크톱 브라우저는 바로 임베드 표시, 모바일은 기기 뷰어 열기 카드 표시) -->
   <div class="w-full bg-slate-950">
-    <object data="${att.data}" type="application/pdf" width="100%" class="w-full h-[650px] md:h-[750px] block border-0 bg-slate-950">
+    <object data="${targetUrl}" type="application/pdf" width="100%" class="w-full h-[650px] md:h-[750px] block border-0 bg-slate-950">
       <div class="p-8 text-center text-xs md:text-sm text-slate-400 space-y-3 bg-slate-950">
         <p class="text-slate-200 font-semibold text-sm">모바일 환경에서는 기기 PDF 앱으로 문서를 바로 열람할 수 있습니다.</p>
         <p class="text-xs text-slate-400">아래 버튼을 누르면 기기에서 즉시 문서를 열람하거나 다운로드합니다.</p>
-        <a href="${att.data}" download="${downloadName}" class="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/30">
+        <a href="${targetUrl}" download="${downloadName}" class="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/30">
           <span>📄 ${displayName} 바로 열기 / 다운로드</span>
         </a>
       </div>
