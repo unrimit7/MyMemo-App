@@ -12,6 +12,14 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
     att.name.toLowerCase().endsWith('.pdf') ||
     att.data.startsWith('data:application/pdf');
 
+  // 사용자가 마크다운 [대괄호] 안에 수정한 표시 이름이 있으면 우선 사용
+  const cleanLabel = (labelText || '')
+    .replace(/^[\s📄📎🖼️]*/, '')
+    .replace(/^(?:PDF\s*문서:\s*|파일:\s*)/i, '')
+    .trim();
+  const displayName = cleanLabel || att.name;
+  const downloadName = isPdf && !displayName.toLowerCase().endsWith('.pdf') ? `${displayName}.pdf` : displayName;
+
   if (isPdf) {
     return `
 <div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl">
@@ -19,10 +27,10 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
   <div class="px-4 py-3 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
     <div class="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-100 min-w-0">
       <span class="text-base md:text-lg">📄</span>
-      <span class="truncate">${att.name}</span>
+      <span class="truncate">${displayName}</span>
     </div>
     <div class="flex items-center gap-2 shrink-0">
-      <a href="${att.data}" download="${att.name}" class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold no-underline flex items-center gap-1.5 shadow-md shadow-indigo-600/20 active:scale-95 transition-all">
+      <a href="${att.data}" download="${downloadName}" class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold no-underline flex items-center gap-1.5 shadow-md shadow-indigo-600/20 active:scale-95 transition-all">
         <span>⬇️ PDF 열기 / 다운로드</span>
       </a>
     </div>
@@ -33,8 +41,8 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
       <div class="p-8 text-center text-xs md:text-sm text-slate-400 space-y-3 bg-slate-950">
         <p class="text-slate-200 font-semibold text-sm">모바일 환경에서는 기기 PDF 앱으로 문서를 바로 열람할 수 있습니다.</p>
         <p class="text-xs text-slate-400">아래 버튼을 누르면 기기에서 즉시 문서를 열람하거나 다운로드합니다.</p>
-        <a href="${att.data}" download="${att.name}" class="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/30">
-          <span>📄 ${att.name} 바로 열기 / 다운로드</span>
+        <a href="${att.data}" download="${downloadName}" class="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/30">
+          <span>📄 ${displayName} 바로 열기 / 다운로드</span>
         </a>
       </div>
     </object>
@@ -48,7 +56,7 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
     att.data?.startsWith('data:image/');
 
   if (isImage) {
-    return `<img src="${att.data}" alt="${att.name || labelText}" class="rounded-xl max-w-full my-3 border border-slate-800 shadow-md cursor-pointer hover:opacity-95 transition-opacity" />`;
+    return `<img src="${att.data}" alt="${cleanLabel || att.name}" class="rounded-xl max-w-full my-3 border border-slate-800 shadow-md cursor-pointer hover:opacity-95 transition-opacity" />`;
   }
 
   // 일반 파일 카드
@@ -56,9 +64,9 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
 <div class="my-3 inline-flex items-center justify-between gap-4 p-3 rounded-xl border border-slate-800 bg-slate-900/80 hover:border-slate-700 transition-all max-w-md">
   <div class="flex items-center gap-2 truncate">
     <span class="text-lg">📎</span>
-    <span class="text-xs font-medium text-slate-200 truncate">${att.name || labelText}</span>
+    <span class="text-xs font-medium text-slate-200 truncate">${displayName}</span>
   </div>
-  <a href="${att.data}" download="${att.name}" class="shrink-0 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-indigo-300 rounded-lg text-xs font-semibold no-underline">
+  <a href="${att.data}" download="${displayName}" class="shrink-0 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-indigo-300 rounded-lg text-xs font-semibold no-underline">
     다운로드
   </a>
 </div>
