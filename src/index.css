@@ -161,8 +161,31 @@
   border: 1px solid #334155;
   color: #cbd5e1;
   word-break: keep-all; /* 단어가 글자 단위로 쪼개져 한 줄에 한 글자만 나오는 현상 완벽 방지 */
-  min-width: 120px;     /* 각 컬럼의 최소 너비 보장 */
+  overflow-wrap: break-word;
+  min-width: 44px;      /* 최소 너비 */
   line-height: 1.5;
+  vertical-align: middle;
+}
+
+.table-scroll-container th[align="center"],
+.markdown-preview th[align="center"],
+.table-scroll-container td[align="center"],
+.markdown-preview td[align="center"] {
+  text-align: center;
+}
+
+.table-scroll-container th[align="right"],
+.markdown-preview th[align="right"],
+.table-scroll-container td[align="right"],
+.markdown-preview td[align="right"] {
+  text-align: right;
+}
+
+.table-scroll-container th[align="left"],
+.markdown-preview th[align="left"],
+.table-scroll-container td[align="left"],
+.markdown-preview td[align="left"] {
+  text-align: left;
 }
 
 .table-scroll-container tr:nth-child(even),

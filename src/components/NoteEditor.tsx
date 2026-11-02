@@ -950,7 +950,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
   // 표 서식 템플릿 삽입
   const insertTable = () => {
-    const tableTpl = '\n\n| 제목 | 내용 | 상태 |\n| :--- | :--- | :---: |\n| 항목1 | 내용1 | 완료 |\n\n';
+    const tableTpl = '\n\n| 제목 | 내용 | 상태 |\n| :--- | :--- | :---: |\n| 항목1 | 내용1<br>(줄바꿈 예시) | 완료 |\n\n';
     insertMarkdown(tableTpl, '');
   };
 
@@ -2238,6 +2238,14 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                 <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80 col-span-2">
                   <span className="text-slate-400">클립보드 스크린샷 붙여넣기</span>
                   <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded font-mono text-[11px] text-indigo-300">Ctrl + V</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-950/60 rounded-lg border border-slate-800/80 col-span-2">
+                  <span className="text-slate-400">표(Table) 셀 내부 줄바꿈</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-500 text-[11px]">셀 안에</span>
+                    <kbd className="px-1.5 py-0.5 bg-indigo-950/60 border border-indigo-500/40 rounded font-mono text-[11px] text-indigo-300 font-bold">&lt;br&gt;</kbd>
+                    <span className="text-slate-500 text-[11px]">입력</span>
+                  </div>
                 </div>
               </div>
             </div>

@@ -135,18 +135,32 @@ export function exportNoteToPdf(
       width: 100%;
       border-collapse: collapse;
       margin: 16px 0;
-      font-size: 12.5px;
+      font-size: 12px;
+      line-height: 1.5;
       break-inside: avoid;
     }
     th, td {
       border: 1px solid #cbd5e1;
       padding: 7px 10px;
       text-align: left;
+      vertical-align: middle;
+      word-break: keep-all; /* 한글 단어가 글자 단위로 어색하게 쪼개지는 현상(회\n신, 수\n용) 원천 방지 */
+      overflow-wrap: break-word; /* 지나치게 긴 영문/URL만 자연스럽게 줄바꿈 */
     }
     th {
       background-color: #f1f5f9;
       font-weight: 700;
       color: #1e293b;
+      white-space: nowrap; /* 제목 셀은 글자 꺾임 없이 한 줄로 깔끔하게 표시 */
+    }
+    th[align="center"], td[align="center"] {
+      text-align: center;
+    }
+    th[align="right"], td[align="right"] {
+      text-align: right;
+    }
+    th[align="left"], td[align="left"] {
+      text-align: left;
     }
     tr:nth-child(even) td {
       background-color: #f8fafc;
