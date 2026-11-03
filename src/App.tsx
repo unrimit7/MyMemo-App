@@ -709,9 +709,28 @@ export function App() {
 
     const isLocalOnlyNow = updated.isLocalOnly !== undefined ? updated.isLocalOnly : activeNote.isLocalOnly;
 
+    // 본문에 날짜 헤더(# 📋 YYYY-MM-DD 등)가 입력/수정되면 내부 기준일(createdAt)도 함께 자동 동기화!
+    // 이렇게 하면 나중에 사용자가 본문에서 날짜 헤더를 지우더라도, 지정했던 날짜 자리에 그대로 남아있게 됩니다.
+    let finalCreatedAt = activeNote.createdAt;
+    const contentToCheck = updated.content !== undefined ? updated.content : activeNote.content;
+    if (contentToCheck) {
+      const headerMatch = contentToCheck.match(/#+\s*.*?\b(\d{4})[-./](\d{1,2})[-./](\d{1,2})\b/);
+      if (headerMatch) {
+        const [y, m, d] = [Number(headerMatch[1]), Number(headerMatch[2]), Number(headerMatch[3])];
+        const dObj = new Date(finalCreatedAt);
+        if (!isNaN(dObj.getTime())) {
+          dObj.setFullYear(y, m - 1, d);
+          finalCreatedAt = dObj.toISOString();
+        } else {
+          finalCreatedAt = `${headerMatch[1]}-${headerMatch[2].padStart(2, '0')}-${headerMatch[3].padStart(2, '0')}T09:00:00.000Z`;
+        }
+      }
+    }
+
     const updatedNote: Note = {
       ...activeNote,
       ...updated,
+      createdAt: finalCreatedAt,
       updatedAt: new Date().toISOString(),
       syncStatus: isLocalOnlyNow 
         ? 'local_only' 
