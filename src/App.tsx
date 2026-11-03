@@ -22,6 +22,7 @@ import { ConfirmModal } from './components/ConfirmModal';
 import { CalendarView } from './components/CalendarView';
 import { processFileForNote } from './utils/file';
 import { getFolderHierarchyPath, updateTitleWithFolderPath, stripFolderPrefixFromTitle } from './utils/folderPath';
+import { Calendar as CalendarIcon, X, FolderTree } from 'lucide-react';
 
 interface DeleteConfirmState {
   isOpen: boolean;
@@ -534,6 +535,32 @@ export function App() {
     setIsCalendarOpen(false);
   };
 
+  // 캘린더 메모카드 클릭 시 모달 미리보기 설정 (기본값: true)
+  const [calendarModalPreview, setCalendarModalPreview] = useState<boolean>(() => {
+    return localStorage.getItem('mymemo_calendar_modal_preview') !== 'false';
+  });
+
+  const handleToggleCalendarModalPreview = (enabled: boolean) => {
+    setCalendarModalPreview(enabled);
+    localStorage.setItem('mymemo_calendar_modal_preview', String(enabled));
+  };
+
+  // 캘린더에서 미리보기/편집 팝업 중인 메모 ID
+  const [calendarPreviewNoteId, setCalendarPreviewNoteId] = useState<string | null>(null);
+
+  // Esc 키를 누르면 캘린더 미리보기 팝업 창 닫기
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && calendarPreviewNoteId) {
+        setCalendarPreviewNoteId(null);
+      }
+    };
+    if (calendarPreviewNoteId) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [calendarPreviewNoteId]);
+
   // 캘린더 뷰 열기 / 닫기 핸들러
   const handleOpenCalendar = () => {
     setIsCalendarOpen(true);
@@ -541,12 +568,17 @@ export function App() {
 
   const handleCloseCalendar = () => {
     setIsCalendarOpen(false);
+    setCalendarPreviewNoteId(null);
   };
 
   // 캘린더에서 특정 메모를 클릭하여 열기
   const handleSelectNoteFromCalendar = (noteId: string) => {
-    setIsCalendarOpen(false);
-    handleSelectNote(noteId);
+    if (calendarModalPreview) {
+      setCalendarPreviewNoteId(noteId);
+    } else {
+      setIsCalendarOpen(false);
+      handleSelectNote(noteId);
+    }
   };
 
   // 캘린더에서 특정 날짜에 새 메모 작성 (+ 버튼)
@@ -1097,7 +1129,88 @@ MyMemo의 모든 메모는 **내 개인 GitHub 저장소(Repository)**에 안전
         onApplyFolderPrefixes={handleApplyAllFolderPrefixes}
         onRemoveFolderPrefixes={handleRemoveAllFolderPrefixes}
         onCreateGuideNote={handleCreateOrOpenGuideNote}
+        calendarModalPreview={calendarModalPreview}
+        onToggleCalendarModalPreview={handleToggleCalendarModalPreview}
       />
+
+      {/* 캘린더 메모 미리보기/편집 전용 팝업 창 (모달) */}
+      {calendarPreviewNoteId && (() => {
+        const previewNote = notes.find((n) => n.id === calendarPreviewNoteId) || null;
+        if (!previewNote) return null;
+        return (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 bg-black/80 backdrop-blur-xs animate-in fade-in duration-150"
+            onClick={() => setCalendarPreviewNoteId(null)}
+          >
+            <div 
+              className="w-full h-full max-w-6xl bg-slate-900 border border-slate-700/90 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-150"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* 팝업 상단 헤더 바 */}
+              <div className="px-4 py-2.5 bg-slate-950 border-b border-slate-800 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2">
+                  <CalendarIcon size={16} className="text-indigo-400" />
+                  <span className="text-xs md:text-sm font-bold text-slate-200">
+                    캘린더 메모 미리보기 & 편집
+                  </span>
+                  <span className="hidden sm:inline-block text-[11px] text-slate-500 font-mono">
+                    (단축키 및 실시간 자동저장 지원)
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {/* 해당 폴더로 직접 이동하기 버튼 */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const targetId = calendarPreviewNoteId;
+                      setCalendarPreviewNoteId(null);
+                      setIsCalendarOpen(false);
+                      handleSelectNote(targetId);
+                    }}
+                    className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-medium transition-colors border border-slate-700/70 active:scale-95"
+                    title="캘린더를 닫고 이 메모가 속한 폴더로 직접 이동"
+                  >
+                    <FolderTree size={13} />
+                    <span>폴더로 이동</span>
+                  </button>
+
+                  {/* 닫기 버튼 */}
+                  <button
+                    type="button"
+                    onClick={() => setCalendarPreviewNoteId(null)}
+                    className="flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-sm transition-all active:scale-95"
+                    title="닫기 (Esc)"
+                  >
+                    <X size={14} />
+                    <span>닫기</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 에디터 본체: 이미지와 동일하게 보기 및 편집, 단축키 100% 동작 */}
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <NoteEditor
+                  note={previewNote}
+                  projects={projects}
+                  onUpdateNote={handleUpdateNote}
+                  onBackToList={() => setCalendarPreviewNoteId(null)}
+                  onDeleteNote={(id) => {
+                    setCalendarPreviewNoteId(null);
+                    requestDeleteNote(id);
+                  }}
+                  isSidebarCollapsed={true}
+                  onToggleSidebar={() => {}}
+                  isNoteListCollapsed={true}
+                  onToggleNoteList={() => {}}
+                  onSync={handleManualSync}
+                  isSyncing={isSyncing}
+                />
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 삭제 확인 전용 모달 */}
       <ConfirmModal

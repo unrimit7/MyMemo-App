@@ -12,7 +12,8 @@ import {
   FolderTree,
   Tag,
   RotateCcw,
-  BookOpen
+  BookOpen,
+  Calendar as CalendarIcon
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -24,6 +25,8 @@ interface SettingsModalProps {
   onApplyFolderPrefixes?: () => Promise<number>;
   onRemoveFolderPrefixes?: () => Promise<number>;
   onCreateGuideNote?: () => void;
+  calendarModalPreview?: boolean;
+  onToggleCalendarModalPreview?: (enabled: boolean) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -35,6 +38,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onApplyFolderPrefixes,
   onRemoveFolderPrefixes,
   onCreateGuideNote,
+  calendarModalPreview = true,
+  onToggleCalendarModalPreview,
 }) => {
   const [owner, setOwner] = useState('');
   const [repo, setRepo] = useState('');
@@ -310,6 +315,37 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <span className="text-amber-400 font-medium">⚡ 작성 중 3.5초 후 자동으로 GitHub에 커밋 및 업로드됩니다.</span>
                 ) : (
                   <span className="text-indigo-300 font-medium">🛡️ <strong>수동 동기화 모드 (여러 사람 협업 시 강력 권장)</strong>: 평소에는 로컬에 저장되고, <strong>[동기화]</strong> 버튼이나 Ctrl+S를 누를 때만 GitHub에 안전하게 반영합니다.</span>
+                )}
+              </p>
+            </div>
+          </div>
+
+          {/* 캘린더 동작 설정 */}
+          <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60 space-y-3">
+            <h4 className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+              <CalendarIcon size={14} className="text-indigo-400" />
+              <span>캘린더 동작 설정</span>
+            </h4>
+
+            <div className="space-y-1">
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-200 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={calendarModalPreview}
+                  onChange={(e) => onToggleCalendarModalPreview?.(e.target.checked)}
+                  className="accent-indigo-500 rounded w-4 h-4 cursor-pointer"
+                />
+                <span>캘린더 메모카드 클릭시 미리보기</span>
+              </label>
+              <p className="text-[11px] text-slate-400 leading-relaxed pl-6">
+                {calendarModalPreview ? (
+                  <span className="text-emerald-400 font-medium">
+                    ✅ 캘린더에서 메모를 클릭하면 캘린더를 닫지 않고 <strong>새창(팝업)에서 바로 보기 및 편집</strong>합니다. (단축키 지원)
+                  </span>
+                ) : (
+                  <span>
+                    체크 해제 시 캘린더가 닫히며 해당 폴더와 메모 편집 화면으로 직접 이동합니다.
+                  </span>
                 )}
               </p>
             </div>
