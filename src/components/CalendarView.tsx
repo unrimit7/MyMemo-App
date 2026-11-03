@@ -188,6 +188,75 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     }
   };
 
+  // 캘린더 빈 공간 좌/우 드래그 및 터치 스와이프를 통한 월 변경 핸들러
+  const touchStartXRef = useRef<number | null>(null);
+  const touchStartYRef = useRef<number | null>(null);
+  const mouseStartXRef = useRef<number | null>(null);
+  const mouseStartYRef = useRef<number | null>(null);
+  const isMouseDownOnGridRef = useRef<boolean>(false);
+
+  // 터치 스와이프 (휴대폰 모바일)
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('input') || target.closest('select')) return;
+    touchStartXRef.current = e.touches[0].clientX;
+    touchStartYRef.current = e.touches[0].clientY;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartXRef.current === null || touchStartYRef.current === null) return;
+    const endX = e.changedTouches[0].clientX;
+    const endY = e.changedTouches[0].clientY;
+    const deltaX = endX - touchStartXRef.current;
+    const deltaY = endY - touchStartYRef.current;
+
+    // 수평 스와이프가 수직 스크롤보다 크고 거리가 45px 이상일 때만 월 변경
+    if (Math.abs(deltaX) > Math.abs(deltaY) * 1.2 && Math.abs(deltaX) > 45) {
+      if (deltaX < 0) {
+        handleNextMonth(); // 왼쪽으로 스와이프: 다음 달
+      } else {
+        handlePrevMonth(); // 오른쪽으로 스와이프: 이전 달
+      }
+    }
+
+    touchStartXRef.current = null;
+    touchStartYRef.current = null;
+  };
+
+  // 마우스 드래그 (데스크톱)
+  const handleMouseDownOnGrid = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('input') || target.closest('select')) return;
+    mouseStartXRef.current = e.clientX;
+    mouseStartYRef.current = e.clientY;
+    isMouseDownOnGridRef.current = true;
+  };
+
+  const handleMouseUpOnGrid = (e: React.MouseEvent) => {
+    if (!isMouseDownOnGridRef.current || mouseStartXRef.current === null || mouseStartYRef.current === null) return;
+    const deltaX = e.clientX - mouseStartXRef.current;
+    const deltaY = e.clientY - mouseStartYRef.current;
+
+    // 수평 드래그 거리가 50px 이상일 때 월 변경
+    if (Math.abs(deltaX) > Math.abs(deltaY) * 1.2 && Math.abs(deltaX) > 50 && !draggedNoteId) {
+      if (deltaX < 0) {
+        handleNextMonth(); // 마우스 왼쪽 드래그: 다음 달
+      } else {
+        handlePrevMonth(); // 마우스 오른쪽 드래그: 이전 달
+      }
+    }
+
+    mouseStartXRef.current = null;
+    mouseStartYRef.current = null;
+    isMouseDownOnGridRef.current = false;
+  };
+
+  const handleMouseLeaveGrid = () => {
+    isMouseDownOnGridRef.current = false;
+    mouseStartXRef.current = null;
+    mouseStartYRef.current = null;
+  };
+
   // 메모의 기준 날짜 (YYYY-MM-DD) 추출
   // [1순위] 본문 내용의 날짜 (상단 헤더 # 📋 YYYY-MM-DD 등) -> 제목은 사용자가 캘린더에 보기 좋게 자유롭게 지을 수 있도록 최우선 적용!
   // [2순위] 제목 내 날짜 (YYYY-MM-DD / YYMMDD)
@@ -509,8 +578,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
         <div className="text-sky-400">토</div>
       </div>
 
-      {/* 메인 캘린더 그리드 */}
-      <div className="flex-1 grid grid-cols-7 auto-rows-fr overflow-y-auto bg-slate-950 divide-x divide-y divide-slate-800/60 border-b border-slate-800">
+      {/* 메인 캘린더 그리드 (빈 공간 좌우 드래그/터치 스와이프로 월 이동 지원) */}
+      <div 
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onMouseDown={handleMouseDownOnGrid}
+        onMouseUp={handleMouseUpOnGrid}
+        onMouseLeave={handleMouseLeaveGrid}
+        className="flex-1 grid grid-cols-7 auto-rows-fr overflow-y-auto bg-slate-950 divide-x divide-y divide-slate-800/60 border-b border-slate-800 select-none cursor-default"
+      >
         {calendarDays.map((item, idx) => {
           const dayNotes = dateNotesMap[item.dateStr] || [];
           const isToday = item.dateStr === todayStr;
@@ -588,9 +664,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                 </button>
               </div>
 
-              {/* 해당 날짜의 메모 목록 (최대 3~4개 직접 노출) */}
-              <div className="flex-1 flex flex-col gap-1 overflow-hidden">
-                {dayNotes.slice(0, 3).map((note) => {
+              {/* 해당 날짜의 메모 목록 (모바일은 1개, 데스크톱은 3개 표시) */}
+              <div className="flex-1 flex flex-col gap-1 overflow-hidden pointer-events-auto">
+                {dayNotes.slice(0, 3).map((note, nIdx) => {
                   const hasUndoneTask = note.content.includes('- [ ]');
                   const hasDoneTask = note.content.includes('- [x]') || note.content.includes('- [X]');
                   const folder = projectMap[note.projectId];
@@ -616,6 +692,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                         onSelectNote(note.id);
                       }}
                       className={`w-full text-left p-1 px-1.5 rounded bg-slate-900/90 hover:bg-indigo-600/30 border border-slate-800 hover:border-indigo-500/40 transition-all flex items-center gap-1 group/item active:scale-95 shadow-xs cursor-grab active:cursor-grabbing ${
+                        nIdx > 0 ? 'hidden md:flex' : 'flex'
+                      } ${
                         isDraggingThis ? 'opacity-40 scale-95 ring-1 ring-indigo-400' : ''
                       }`}
                       title={`[${folder?.name || '폴더'}] ${note.title} (클릭하여 열기 / 다른 날짜로 드래그 이동)`}
@@ -631,16 +709,21 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                         <span className="text-indigo-400 shrink-0 text-[10px]">•</span>
                       )}
 
-                      <span className="truncate text-[11px] text-slate-200 group-hover/item:text-indigo-200 font-medium flex-1">
+                      <span className="truncate text-[10px] md:text-[11px] text-slate-200 group-hover/item:text-indigo-200 font-medium flex-1">
                         {note.title || '제목 없음'}
                       </span>
                     </button>
                   );
                 })}
 
-                {/* 3개 초과 시 +N개 더보기 표시 */}
+                {/* 모바일에서는 1개 초과 시 '+N개' 배지 표시, 데스크톱에서는 3개 초과 시 표시 */}
+                {dayNotes.length > 1 && (
+                  <span className="md:hidden text-[9px] text-indigo-400 font-bold px-1 py-0.5 bg-indigo-950/60 rounded border border-indigo-500/20 w-fit shrink-0">
+                    +{dayNotes.length - 1}개
+                  </span>
+                )}
                 {dayNotes.length > 3 && (
-                  <span className="text-[10px] text-indigo-400 font-semibold px-1">
+                  <span className="hidden md:inline text-[10px] text-indigo-400 font-semibold px-1">
                     +{dayNotes.length - 3}개 더보기
                   </span>
                 )}
