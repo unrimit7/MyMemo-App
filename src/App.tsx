@@ -795,22 +795,7 @@ export function App() {
 
   // 설치 및 GitHub 동기화 가이드 메모 열기 또는 생성
   const handleCreateOrOpenGuideNote = async () => {
-    const existing = notes.find(
-      (n) => n.id === 'note-welcome' || n.title.includes('설치 & GitHub 동기화') || n.title.includes('환영합니다')
-    );
-    if (existing) {
-      setIsCalendarOpen(false);
-      handleSelectNote(existing.id);
-      setIsSettingsOpen(false);
-      return;
-    }
-
-    const defaultProj = projects.find((p) => !p.isLocalOnly) || projects[0];
-    const guideNote: Note = {
-      id: `note-guide-${Date.now()}`,
-      projectId: defaultProj ? defaultProj.id : 'proj-default',
-      title: 'MyMemo 설치 & GitHub 동기화 완벽 가이드 📖',
-      content: `# MyMemo 마크다운 메모장에 오신 것을 환영합니다! 🎉
+    const guideContent = `# MyMemo 마크다운 메모장에 오신 것을 환영합니다! 🎉
 
 휴대폰과 PC 어디서나 빠르고 안전하게 동기화되는 마크다운 메모장입니다.
 아래 가이드를 따라 하시면 **3분 안에 앱 설치 및 나만의 안전한 클라우드 동기화**를 마칠 수 있습니다!
@@ -871,7 +856,36 @@ MyMemo의 모든 메모는 **내 개인 GitHub 저장소(Repository)**에 안전
 - **글자 색상 & 형광펜**: 텍스트를 드래그하고 상단 툴바의 **팔레트 아이콘(🎨)**을 누르면 7가지 색상과 4가지 형광펜을 적용할 수 있습니다.
 - **표(Table) & PDF 첨부**: 툴바의 표 아이콘, PDF 첨부 버튼을 통해 문서와 표를 깔끔하게 관리할 수 있습니다.
 - **🔒 기기 전용(로컬) 보관**: 메모 상단의 자물쇠 아이콘을 켜면 해당 메모는 GitHub로 전송되지 않고 오직 이 기기에만 안전하게 보관됩니다.
-`,
+`;
+
+    const existing = notes.find(
+      (n) => n.id === 'note-welcome' || n.title.includes('설치 & GitHub 동기화') || n.title.includes('환영합니다')
+    );
+
+    if (existing) {
+      const updatedNote: Note = {
+        ...existing,
+        title: 'MyMemo 설치 & GitHub 동기화 완벽 가이드 📖',
+        content: guideContent,
+        updatedAt: new Date().toISOString(),
+        syncStatus: existing.isLocalOnly ? 'local_only' : 'pending',
+      };
+      await saveNote(updatedNote);
+      setNotes((prev) => prev.map((n) => (n.id === existing.id ? updatedNote : n)));
+      setIsCalendarOpen(false);
+      handleSelectNote(existing.id);
+      setIsSettingsOpen(false);
+      setSyncToast('📖 설치 & GitHub 동기화 가이드가 최신 내용으로 갱신되었습니다.');
+      setTimeout(() => setSyncToast(null), 3000);
+      return;
+    }
+
+    const defaultProj = projects.find((p) => !p.isLocalOnly) || projects[0];
+    const guideNote: Note = {
+      id: `note-guide-${Date.now()}`,
+      projectId: defaultProj ? defaultProj.id : 'proj-default',
+      title: 'MyMemo 설치 & GitHub 동기화 완벽 가이드 📖',
+      content: guideContent,
       isLocalOnly: false,
       syncStatus: 'pending',
       createdAt: new Date().toISOString(),
@@ -883,6 +897,8 @@ MyMemo의 모든 메모는 **내 개인 GitHub 저장소(Repository)**에 안전
     setIsCalendarOpen(false);
     handleSelectNote(guideNote.id);
     setIsSettingsOpen(false);
+    setSyncToast('📖 설치 & GitHub 동기화 가이드 메모가 생성되었습니다.');
+    setTimeout(() => setSyncToast(null), 3000);
   };
 
   // 전역 단축키 핸들러 (Ctrl + S: 언제 어디서나 GitHub 동기화 실행)
