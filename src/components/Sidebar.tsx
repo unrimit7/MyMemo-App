@@ -24,7 +24,7 @@ interface SidebarProps {
   onSelectProject: (id: string) => void;
   onCreateProject: (name: string, isLocalOnly: boolean, parentId?: string | null) => void;
   onDeleteProject: (id: string) => void;
-  onRenameProject: (id: string, newName: string) => void;
+  onRenameProject: (id: string, newName: string, isLocalOnly?: boolean) => void;
   noteCounts: Record<string, number>;
   gitHubConfig: GitHubConfig | null;
   onOpenSettings: () => void;
@@ -82,9 +82,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [newProjectName, setNewProjectName] = useState('');
   const [newIsLocalOnly, setNewIsLocalOnly] = useState(false);
 
-  // 폴더 이름 수정 팝업 상태
-  const [renamingTarget, setRenamingTarget] = useState<{ id: string; name: string } | null>(null);
+  // 폴더 정보(이름 및 동기화 방식) 수정 팝업 상태
+  const [renamingTarget, setRenamingTarget] = useState<{ id: string; name: string; isLocalOnly: boolean } | null>(null);
   const [renameInputValue, setRenameInputValue] = useState('');
+  const [renameIsLocalOnly, setRenameIsLocalOnly] = useState(false);
 
   // 외부(NoteList)에서 하위 폴더 생성 트리거 시 폼 열기
   React.useEffect(() => {
@@ -164,7 +165,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const handleRenameSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!renamingTarget || !renameInputValue.trim()) return;
-    onRenameProject(renamingTarget.id, renameInputValue.trim());
+    onRenameProject(renamingTarget.id, renameInputValue.trim(), renameIsLocalOnly);
     setRenamingTarget(null);
   };
 
@@ -270,11 +271,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setRenamingTarget({ id: project.id, name: project.name });
+                  setRenamingTarget({ id: project.id, name: project.name, isLocalOnly: !!project.isLocalOnly });
                   setRenameInputValue(project.name);
+                  setRenameIsLocalOnly(!!project.isLocalOnly);
                 }}
                 className="p-1.5 text-slate-400 hover:text-amber-300 hover:bg-slate-700/60 rounded-md transition-colors"
-                title="폴더 이름 수정"
+                title="폴더 정보 수정 (이름 및 기기 전용 여부)"
               >
                 <Pencil size={13} />
               </button>
@@ -318,7 +320,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         />
       )}
 
-      {/* 폴더 이름 수정 모달 팝업 */}
+      {/* 폴더 정보 수정 모달 팝업 */}
       {renamingTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
           <form 
@@ -331,30 +333,60 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <Pencil size={18} />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-slate-100">폴더 이름 수정</h3>
-                <p className="text-xs text-slate-400">새로운 폴더 이름을 입력하세요.</p>
+                <h3 className="text-sm font-bold text-slate-100">폴더 정보 수정</h3>
+                <p className="text-xs text-slate-400">폴더 이름과 동기화 방식을 변경합니다.</p>
               </div>
             </div>
 
-            <input
-              type="text"
-              value={renameInputValue}
-              onChange={(e) => setRenameInputValue(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500"
-              autoFocus
-            />
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">폴더 이름</label>
+              <input
+                type="text"
+                value={renameInputValue}
+                onChange={(e) => setRenameInputValue(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500"
+                autoFocus
+              />
+            </div>
 
-            <div className="flex justify-end gap-2 pt-1">
+            {/* 기기 전용(GitHub 미동기화) 토글 체크박스 */}
+            <div className="pt-2 border-t border-slate-800/80 space-y-1">
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={renameIsLocalOnly}
+                  onChange={(e) => setRenameIsLocalOnly(e.target.checked)}
+                  className="accent-amber-500 rounded w-4 h-4 cursor-pointer"
+                />
+                <span className="flex items-center gap-1 font-semibold text-slate-200">
+                  <Lock size={13} className="text-amber-400" />
+                  기기 전용 (GitHub 미동기화)
+                </span>
+              </label>
+              <p className="text-[11px] text-slate-400 pl-6 leading-relaxed">
+                {renameIsLocalOnly ? (
+                  <span className="text-amber-300 font-medium">
+                    🔒 이 폴더 및 모든 하위 폴더/메모는 GitHub로 동기화되지 않고 이 기기에만 안전하게 보관됩니다.
+                  </span>
+                ) : (
+                  <span>
+                    📁 GitHub 클라우드 저장소와 안전하게 양방향 동기화됩니다.
+                  </span>
+                )}
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
               <button
                 type="button"
                 onClick={() => setRenamingTarget(null)}
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200"
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 font-medium"
               >
                 취소
               </button>
               <button
                 type="submit"
-                className="px-4 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl transition-all"
+                className="px-4 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl transition-all shadow-md shadow-indigo-600/20 active:scale-95"
               >
                 수정 완료
               </button>

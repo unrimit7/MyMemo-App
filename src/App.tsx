@@ -318,48 +318,107 @@ export function App() {
     setActiveProjectId(newProject.id);
   };
 
-  // 프로젝트(폴더) 이름 수정 핸들러
-  const handleRenameProject = async (id: string, newName: string) => {
+  // 프로젝트(폴더) 정보(이름 및 기기 전용 여부) 수정 핸들러
+  const handleRenameProject = async (id: string, newName: string, isLocalOnly?: boolean) => {
     const target = projects.find((p) => p.id === id);
-    if (!target || target.name === newName) return;
+    if (!target) return;
 
-    const updatedProject: Project = { ...target, name: newName };
-    const updatedProjects = projects.map((p) => (p.id === id ? updatedProject : p));
-    await saveProject(updatedProject);
-    setProjects(updatedProjects);
+    const newIsLocalOnly = isLocalOnly !== undefined ? isLocalOnly : target.isLocalOnly;
+    const isNameChanged = target.name !== newName;
+    const isLocalOnlyChanged = target.isLocalOnly !== newIsLocalOnly;
 
-    // 하위 폴더 및 해당 폴더에 속한 메모들의 제목 접두어([상위-하위]) 자동 갱신
-    const affectedNotes = notes.filter((n) => {
-      let curr: Project | undefined = projects.find((p) => p.id === n.projectId);
-      while (curr) {
-        if (curr.id === id) return true;
-        if (!curr.parentId) break;
-        curr = projects.find((p) => p.id === curr?.parentId);
+    if (!isNameChanged && !isLocalOnlyChanged) return;
+
+    // 해당 폴더와 모든 하위(자식, 손자 등) 폴더 ID 목록 추출
+    const targetProjIds: string[] = [id];
+    const findChildren = (pId: string) => {
+      projects.filter((p) => p.parentId === pId).forEach((child) => {
+        targetProjIds.push(child.id);
+        findChildren(child.id);
+      });
+    };
+    findChildren(id);
+
+    // 1. 폴더 목록 갱신 (부모가 기기 전용으로 바뀌면 하위 폴더들도 일괄 기기 전용으로 전환)
+    const updatedProjects = projects.map((p) => {
+      if (p.id === id) {
+        return { ...p, name: newName, isLocalOnly: newIsLocalOnly };
       }
-      return false;
+      if (newIsLocalOnly && targetProjIds.includes(p.id)) {
+        return { ...p, isLocalOnly: true };
+      }
+      if (!newIsLocalOnly && targetProjIds.includes(p.id)) {
+        return { ...p, isLocalOnly: false };
+      }
+      return p;
     });
 
+    for (const projId of targetProjIds) {
+      const proj = updatedProjects.find((p) => p.id === projId);
+      if (proj) await saveProject(proj);
+    }
+    setProjects(updatedProjects);
+
+    // 2. 해당 폴더 및 하위 폴더에 속한 메모들 갱신
+    const affectedNotes = notes.filter((n) => targetProjIds.includes(n.projectId));
     const updatedNotesMap = new Map<string, Note>();
+
     for (const note of affectedNotes) {
       const newFolderPath = getFolderHierarchyPath(note.projectId, updatedProjects);
-      const newTitle = updateTitleWithFolderPath(note.title, newFolderPath);
+      const newTitle = isNameChanged ? updateTitleWithFolderPath(note.title, newFolderPath) : note.title;
+
+      let noteIsLocalOnly = note.isLocalOnly;
+      let noteSyncStatus = note.syncStatus;
+
+      if (newIsLocalOnly) {
+        // [일반 -> 기기 전용으로 전환]:
+        noteIsLocalOnly = true;
+        noteSyncStatus = 'local_only';
+        // 이전에 GitHub에 업로드되어 있던 파일이라면, 원격 GitHub에서 삭제되도록 톰스톤에 등록!
+        if (note.githubPath) {
+          await trackDeletedNote(note.id, note.githubPath);
+        }
+      } else if (isLocalOnlyChanged && !newIsLocalOnly) {
+        // [기기 전용 -> 일반 동기화로 전환]:
+        noteIsLocalOnly = false;
+        noteSyncStatus = 'pending';
+      }
+
       const updatedNote: Note = {
         ...note,
         title: newTitle,
-        syncStatus: note.isLocalOnly ? 'local_only' : 'pending',
+        isLocalOnly: noteIsLocalOnly,
+        syncStatus: noteSyncStatus,
         updatedAt: new Date().toISOString(),
       };
+
       await saveNote(updatedNote);
       updatedNotesMap.set(note.id, updatedNote);
     }
 
-    setNotes((prev) =>
-      prev.map((n) => updatedNotesMap.get(n.id) || (n.projectId === id && !n.isLocalOnly ? { ...n, syncStatus: 'pending' } : n))
-    );
+    setNotes((prev) => prev.map((n) => updatedNotesMap.get(n.id) || n));
 
-    if (gitHubConfig?.isConnected && gitHubConfig.autoSync) {
-      setTimeout(() => runSync(true), 1500);
+    // 3. 토스트 알림 및 원격 동기화 처리
+    if (isLocalOnlyChanged) {
+      if (newIsLocalOnly) {
+        setSyncToast(`🔒 '${newName}' 및 하위 항목이 '기기 전용'으로 전환되었습니다.`);
+        // GitHub에 올라가 있던 파일들을 원격에서 안전하게 삭제 동기화
+        if (gitHubConfig?.isConnected) {
+          setTimeout(() => runSync(true), 1500);
+        }
+      } else {
+        setSyncToast(`📁 '${newName}' 폴더가 'GitHub 동기화 대상'으로 전환되었습니다.`);
+        if (gitHubConfig?.isConnected && gitHubConfig.autoSync) {
+          setTimeout(() => runSync(true), 1500);
+        }
+      }
+    } else {
+      setSyncToast(`✏️ 폴더 이름이 '${newName}'(으)로 변경되었습니다.`);
+      if (gitHubConfig?.isConnected && gitHubConfig.autoSync) {
+        setTimeout(() => runSync(true), 1500);
+      }
     }
+    setTimeout(() => setSyncToast(null), 3500);
   };
 
   // 특정 폴더로 파일 드롭 시 새 메모 자동 생성 핸들러
