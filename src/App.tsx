@@ -594,6 +594,57 @@ export function App() {
     handleSelectNote(newNote.id);
   };
 
+  // 캘린더에서 특정 메모를 드래그하여 다른 날짜로 이동하는 핸들러
+  const handleMoveNoteToDate = async (noteId: string, targetDateStr: string) => {
+    const targetNote = notes.find((n) => n.id === noteId);
+    if (!targetNote) return;
+
+    // 1. 제목 내 날짜 패턴이 있으면 변경
+    let newTitle = targetNote.title;
+    // YYYY-MM-DD or YYYY.MM.DD or YYYY/MM/DD
+    const dateMatch = newTitle.match(/(\d{4})([-./])(\d{1,2})\2(\d{1,2})/);
+    if (dateMatch) {
+      const sep = dateMatch[2];
+      const [ty, tm, td] = targetDateStr.split('-');
+      const formattedDate = `${ty}${sep}${tm}${sep}${td}`;
+      newTitle = newTitle.replace(dateMatch[0], formattedDate);
+    } else {
+      // 6자리 YYMMDD 패턴 (예: 261102 -> 261029)
+      const shortMatch = newTitle.match(/\b(2\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\b/);
+      if (shortMatch) {
+        const [ty, tm, td] = targetDateStr.split('-');
+        const shortDate = `${ty.slice(2)}${tm}${td}`;
+        newTitle = newTitle.replace(shortMatch[0], shortDate);
+      }
+    }
+
+    // 2. createdAt의 날짜 부분을 targetDateStr로 갱신 (시간은 유지)
+    const [y, m, d] = targetDateStr.split('-').map(Number);
+    const dateObj = new Date(targetNote.createdAt);
+    if (!isNaN(dateObj.getTime())) {
+      dateObj.setFullYear(y, m - 1, d);
+    }
+    const newCreatedAt = !isNaN(dateObj.getTime()) ? dateObj.toISOString() : `${targetDateStr}T09:00:00.000Z`;
+
+    // 3. 본문 상단 헤더(# 📋 YYYY-MM-DD)가 있다면 갱신
+    let newContent = targetNote.content;
+    newContent = newContent.replace(/# 📋 \d{4}-\d{2}-\d{2}/, `# 📋 ${targetDateStr}`);
+
+    const updatedNote: Note = {
+      ...targetNote,
+      title: newTitle,
+      content: newContent,
+      createdAt: newCreatedAt,
+      updatedAt: new Date().toISOString(),
+      syncStatus: targetNote.isLocalOnly ? 'local_only' : 'pending',
+    };
+
+    await saveNote(updatedNote);
+    setNotes((prev) => prev.map((n) => (n.id === noteId ? updatedNote : n)));
+    setSyncToast(`📅 '${targetNote.title}' 일정이 ${targetDateStr}로 이동되었습니다.`);
+    setTimeout(() => setSyncToast(null), 3000);
+  };
+
   // 모바일 목록으로 복귀 핸들러
   const handleBackToList = () => {
     setMobileScreen('list');
@@ -826,6 +877,7 @@ export function App() {
           onSelectNote={handleSelectNoteFromCalendar}
           onCreateNoteForDate={handleCreateNoteForDate}
           onClose={handleCloseCalendar}
+          onMoveNoteDate={handleMoveNoteToDate}
         />
       ) : (
         <>

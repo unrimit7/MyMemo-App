@@ -20,6 +20,7 @@ interface CalendarViewProps {
   onSelectNote: (noteId: string) => void;
   onCreateNoteForDate: (dateStr: string, targetProjectId?: string) => void;
   onClose: () => void;
+  onMoveNoteDate?: (noteId: string, targetDateStr: string) => void;
 }
 
 export const CalendarView: React.FC<CalendarViewProps> = ({
@@ -29,10 +30,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   onSelectNote,
   onCreateNoteForDate,
   onClose,
+  onMoveNoteDate,
 }) => {
   const today = useMemo(() => new Date(), []);
   const [currentYear, setCurrentYear] = useState<number>(today.getFullYear());
   const [currentMonth, setCurrentMonth] = useState<number>(today.getMonth()); // 0-indexed
+
+  // 드래그 앤 드롭 이동 상태 관리
+  const [draggedNoteId, setDraggedNoteId] = useState<string | null>(null);
+  const [dragOverDateStr, setDragOverDateStr] = useState<string | null>(null);
 
   // 선택된 날짜 (기본값: 오늘)
   const [selectedDateStr, setSelectedDateStr] = useState<string>(() => {
@@ -436,6 +442,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           const dayNotes = dateNotesMap[item.dateStr] || [];
           const isToday = item.dateStr === todayStr;
           const isSelected = item.dateStr === selectedDateStr;
+          const isDragOver = dragOverDateStr === item.dateStr;
           const isSunday = idx % 7 === 0;
           const isSaturday = idx % 7 === 6;
 
@@ -443,9 +450,38 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
             <div
               key={item.dateStr}
               onClick={() => setSelectedDateStr(item.dateStr)}
-              className={`p-1 md:p-1.5 flex flex-col min-h-[90px] md:min-h-[110px] transition-colors relative cursor-pointer group/cell ${
+              onDragOver={(e) => {
+                if (!onMoveNoteDate) return;
+                e.preventDefault();
+                e.stopPropagation();
+                e.dataTransfer.dropEffect = 'move';
+                if (dragOverDateStr !== item.dateStr) {
+                  setDragOverDateStr(item.dateStr);
+                }
+              }}
+              onDragLeave={(e) => {
+                e.stopPropagation();
+                if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                if (dragOverDateStr === item.dateStr) {
+                  setDragOverDateStr(null);
+                }
+              }}
+              onDrop={(e) => {
+                if (!onMoveNoteDate) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const noteId = e.dataTransfer.getData('text/plain') || draggedNoteId;
+                if (noteId) {
+                  onMoveNoteDate(noteId, item.dateStr);
+                }
+                setDraggedNoteId(null);
+                setDragOverDateStr(null);
+              }}
+              className={`p-1 md:p-1.5 flex flex-col min-h-[90px] md:min-h-[110px] transition-all relative cursor-pointer group/cell ${
                 !item.isCurrentMonth ? 'bg-slate-950/40 opacity-40' : 'bg-slate-950 hover:bg-slate-900/50'
-              } ${isSelected ? 'ring-2 ring-indigo-500/80 ring-inset bg-indigo-950/20' : ''}`}
+              } ${isSelected ? 'ring-2 ring-indigo-500/80 ring-inset bg-indigo-950/20' : ''} ${
+                isDragOver ? 'ring-2 ring-indigo-400 bg-indigo-950/70 scale-[1.01] z-20 shadow-xl' : ''
+              }`}
             >
               {/* 날짜 상단 바 (숫자 + 추가 버튼) */}
               <div className="flex items-center justify-between mb-1">
@@ -485,17 +521,31 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                   const hasUndoneTask = note.content.includes('- [ ]');
                   const hasDoneTask = note.content.includes('- [x]') || note.content.includes('- [X]');
                   const folder = projectMap[note.projectId];
+                  const isDraggingThis = draggedNoteId === note.id;
 
                   return (
                     <button
                       key={note.id}
                       type="button"
+                      draggable={true}
+                      onDragStart={(e) => {
+                        e.stopPropagation();
+                        e.dataTransfer.setData('text/plain', note.id);
+                        e.dataTransfer.effectAllowed = 'move';
+                        setDraggedNoteId(note.id);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedNoteId(null);
+                        setDragOverDateStr(null);
+                      }}
                       onClick={(e) => {
                         e.stopPropagation();
                         onSelectNote(note.id);
                       }}
-                      className="w-full text-left p-1 px-1.5 rounded bg-slate-900/90 hover:bg-indigo-600/30 border border-slate-800 hover:border-indigo-500/40 transition-all flex items-center gap-1 group/item active:scale-95 shadow-xs"
-                      title={`[${folder?.name || '폴더'}] ${note.title} (클릭하여 열기)`}
+                      className={`w-full text-left p-1 px-1.5 rounded bg-slate-900/90 hover:bg-indigo-600/30 border border-slate-800 hover:border-indigo-500/40 transition-all flex items-center gap-1 group/item active:scale-95 shadow-xs cursor-grab active:cursor-grabbing ${
+                        isDraggingThis ? 'opacity-40 scale-95 ring-1 ring-indigo-400' : ''
+                      }`}
+                      title={`[${folder?.name || '폴더'}] ${note.title} (클릭하여 열기 / 다른 날짜로 드래그 이동)`}
                     >
                       {/* 할 일 / 완료 / 일반 아이콘 구분 */}
                       {hasUndoneTask ? (
@@ -553,12 +603,26 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           ) : (
             selectedDateNotes.map((note) => {
               const folder = projectMap[note.projectId];
+              const isDraggingThis = draggedNoteId === note.id;
               return (
                 <button
                   key={note.id}
+                  draggable={true}
+                  onDragStart={(e) => {
+                    e.stopPropagation();
+                    e.dataTransfer.setData('text/plain', note.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                    setDraggedNoteId(note.id);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedNoteId(null);
+                    setDragOverDateStr(null);
+                  }}
                   onClick={() => onSelectNote(note.id)}
-                  className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800 hover:bg-indigo-600/30 border border-slate-700/80 hover:border-indigo-500/50 rounded-lg text-xs font-medium text-slate-200 hover:text-white transition-all shrink-0 active:scale-95"
-                  title={`[${folder?.name || '폴더'}] ${note.title}`}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 bg-slate-800 hover:bg-indigo-600/30 border border-slate-700/80 hover:border-indigo-500/50 rounded-lg text-xs font-medium text-slate-200 hover:text-white transition-all shrink-0 active:scale-95 cursor-grab active:cursor-grabbing ${
+                    isDraggingThis ? 'opacity-40 scale-95 ring-1 ring-indigo-400' : ''
+                  }`}
+                  title={`[${folder?.name || '폴더'}] ${note.title} (달력 칸으로 드래그하여 날짜 변경 가능)`}
                 >
                   <FileText size={12} className="text-indigo-400 shrink-0" />
                   {folder && (
