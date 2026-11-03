@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import type { Note, Project } from '../types';
 import { 
   ChevronLeft, 
@@ -48,17 +48,57 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     return `${y}-${m}-${d}`;
   });
 
+  // 특정 폴더의 모든 하위(자식, 손자 등) 폴더 ID 목록 추출 헬퍼 함수
+  const getFolderWithDescendants = useCallback((rootId: string): string[] => {
+    const result: string[] = [rootId];
+    const findChildren = (parentId: string) => {
+      projects.filter((p) => p.parentId === parentId).forEach((child) => {
+        result.push(child.id);
+        findChildren(child.id);
+      });
+    };
+    findChildren(rootId);
+    return result;
+  }, [projects]);
+
   // 폴더 필터 팝오버 열림 상태
   const [isFolderFilterOpen, setIsFolderFilterOpen] = useState(false);
   const filterDropdownRef = useRef<HTMLDivElement>(null);
 
-  // 선택된 폴더 ID 집합 (체크박스 다중 선택)
+  // 선택된 폴더 ID 집합 (상위 폴더 클릭 시 하위 폴더들까지 기본으로 자동 포함!)
   const [selectedFolderIds, setSelectedFolderIds] = useState<Set<string>>(() => {
     if (activeProjectId && activeProjectId !== 'ALL') {
-      return new Set([activeProjectId]);
+      const familyIds = [activeProjectId];
+      const findChildren = (parentId: string) => {
+        projects.filter((p) => p.parentId === parentId).forEach((child) => {
+          familyIds.push(child.id);
+          findChildren(child.id);
+        });
+      };
+      findChildren(activeProjectId);
+      return new Set(familyIds);
     }
     return new Set(projects.map((p) => p.id));
   });
+
+  // 메모 작성 시 대상이 될 폴더 ID (기본값: 클릭된 활성 폴더, 사용자가 드롭다운으로 언제든 변경 가능)
+  const [createFolderId, setCreateFolderId] = useState<string>(() => {
+    if (activeProjectId && activeProjectId !== 'ALL') {
+      return activeProjectId;
+    }
+    return projects[0]?.id || '';
+  });
+
+  useEffect(() => {
+    if (activeProjectId && activeProjectId !== 'ALL') {
+      setCreateFolderId(activeProjectId);
+      // 활성 폴더가 변경되면 캘린더 필터도 해당 폴더 및 모든 하위 폴더로 자동 설정
+      const familyIds = getFolderWithDescendants(activeProjectId);
+      setSelectedFolderIds(new Set(familyIds));
+    } else if (!createFolderId && projects.length > 0) {
+      setCreateFolderId(projects[0].id);
+    }
+  }, [activeProjectId, projects, getFolderWithDescendants]);
 
   // 팝오버 외부 클릭 시 닫기
   useEffect(() => {
@@ -229,21 +269,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
 
   const selectedDateNotes = dateNotesMap[selectedDateStr] || [];
 
-  // 메모 작성 시 대상이 될 폴더 ID 계산:
-  // 1) 체크된 폴더가 1개인 경우 -> 그 폴더에 바로 생성
-  // 2) activeProjectId가 체크된 폴더 목록에 속해 있는 경우 -> activeProjectId 사용
-  // 3) 그 외: 첫 번째 체크된 폴더 사용
-  const targetFolderId = useMemo(() => {
-    if (selectedFolderIds.size === 1) {
-      return Array.from(selectedFolderIds)[0];
-    }
-    if (activeProjectId && activeProjectId !== 'ALL' && selectedFolderIds.has(activeProjectId)) {
-      return activeProjectId;
-    }
-    return Array.from(selectedFolderIds)[0] || undefined;
-  }, [selectedFolderIds, activeProjectId]);
+  // 메모 작성 대상 폴더 이름
+  const createFolderName = createFolderId ? projectMap[createFolderId]?.name : null;
 
-  const targetFolderName = targetFolderId ? projectMap[targetFolderId]?.name : null;
+  // 헤더 요약용 폴더명 (체크된 폴더가 1개일 때)
+  const singleSelectedFolderName = selectedFolderIds.size === 1 ? projectMap[Array.from(selectedFolderIds)[0]]?.name : null;
 
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-950 text-slate-100 overflow-hidden select-none">
@@ -298,8 +328,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
             <span className="font-medium truncate max-w-[130px] md:max-w-[200px]">
               {selectedFolderIds.size === projects.length
                 ? '전체 폴더 표시'
-                : selectedFolderIds.size === 1 && targetFolderName
-                  ? `폴더: ${targetFolderName}`
+                : selectedFolderIds.size === 1 && singleSelectedFolderName
+                  ? `폴더: ${singleSelectedFolderName}`
                   : `${selectedFolderIds.size}개 폴더 선택됨`}
             </span>
             <ChevronDown size={14} className="text-slate-400 shrink-0" />
@@ -359,11 +389,13 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                         }`}
                         style={{ paddingLeft: `${Math.min(depth * 14 + 10, 48)}px` }}
                         onClick={() => {
+                          const familyIds = getFolderWithDescendants(p.id);
                           const next = new Set(selectedFolderIds);
-                          if (next.has(p.id)) {
-                            next.delete(p.id);
+                          const isCurrentlyChecked = next.has(p.id);
+                          if (isCurrentlyChecked) {
+                            familyIds.forEach((id) => next.delete(id));
                           } else {
-                            next.add(p.id);
+                            familyIds.forEach((id) => next.add(id));
                           }
                           setSelectedFolderIds(next);
                         }}
@@ -394,10 +426,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setSelectedFolderIds(new Set([p.id]));
+                              const familyIds = getFolderWithDescendants(p.id);
+                              setSelectedFolderIds(new Set(familyIds));
                             }}
                             className="text-[10px] text-indigo-400 hover:text-indigo-300 hover:bg-indigo-950/60 border border-indigo-500/20 px-1.5 py-0.5 rounded md:opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="이 폴더만 단독 보기"
+                            title="이 폴더 및 하위 폴더만 보기"
                           >
                             단독
                           </button>
@@ -506,10 +539,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    onCreateNoteForDate(item.dateStr, targetFolderId);
+                    onCreateNoteForDate(item.dateStr, createFolderId);
                   }}
                   className="opacity-0 group-hover/cell:opacity-100 p-1 text-slate-500 hover:text-indigo-400 hover:bg-slate-800 rounded transition-all"
-                  title={`${item.dateStr} 새 메모 작성 (${targetFolderName || '현재 폴더'})`}
+                  title={`${item.dateStr} 새 메모 작성 (${createFolderName || '현재 폴더'})`}
                 >
                   <Plus size={13} />
                 </button>
@@ -579,21 +612,45 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
 
       {/* 하단: 선택된 날짜 상세 패널 (모바일 및 날짜별 메모 한눈에 보기) */}
       <div className="p-3 md:px-6 border-t border-slate-800 bg-slate-900/90 flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
-        <div className="flex items-center gap-2">
-          <CalendarIcon size={16} className="text-indigo-400" />
-          <span className="text-xs md:text-sm font-bold text-slate-100">
-            {selectedDateStr} 메모 목록 ({selectedDateNotes.length}개)
-          </span>
-          <button
-            onClick={() => onCreateNoteForDate(selectedDateStr, targetFolderId)}
-            className="ml-2 flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-sm transition-all active:scale-95"
-            title={`${targetFolderName ? `'${targetFolderName}' 폴더에 ` : ''}선택한 날짜로 새 메모 작성`}
-          >
-            <Plus size={13} />
-            <span>
-              {targetFolderName ? `'${targetFolderName}'에 새 메모` : '이 날짜에 새 메모'}
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center gap-2 shrink-0">
+            <CalendarIcon size={16} className="text-indigo-400" />
+            <span className="text-xs md:text-sm font-bold text-slate-100 whitespace-nowrap">
+              {selectedDateStr} 메모 목록 ({selectedDateNotes.length}개)
             </span>
-          </button>
+          </div>
+
+          {/* 추가할 대상 폴더 선택 드롭다운 & 새 메모 추가 버튼 */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1 bg-slate-800/90 border border-slate-700/80 rounded-lg px-2 py-1 shadow-xs">
+              <Folder size={12} className="text-indigo-400 shrink-0" />
+              <select
+                value={createFolderId}
+                onChange={(e) => setCreateFolderId(e.target.value)}
+                className="bg-transparent text-xs text-slate-200 font-medium focus:outline-hidden cursor-pointer max-w-[130px] sm:max-w-[180px] truncate"
+                title="새 메모를 추가할 대상 폴더 선택"
+              >
+                {hierarchicalProjects.map(({ project: p, depth }) => (
+                  <option key={p.id} value={p.id} className="bg-slate-900 text-slate-200">
+                    {depth > 0 ? `${'\u00A0'.repeat(depth * 3)}└ ` : ''}
+                    {p.isLocalOnly ? '🔒 ' : '📁 '}
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              onClick={() => onCreateNoteForDate(selectedDateStr, createFolderId)}
+              className="flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-sm transition-all active:scale-95 shrink-0"
+              title={`${createFolderName ? `'${createFolderName}' 폴더에 ` : ''}선택한 날짜로 새 메모 작성`}
+            >
+              <Plus size={13} />
+              <span>
+                {createFolderName ? `'${createFolderName}'에 새 메모` : '이 날짜에 새 메모'}
+              </span>
+            </button>
+          </div>
         </div>
 
         {/* 선택 날짜의 메모 태그 리스트 */}
