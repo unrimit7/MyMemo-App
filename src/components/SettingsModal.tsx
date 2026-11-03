@@ -11,7 +11,8 @@ import {
   Loader2,
   FolderTree,
   Tag,
-  RotateCcw
+  RotateCcw,
+  BookOpen
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -22,6 +23,7 @@ interface SettingsModalProps {
   noteCount?: number;
   onApplyFolderPrefixes?: () => Promise<number>;
   onRemoveFolderPrefixes?: () => Promise<number>;
+  onCreateGuideNote?: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -32,6 +34,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   noteCount = 0,
   onApplyFolderPrefixes,
   onRemoveFolderPrefixes,
+  onCreateGuideNote,
 }) => {
   const [owner, setOwner] = useState('');
   const [repo, setRepo] = useState('');
@@ -167,6 +170,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <strong>안심 보안 안내:</strong> 입력하신 토큰은 어떤 외부 서버로도 전송되지 않으며, 오직 본인 기기(브라우저 Local)에만 안전하게 저장되어 GitHub와 직접 통신합니다.
             </div>
           </div>
+
+          {/* 설치 & 동기화 가이드 열기 배너 */}
+          {onCreateGuideNote && (
+            <div className="p-3 bg-indigo-950/40 border border-indigo-500/30 rounded-xl flex items-center justify-between gap-3 text-indigo-300">
+              <div className="flex items-center gap-2 min-w-0">
+                <BookOpen size={16} className="text-indigo-400 shrink-0" />
+                <span className="text-[11px] text-indigo-200 truncate">처음이라 설정이 헷갈리시나요?</span>
+              </div>
+              <button
+                type="button"
+                onClick={onCreateGuideNote}
+                className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shrink-0 transition-colors shadow-sm"
+              >
+                가이드 메모 보기
+              </button>
+            </div>
+          )}
 
           {/* GitHub 사용자명 */}
           <div>
