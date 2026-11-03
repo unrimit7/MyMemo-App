@@ -45,7 +45,8 @@ import {
   Undo2,
   Redo2,
   FileText,
-  Palette
+  Palette,
+  Download
 } from 'lucide-react';
 
 // 마크다운 번호 매기기 목록 렌더링 시 사용자가 직접 입력한 번호(예: 1., 2., 3.)와 보기 모드의 번호가 일치하도록 커스텀 렌더러 설정
@@ -1634,6 +1635,23 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     });
   };
 
+  // 마크다운(.md) 파일로 내 컴퓨터에 다운로드 저장
+  const handleExportToMarkdown = () => {
+    if (!note) return;
+    const rawFileName = (localTitle || note.title || '메모').trim();
+    // 윈도우 파일 시스템에서 파일명으로 사용할 수 없는 특수문자(\ / : * ? " < > |) 치환
+    const safeFileName = rawFileName.replace(/[\\/:*?"<>|]/g, '_');
+    const blob = new Blob([localContent], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${safeFileName}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div 
       className={`flex-1 flex flex-col h-full bg-slate-950 overflow-hidden transition-all ${
@@ -1811,11 +1829,21 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                 localContent
               );
             }}
-            className="flex items-center gap-1 px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-indigo-300 border border-slate-800 rounded-lg text-xs font-medium transition-all shadow-sm active:scale-95"
+            className="flex items-center gap-1 px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-indigo-300 border border-slate-800 rounded-lg text-xs font-medium transition-all shadow-sm active:scale-95 shrink-0"
             title="현재 메모를 깔끔한 PDF 문서로 내보내기 / 인쇄"
           >
             <FileDown size={13} className="text-indigo-400" />
             <span className="hidden sm:inline">PDF 내보내기</span>
+          </button>
+
+          {/* 📝 MD 파일로 내 컴퓨터에 다운로드 저장 */}
+          <button
+            onClick={handleExportToMarkdown}
+            className="flex items-center gap-1 px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-emerald-300 border border-slate-800 rounded-lg text-xs font-medium transition-all shadow-sm active:scale-95 shrink-0"
+            title="현재 메모를 마크다운(.md) 파일로 내 컴퓨터에 다운로드 저장"
+          >
+            <Download size={13} className="text-emerald-400" />
+            <span className="hidden sm:inline">MD 저장</span>
           </button>
 
           {/* 메모 삭제 버튼 */}
