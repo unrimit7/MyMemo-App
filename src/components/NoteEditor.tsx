@@ -55,6 +55,11 @@ marked.use({
       const match = item.raw.match(/^\s*(\d+)\.\s+/);
       const val = match ? ` value="${match[1]}"` : '';
       return `<li${val}>${(this as any).parser.parse(item.tokens)}</li>\n`;
+    },
+    link({ href, title, tokens }: any) {
+      const text = (this as any).parser.parseInline(tokens);
+      const titleAttr = title ? ` title="${title}"` : '';
+      return `<a href="${href}" target="_blank" rel="noopener noreferrer"${titleAttr} class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">${text}</a>`;
     }
   }
 });
