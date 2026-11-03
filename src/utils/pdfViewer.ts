@@ -10,11 +10,33 @@ if (typeof window !== 'undefined' && 'GlobalWorkerOptions' in pdfjsLib) {
 // PDF 문서 캐시 (중복 파싱 방지)
 const pdfDocCache = new Map<string, PDFDocumentProxy>();
 
+// 진행 중인 캔버스 렌더링 태스크 추적 (다중 렌더링 충돌 취소 방지)
+const activeRenderTasks = new WeakMap<HTMLCanvasElement, any>();
+
+function getAssetBaseUrl(): string {
+  if (typeof window === 'undefined') return './';
+  const pathname = window.location.pathname;
+  const dir = pathname.substring(0, pathname.lastIndexOf('/') + 1);
+  return `${window.location.origin}${dir}`;
+}
+
 export async function loadPdfDocument(dataOrUrl: string, cacheKey?: string): Promise<PDFDocumentProxy> {
   const key = cacheKey || dataOrUrl.slice(0, 80);
   if (pdfDocCache.has(key)) {
     return pdfDocCache.get(key)!;
   }
+
+  const baseUrl = getAssetBaseUrl();
+  const cMapUrl = `${baseUrl}cmaps/`;
+  const standardFontDataUrl = `${baseUrl}standard_fonts/`;
+
+  // 한글(CJK) 및 특수 폰트 유실 방지를 위한 필수 디코더 파라미터
+  const commonParams = {
+    cMapUrl,
+    cMapPacked: true,
+    standardFontDataUrl,
+    enableXfa: true,
+  };
 
   let loadingTask;
   if (dataOrUrl.startsWith('data:')) {
@@ -25,9 +47,15 @@ export async function loadPdfDocument(dataOrUrl: string, cacheKey?: string): Pro
     for (let i = 0; i < binary.length; i++) {
       bytes[i] = binary.charCodeAt(i);
     }
-    loadingTask = pdfjsLib.getDocument({ data: bytes });
+    loadingTask = pdfjsLib.getDocument({
+      data: bytes,
+      ...commonParams,
+    });
   } else {
-    loadingTask = pdfjsLib.getDocument({ url: dataOrUrl });
+    loadingTask = pdfjsLib.getDocument({
+      url: dataOrUrl,
+      ...commonParams,
+    });
   }
 
   const doc = await loadingTask.promise;
@@ -42,6 +70,16 @@ export async function renderPdfPageToCanvas(
   targetWidth?: number,
   zoomScale: number = 1.0
 ): Promise<{ width: number; height: number }> {
+  // 이전 렌더링 태스크가 진행 중이면 취소하여 캔버스 충돌 방지
+  if (activeRenderTasks.has(canvas)) {
+    try {
+      activeRenderTasks.get(canvas).cancel();
+    } catch {
+      // ignore
+    }
+    activeRenderTasks.delete(canvas);
+  }
+
   const page = await pdfDoc.getPage(pageNumber);
   const unscaledViewport = page.getViewport({ scale: 1.0 });
 
@@ -77,8 +115,22 @@ export async function renderPdfPageToCanvas(
     viewport: viewport,
   };
 
-  await (page.render(renderContext as any) as any).promise;
-  ctx.restore();
+  const renderTask = page.render(renderContext as any);
+  activeRenderTasks.set(canvas, renderTask);
+
+  try {
+    await (renderTask as any).promise;
+  } catch (err: any) {
+    if (err?.name === 'RenderingCancelledException') {
+      return { width: viewport.width, height: viewport.height };
+    }
+    throw err;
+  } finally {
+    if (activeRenderTasks.get(canvas) === renderTask) {
+      activeRenderTasks.delete(canvas);
+    }
+    ctx.restore();
+  }
 
   return { width: viewport.width, height: viewport.height };
 }
