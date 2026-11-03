@@ -306,12 +306,15 @@ export function App() {
 
   // 프로젝트(폴더) 추가 핸들러
   const handleCreateProject = async (name: string, isLocalOnly: boolean, parentId?: string | null) => {
+    const siblings = projects.filter((p) => (p.parentId || null) === (parentId || null));
+    const maxOrder = siblings.reduce((max, p) => Math.max(max, p.order ?? 0), 0);
     const newProject: Project = {
       id: `proj-${Date.now()}`,
       name,
       parentId: parentId || null,
       isLocalOnly,
       createdAt: new Date().toISOString(),
+      order: maxOrder + 10,
     };
     await saveProject(newProject);
     setProjects((prev) => [...prev, newProject]);
@@ -419,6 +422,271 @@ export function App() {
       }
     }
     setTimeout(() => setSyncToast(null), 3500);
+  };
+
+  // 프로젝트(폴더) 드래그 앤 드롭 이동 및 순서 변경 핸들러
+  const handleMoveProject = async (
+    draggedId: string,
+    targetId: string,
+    position: 'before' | 'after' | 'inside'
+  ) => {
+    if (draggedId === targetId) return;
+
+    const dragged = projects.find((p) => p.id === draggedId);
+    if (!dragged) return;
+
+    const isTargetRoot = targetId === 'ROOT';
+    const target = isTargetRoot ? null : projects.find((p) => p.id === targetId);
+    if (!isTargetRoot && !target) return;
+
+    // 1. 자기 자신의 하위 폴더(자손) 안으로 이동 방지 (순환 참조 방지)
+    const isDescendant = (ancestorId: string, checkId: string): boolean => {
+      let curr = projects.find((p) => p.id === checkId);
+      while (curr && curr.parentId) {
+        if (curr.parentId === ancestorId) return true;
+        const nextId: string = curr.parentId;
+        curr = projects.find((p) => p.id === nextId);
+      }
+      return false;
+    };
+    if (!isTargetRoot && isDescendant(draggedId, targetId)) {
+      setSyncToast('⚠️ 상위 폴더를 자신의 하위 폴더 안으로 이동할 수 없습니다.');
+      setTimeout(() => setSyncToast(null), 3000);
+      return;
+    }
+
+    // 2. 최대 depth(2단계 하위, 총 3단계 계층) 초과 방지 체크
+    const getDepth = (id: string, list: Project[]): number => {
+      let depth = 0;
+      let curr = list.find((p) => p.id === id);
+      while (curr && curr.parentId) {
+        depth++;
+        const nextId: string = curr.parentId;
+        curr = list.find((p) => p.id === nextId);
+      }
+      return depth;
+    };
+
+    const getSubtreeHeight = (rootId: string, list: Project[]): number => {
+      const children = list.filter((p) => p.parentId === rootId);
+      if (children.length === 0) return 0;
+      return 1 + Math.max(...children.map((c) => getSubtreeHeight(c.id, list)));
+    };
+
+    const draggedSubtreeHeight = getSubtreeHeight(draggedId, projects);
+
+    let newParentId: string | null = null;
+    if (isTargetRoot) {
+      newParentId = null;
+    } else if (position === 'inside') {
+      newParentId = targetId;
+      const targetDepth = getDepth(targetId, projects);
+      if (targetDepth + 1 + draggedSubtreeHeight > 2) {
+        setSyncToast('⚠️ 최대 2단계 하위 폴더까지만 지원됩니다.');
+        setTimeout(() => setSyncToast(null), 3000);
+        return;
+      }
+    } else {
+      // before 또는 after인 경우: target과 동일한 parentId
+      newParentId = target?.parentId || null;
+      const parentDepth = newParentId ? getDepth(newParentId, projects) : -1;
+      if (parentDepth + 1 + draggedSubtreeHeight > 2) {
+        setSyncToast('⚠️ 최대 2단계 하위 폴더까지만 지원됩니다.');
+        setTimeout(() => setSyncToast(null), 3000);
+        return;
+      }
+    }
+
+    const isParentChanged = (dragged.parentId || null) !== (newParentId || null);
+
+    // 3. 기기 전용(isLocalOnly) 동기화 보안 규칙: 상위 폴더가 기기 전용이면 이동된 폴더도 기기 전용 전환
+    let updatedIsLocalOnly = dragged.isLocalOnly;
+    if (newParentId) {
+      const parentProj = projects.find((p) => p.id === newParentId);
+      if (parentProj?.isLocalOnly) {
+        updatedIsLocalOnly = true;
+      }
+    }
+
+    const updatedDragged: Project = {
+      ...dragged,
+      parentId: newParentId,
+      isLocalOnly: updatedIsLocalOnly,
+    };
+
+    let updatedProjectsList = projects.map((p) => (p.id === draggedId ? updatedDragged : p));
+
+    // 하위 폴더들도 부모가 기기 전용으로 바뀌면 연쇄 반영
+    if (updatedIsLocalOnly && !dragged.isLocalOnly) {
+      const cascadeLocal = (pid: string) => {
+        updatedProjectsList = updatedProjectsList.map((p) => {
+          if (p.parentId === pid) {
+            cascadeLocal(p.id);
+            return { ...p, isLocalOnly: true };
+          }
+          return p;
+        });
+      };
+      cascadeLocal(draggedId);
+    }
+
+    // 4. newParentId를 공유하는 형제 폴더들 목록 추출 및 순서(order) 재배열
+    const siblings = updatedProjectsList
+      .filter((p) => (p.parentId || null) === (newParentId || null) && p.id !== draggedId)
+      .sort((a, b) => {
+        const oA = a.order !== undefined ? a.order : 999999;
+        const oB = b.order !== undefined ? b.order : 999999;
+        if (oA !== oB) return oA - oB;
+        return a.createdAt.localeCompare(b.createdAt);
+      });
+
+    if (isTargetRoot || position === 'inside') {
+      siblings.push(updatedDragged);
+    } else if (position === 'before') {
+      const targetIdx = siblings.findIndex((p) => p.id === targetId);
+      if (targetIdx !== -1) {
+        siblings.splice(targetIdx, 0, updatedDragged);
+      } else {
+        siblings.unshift(updatedDragged);
+      }
+    } else {
+      // after
+      const targetIdx = siblings.findIndex((p) => p.id === targetId);
+      if (targetIdx !== -1) {
+        siblings.splice(targetIdx + 1, 0, updatedDragged);
+      } else {
+        siblings.push(updatedDragged);
+      }
+    }
+
+    // 형제들에게 새로운 순서 번호(order: 10, 20, 30...) 할당
+    const orderMap = new Map<string, number>();
+    siblings.forEach((s, idx) => {
+      orderMap.set(s.id, (idx + 1) * 10);
+    });
+
+    const finalProjects = updatedProjectsList.map((p) => {
+      if (orderMap.has(p.id)) {
+        return { ...p, order: orderMap.get(p.id)! };
+      }
+      return p;
+    });
+
+    setProjects(finalProjects);
+
+    // IndexedDB에 수정된 폴더 저장
+    for (const p of finalProjects) {
+      const orig = projects.find((o) => o.id === p.id);
+      if (!orig || orig.parentId !== p.parentId || orig.order !== p.order || orig.isLocalOnly !== p.isLocalOnly) {
+        await saveProject(p);
+      }
+    }
+
+    // 5. 상위 폴더가 변경된 경우, 소속된 메모들의 계층 경로명 및 로컬 전용 상태 갱신
+    if (isParentChanged) {
+      const targetProjIds: string[] = [draggedId];
+      const findChildren = (pId: string) => {
+        finalProjects.filter((p) => p.parentId === pId).forEach((child) => {
+          targetProjIds.push(child.id);
+          findChildren(child.id);
+        });
+      };
+      findChildren(draggedId);
+
+      const affectedNotes = notes.filter((n) => targetProjIds.includes(n.projectId));
+      const updatedNotesMap = new Map<string, Note>();
+
+      for (const note of affectedNotes) {
+        const newFolderPath = getFolderHierarchyPath(note.projectId, finalProjects);
+        const newTitle = updateTitleWithFolderPath(note.title, newFolderPath);
+
+        let noteIsLocalOnly = note.isLocalOnly;
+        let noteSyncStatus = note.syncStatus;
+
+        if (updatedIsLocalOnly && !dragged.isLocalOnly) {
+          noteIsLocalOnly = true;
+          noteSyncStatus = 'local_only';
+          if (note.githubPath) {
+            await trackDeletedNote(note.id, note.githubPath);
+          }
+        }
+
+        const updatedNote: Note = {
+          ...note,
+          title: newTitle,
+          isLocalOnly: noteIsLocalOnly,
+          syncStatus: noteSyncStatus,
+          updatedAt: new Date().toISOString(),
+        };
+
+        await saveNote(updatedNote);
+        updatedNotesMap.set(note.id, updatedNote);
+      }
+
+      if (updatedNotesMap.size > 0) {
+        setNotes((prev) => prev.map((n) => updatedNotesMap.get(n.id) || n));
+      }
+
+      setSyncToast(
+        newParentId
+          ? `📁 '${dragged.name}' 폴더가 '${projects.find((p) => p.id === newParentId)?.name}' 하위로 이동되었습니다.`
+          : `📁 '${dragged.name}' 폴더가 최상위 메인 폴더로 이동되었습니다.`
+      );
+      setTimeout(() => setSyncToast(null), 3000);
+    }
+
+    if (gitHubConfig?.isConnected && gitHubConfig.autoSync) {
+      setTimeout(() => runSync(true), 1500);
+    }
+  };
+
+  // 프로젝트(폴더) 일괄 정렬 (가나다순, 최신순 등)
+  const handleSortProjects = async (sortType: 'name-asc' | 'name-desc' | 'created-desc' | 'created-asc') => {
+    const parentIds = Array.from(new Set(projects.map((p) => p.parentId || null)));
+    const updatedProjects = [...projects];
+
+    for (const pid of parentIds) {
+      const siblings = updatedProjects.filter((p) => (p.parentId || null) === pid);
+      siblings.sort((a, b) => {
+        if (sortType === 'name-asc') {
+          return a.name.localeCompare(b.name, 'ko', { numeric: true, sensitivity: 'base' });
+        }
+        if (sortType === 'name-desc') {
+          return b.name.localeCompare(a.name, 'ko', { numeric: true, sensitivity: 'base' });
+        }
+        if (sortType === 'created-desc') {
+          return b.createdAt.localeCompare(a.createdAt);
+        }
+        // created-asc
+        return a.createdAt.localeCompare(b.createdAt);
+      });
+
+      siblings.forEach((s, idx) => {
+        const item = updatedProjects.find((p) => p.id === s.id);
+        if (item) {
+          item.order = (idx + 1) * 10;
+        }
+      });
+    }
+
+    setProjects(updatedProjects);
+
+    for (const p of updatedProjects) {
+      await saveProject(p);
+    }
+
+    const sortNames = {
+      'name-asc': '가나다순 (A-Z)',
+      'name-desc': '가나다 역순 (Z-A)',
+      'created-desc': '최신 생성순',
+      'created-asc': '과거 생성순',
+    };
+    setSyncToast(`🔀 폴더가 '${sortNames[sortType]}'으로 정렬되었습니다.`);
+    setTimeout(() => setSyncToast(null), 3000);
+
+    if (gitHubConfig?.isConnected && gitHubConfig.autoSync) {
+      setTimeout(() => runSync(true), 1500);
+    }
   };
 
   // 특정 폴더로 파일 드롭 시 새 메모 자동 생성 핸들러
@@ -1066,6 +1334,8 @@ MyMemo의 모든 메모는 **내 개인 GitHub 저장소(Repository)**에 안전
         onCreateProject={handleCreateProject}
         onDeleteProject={requestDeleteProject}
         onRenameProject={handleRenameProject}
+        onMoveProject={handleMoveProject}
+        onSortProjects={handleSortProjects}
         noteCounts={noteCounts}
         gitHubConfig={gitHubConfig}
         onOpenSettings={() => setIsSettingsOpen(true)}

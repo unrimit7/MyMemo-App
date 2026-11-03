@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import type { Project, GitHubConfig } from '../types';
 import { 
   Folder, 
@@ -15,7 +15,9 @@ import {
   ChevronDown,
   Pencil,
   PanelLeftClose,
-  Calendar
+  Calendar,
+  ArrowUpDown,
+  GripVertical
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -25,6 +27,8 @@ interface SidebarProps {
   onCreateProject: (name: string, isLocalOnly: boolean, parentId?: string | null) => void;
   onDeleteProject: (id: string) => void;
   onRenameProject: (id: string, newName: string, isLocalOnly?: boolean) => void;
+  onMoveProject?: (draggedId: string, targetId: string, position: 'before' | 'after' | 'inside') => void;
+  onSortProjects?: (sortType: 'name-asc' | 'name-desc' | 'created-desc' | 'created-asc') => void;
   noteCounts: Record<string, number>;
   gitHubConfig: GitHubConfig | null;
   onOpenSettings: () => void;
@@ -52,6 +56,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCreateProject,
   onDeleteProject,
   onRenameProject,
+  onMoveProject,
+  onSortProjects,
   noteCounts,
   gitHubConfig,
   onOpenSettings,
@@ -71,8 +77,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
   width,
   isResizing,
 }) => {
-  // 드래그 오버 중인 폴더 ID
+  // 드래그 오버 중인 폴더 ID 및 위치 정보
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
+  const [draggedFolderId, setDraggedFolderId] = useState<string | null>(null);
+  const [dragOverInfo, setDragOverInfo] = useState<{ id: string; position: 'before' | 'after' | 'inside' } | null>(null);
+
+  // 폴더 정렬 메뉴 열림 상태
+  const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
+  const sortMenuRef = useRef<HTMLDivElement>(null);
+
+  // 정렬 메뉴 외부 클릭 시 닫기
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (sortMenuRef.current && !sortMenuRef.current.contains(e.target as Node)) {
+        setIsSortMenuOpen(false);
+      }
+    };
+    if (isSortMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [isSortMenuOpen]);
 
   // 새 폴더 모달/인라인 상태
   const [addingTarget, setAddingTarget] = useState<{ parentId: string | null; isOpen: boolean }>({
@@ -88,7 +113,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [renameIsLocalOnly, setRenameIsLocalOnly] = useState(false);
 
   // 외부(NoteList)에서 하위 폴더 생성 트리거 시 폼 열기
-  React.useEffect(() => {
+  useEffect(() => {
     if (externalAddTarget) {
       setAddingTarget({ parentId: externalAddTarget.parentId, isOpen: true });
       const parent = projects.find((p) => p.id === externalAddTarget.parentId);
@@ -113,6 +138,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
     });
   };
 
+  // 자기 자신의 자손(하위) 폴더인지 확인
+  const isDescendant = (ancestorId: string, checkId: string): boolean => {
+    let curr = projects.find((p) => p.id === checkId);
+    while (curr && curr.parentId) {
+      if (curr.parentId === ancestorId) return true;
+      const nextId: string = curr.parentId;
+      curr = projects.find((p) => p.id === nextId);
+    }
+    return false;
+  };
+
   // 각 프로젝트의 depth 계산 맵
   const projectDepthMap = useMemo(() => {
     const depthMap: Record<string, number> = {};
@@ -131,12 +167,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return depthMap;
   }, [projects]);
 
-  // 트리 구조 빌드
+  // 트리 구조 빌드 (order 순서 정렬 반영)
   const projectTree = useMemo(() => {
     const rootProjects: Project[] = [];
     const childrenMap: Record<string, Project[]> = {};
 
-    projects.forEach((p) => {
+    const sortProjects = (a: Project, b: Project) => {
+      const orderA = a.order !== undefined ? a.order : 999999;
+      const orderB = b.order !== undefined ? b.order : 999999;
+      if (orderA !== orderB) return orderA - orderB;
+      return a.createdAt.localeCompare(b.createdAt);
+    };
+
+    const sortedProjects = [...projects].sort(sortProjects);
+
+    sortedProjects.forEach((p) => {
       if (!p.parentId) {
         rootProjects.push(p);
       } else {
@@ -180,41 +225,111 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const count = noteCounts[project.id] || 0;
     const canHaveSubfolder = depth < 2;
 
-    const isDragOver = dragOverFolderId === project.id;
+    const isCurrentDragged = draggedFolderId === project.id;
+    const isDragTarget = dragOverInfo?.id === project.id;
+    const dragPosition = isDragTarget ? dragOverInfo.position : null;
+    const isFileDragOver = dragOverFolderId === project.id;
 
     return (
       <div 
         key={project.id} 
-        className="flex flex-col select-none"
+        className={`flex flex-col select-none transition-all ${isCurrentDragged ? 'opacity-40' : ''}`}
+        draggable={true}
+        onDragStart={(e) => {
+          e.stopPropagation();
+          e.dataTransfer.setData('text/mymemo-folder-id', project.id);
+          e.dataTransfer.effectAllowed = 'move';
+          setDraggedFolderId(project.id);
+        }}
+        onDragEnd={() => {
+          setDraggedFolderId(null);
+          setDragOverInfo(null);
+          setDragOverFolderId(null);
+        }}
         onDragOver={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          setDragOverFolderId(project.id);
+
+          // 외부 파일 드롭 처리
+          if (e.dataTransfer.types.includes('Files') && !draggedFolderId) {
+            setDragOverFolderId(project.id);
+            return;
+          }
+
+          if (!draggedFolderId || draggedFolderId === project.id) return;
+          if (isDescendant(draggedFolderId, project.id)) return;
+
+          const rect = e.currentTarget.getBoundingClientRect();
+          const relY = (e.clientY - rect.top) / rect.height;
+
+          let position: 'before' | 'after' | 'inside';
+          if (canHaveSubfolder) {
+            if (relY < 0.25) {
+              position = 'before';
+            } else if (relY > 0.75) {
+              position = 'after';
+            } else {
+              position = 'inside';
+            }
+          } else {
+            position = relY < 0.5 ? 'before' : 'after';
+          }
+
+          setDragOverInfo({ id: project.id, position });
         }}
         onDragLeave={(e) => {
           e.preventDefault();
           e.stopPropagation();
+          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
           if (dragOverFolderId === project.id) setDragOverFolderId(null);
+          if (dragOverInfo?.id === project.id) setDragOverInfo(null);
         }}
         onDrop={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          setDragOverFolderId(null);
+
           if (e.dataTransfer.files && e.dataTransfer.files.length > 0 && onDropFilesToProject) {
+            setDragOverFolderId(null);
             onDropFilesToProject(project.id, e.dataTransfer.files);
+            return;
           }
+
+          const droppedId = e.dataTransfer.getData('text/mymemo-folder-id') || draggedFolderId;
+          if (droppedId && droppedId !== project.id && dragOverInfo && onMoveProject) {
+            onMoveProject(droppedId, project.id, dragOverInfo.position);
+            if (dragOverInfo.position === 'inside') {
+              setExpandedFolders((prev) => new Set(prev).add(project.id));
+            }
+          }
+
+          setDragOverFolderId(null);
+          setDragOverInfo(null);
+          setDraggedFolderId(null);
         }}
       >
+        {/* 'before' 위치 드롭 인디케이터 (상단 파란 가이드선) */}
+        {dragPosition === 'before' && (
+          <div className="h-1 bg-indigo-500 rounded-full my-0.5 shadow-md shadow-indigo-500/50 animate-pulse ml-2" />
+        )}
+
         <div
-          className={`group flex items-center justify-between rounded-lg text-sm transition-all pr-1.5 ${
-            isDragOver
-              ? 'bg-indigo-600/30 border-2 border-dashed border-indigo-400 text-white font-bold'
+          className={`group flex items-center justify-between rounded-lg text-sm transition-all pr-1.5 relative cursor-grab active:cursor-grabbing ${
+            dragPosition === 'inside' || isFileDragOver
+              ? 'bg-indigo-600/30 border-2 border-dashed border-indigo-400 text-white font-bold ring-2 ring-indigo-500/20'
               : isSelected
                 ? 'bg-slate-800 text-white font-medium shadow-sm'
                 : 'text-slate-300 hover:bg-slate-900/80 hover:text-slate-100'
           }`}
-          style={{ paddingLeft: `${depth * 14 + 8}px` }}
+          style={{ paddingLeft: `${depth * 14 + 4}px` }}
         >
+          {/* 드래그 그립 핸들 (호버 시 표시) */}
+          <div 
+            className="text-slate-600 group-hover:text-slate-400 opacity-30 group-hover:opacity-100 shrink-0 transition-opacity mr-0.5" 
+            title="드래그하여 순서 변경 또는 다른 폴더로 이동"
+          >
+            <GripVertical size={12} />
+          </div>
+
           {/* 폴더 접기/펼치기 아이콘 */}
           <button
             type="button"
@@ -242,6 +357,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <Folder size={14} className="text-indigo-400 shrink-0" />
               )}
               <span className="truncate text-xs md:text-sm">{project.name}</span>
+              {dragPosition === 'inside' && (
+                <span className="text-[10px] bg-indigo-500 text-white px-1.5 py-0.2 rounded font-semibold ml-1 shrink-0 animate-in fade-in">
+                  ↳ 하위로 이동
+                </span>
+              )}
             </div>
             <span className="text-[11px] text-slate-500 font-mono shrink-0 pl-1">
               {count}
@@ -297,6 +417,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
           </div>
         </div>
+
+        {/* 'after' 위치 드롭 인디케이터 (하단 파란 가이드선) */}
+        {dragPosition === 'after' && (
+          <div className="h-1 bg-indigo-500 rounded-full my-0.5 shadow-md shadow-indigo-500/50 animate-pulse ml-2" />
+        )}
 
         {/* 하위 폴더 렌더링 (펼쳐졌을 때) */}
         {hasChildren && isExpanded && (
@@ -432,12 +557,78 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* 프로젝트 목록 헤더 */}
-        <div className="px-4 py-3 flex items-center justify-between text-xs font-semibold text-slate-400 uppercase tracking-wider">
-          <span>폴더 및 카테고리</span>
+        <div className="px-4 py-3 flex items-center justify-between text-xs font-semibold text-slate-400 uppercase tracking-wider relative">
+          <div className="flex items-center gap-1.5">
+            <span>폴더 및 카테고리</span>
+            {/* 정렬 메뉴 토글 버튼 */}
+            <div className="relative" ref={sortMenuRef}>
+              <button
+                type="button"
+                onClick={() => setIsSortMenuOpen((prev) => !prev)}
+                className={`p-1 rounded hover:bg-slate-800 transition-colors ${
+                  isSortMenuOpen ? 'text-indigo-400 bg-slate-800' : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="폴더 정렬 (가나다순, 최신순 등)"
+              >
+                <ArrowUpDown size={13} />
+              </button>
+
+              {isSortMenuOpen && (
+                <div 
+                  className="absolute left-0 top-full mt-1.5 w-44 bg-slate-900 border border-slate-700/90 rounded-xl shadow-2xl py-1.5 z-50 text-slate-200 animate-in fade-in zoom-in-95 duration-100 normal-case"
+                >
+                  <div className="px-3 py-1 text-[10px] font-bold text-slate-400 border-b border-slate-800/80 mb-1">
+                    폴더 정렬 기준
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSortProjects?.('name-asc');
+                      setIsSortMenuOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-indigo-600/20 hover:text-indigo-300 flex items-center justify-between transition-colors"
+                  >
+                    <span>🔤 가나다순 (A-Z)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSortProjects?.('name-desc');
+                      setIsSortMenuOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-indigo-600/20 hover:text-indigo-300 flex items-center justify-between transition-colors"
+                  >
+                    <span>🔤 가나다 역순 (Z-A)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSortProjects?.('created-desc');
+                      setIsSortMenuOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-indigo-600/20 hover:text-indigo-300 flex items-center justify-between transition-colors"
+                  >
+                    <span>⏱️ 최신 생성순</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSortProjects?.('created-asc');
+                      setIsSortMenuOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-indigo-600/20 hover:text-indigo-300 flex items-center justify-between transition-colors"
+                  >
+                    <span>📅 과거 생성순</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
           <button
             onClick={() => setAddingTarget({ parentId: null, isOpen: !addingTarget.isOpen })}
             className="text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-normal capitalize hover:bg-slate-900 px-2 py-1 rounded"
-            title="메인 폴더 추가"
+            title="최상위 메인 폴더 추가"
           >
             <FolderPlus size={14} />
             <span>메인 추가</span>
@@ -538,6 +729,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
               View
             </span>
           </button>
+
+          {/* 하위 폴더 드래그 중일 때 최상위로 꺼낼 수 있는 드롭 영역 */}
+          {draggedFolderId && projects.find((p) => p.id === draggedFolderId)?.parentId && (
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setDragOverInfo({ id: 'ROOT', position: 'inside' });
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (dragOverInfo?.id === 'ROOT') setDragOverInfo(null);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (draggedFolderId && onMoveProject) {
+                  onMoveProject(draggedFolderId, 'ROOT', 'inside');
+                }
+                setDragOverInfo(null);
+                setDraggedFolderId(null);
+              }}
+              className={`p-2.5 rounded-xl border-2 border-dashed text-center text-xs font-semibold transition-all my-1.5 animate-in fade-in zoom-in-95 duration-150 ${
+                dragOverInfo?.id === 'ROOT'
+                  ? 'border-indigo-400 bg-indigo-600/30 text-white shadow-lg ring-2 ring-indigo-500/30'
+                  : 'border-slate-700 bg-slate-900/80 text-slate-300 hover:border-slate-500'
+              }`}
+            >
+              <span>📂 여기에 놓으면 최상위 메인 폴더로 꺼내기</span>
+            </div>
+          )}
 
           {/* 최상위 폴더부터 재귀 렌더링 */}
           {projectTree.rootProjects.map((proj) => renderProjectNode(proj, 0))}

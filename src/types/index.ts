@@ -5,6 +5,7 @@ export interface Project {
   isLocalOnly: boolean; // 기기 전용 여부 (GitHub 동기화에서 배제)
   color?: string;
   createdAt: string;
+  order?: number; // 정렬 순서 인덱스 (드래그 앤 드롭 및 사용자 정의 순서)
 }
 
 export type SyncStatus = 'synced' | 'pending' | 'conflict' | 'local_only' | 'syncing';
