@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import type { Project, Note, GitHubConfig } from './types';
+import type { Project, Note, GitHubConfig, SyncStatus } from './types';
 import { 
   seedInitialDataIfNeeded, 
   getAllProjects, 
@@ -314,6 +314,7 @@ export function App() {
       parentId: parentId || null,
       isLocalOnly,
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       order: maxOrder + 10,
     };
     await saveProject(newProject);
@@ -342,16 +343,18 @@ export function App() {
     };
     findChildren(id);
 
+    const nowStr = new Date().toISOString();
+
     // 1. 폴더 목록 갱신 (부모가 기기 전용으로 바뀌면 하위 폴더들도 일괄 기기 전용으로 전환)
     const updatedProjects = projects.map((p) => {
       if (p.id === id) {
-        return { ...p, name: newName, isLocalOnly: newIsLocalOnly };
+        return { ...p, name: newName, isLocalOnly: newIsLocalOnly, updatedAt: nowStr };
       }
       if (newIsLocalOnly && targetProjIds.includes(p.id)) {
-        return { ...p, isLocalOnly: true };
+        return { ...p, isLocalOnly: true, updatedAt: nowStr };
       }
       if (!newIsLocalOnly && targetProjIds.includes(p.id)) {
-        return { ...p, isLocalOnly: false };
+        return { ...p, isLocalOnly: false, updatedAt: nowStr };
       }
       return p;
     });
@@ -508,10 +511,12 @@ export function App() {
       }
     }
 
+    const nowStr = new Date().toISOString();
     const updatedDragged: Project = {
       ...dragged,
       parentId: newParentId,
       isLocalOnly: updatedIsLocalOnly,
+      updatedAt: nowStr,
     };
 
     let updatedProjectsList = projects.map((p) => (p.id === draggedId ? updatedDragged : p));
@@ -522,7 +527,7 @@ export function App() {
         updatedProjectsList = updatedProjectsList.map((p) => {
           if (p.parentId === pid) {
             cascadeLocal(p.id);
-            return { ...p, isLocalOnly: true };
+            return { ...p, isLocalOnly: true, updatedAt: nowStr };
           }
           return p;
         });
@@ -567,7 +572,7 @@ export function App() {
 
     const finalProjects = updatedProjectsList.map((p) => {
       if (orderMap.has(p.id)) {
-        return { ...p, order: orderMap.get(p.id)! };
+        return { ...p, order: orderMap.get(p.id)!, updatedAt: nowStr };
       }
       return p;
     });
@@ -601,7 +606,7 @@ export function App() {
         const newTitle = updateTitleWithFolderPath(note.title, newFolderPath);
 
         let noteIsLocalOnly = note.isLocalOnly;
-        let noteSyncStatus = note.syncStatus;
+        let noteSyncStatus: SyncStatus = 'pending'; // 폴더 경로가 바뀌었으므로 GitHub 원격 경로 이동 동기화 예약!
 
         if (updatedIsLocalOnly && !dragged.isLocalOnly) {
           noteIsLocalOnly = true;
@@ -661,10 +666,12 @@ export function App() {
         return a.createdAt.localeCompare(b.createdAt);
       });
 
+      const nowSortTime = new Date().toISOString();
       siblings.forEach((s, idx) => {
         const item = updatedProjects.find((p) => p.id === s.id);
         if (item) {
           item.order = (idx + 1) * 10;
+          item.updatedAt = nowSortTime;
         }
       });
     }

@@ -338,14 +338,19 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
         // 2) 로컬에서 이미 삭제된 톰스톤 폴더는 원격 리스트에서도 배제
         remoteProjects = remoteProjects.filter((rp) => !deletedProjIdSet.has(rp.id) && !deletedProjNameSet.has(rp.name));
 
-        // 3) 원격 폴더 반영 (이름 변경 갱신 & 신규 폴더 추가)
+        // 3) 원격 폴더 반영 (원격이 로컬보다 명확히 더 최신일 때만 갱신 & 신규 폴더 추가)
         for (const rp of remoteProjects) {
           const localById = projects.find((p) => p.id === rp.id);
           if (localById) {
-            // 이미 존재하는 폴더 -> 이름이나 상위 폴더가 변경되었다면 즉시 갱신하여 중복 폴더 방지!
-            if (localById.name !== rp.name || localById.parentId !== rp.parentId) {
+            const localTime = new Date(localById.updatedAt || localById.createdAt || 0).getTime();
+            const remoteTime = new Date(rp.updatedAt || rp.createdAt || 0).getTime();
+
+            // 원격이 로컬보다 명확하게 더 최신일 때만 로컬 내용을 덮어쓰기! (로컬에서 드래그 이동/수정한 것이 원격 구버전에 의해 되돌아가는 현상 원천 차단)
+            if (remoteTime > localTime) {
               localById.name = rp.name;
               localById.parentId = rp.parentId;
+              localById.order = rp.order;
+              localById.updatedAt = rp.updatedAt;
               await saveProject(localById);
             }
           } else {
@@ -533,10 +538,27 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
           }
         }
       } else {
-        // [경우 D] 양쪽 모두 이미 동일한 상태
-        note.syncStatus = 'synced';
-        note.githubPath = remotePath;
-        await saveNote(note);
+        // [경우 D] 내용 SHA는 동일하지만, 폴더 이동으로 파일 경로가 달라진 경우(remotePath !== expectedPath)!
+        if (remotePath !== expectedPath) {
+          await deleteFileFromGitHub(config, remotePath, remoteFile.sha, `Move note path: ${note.title}`);
+          const upRes = await uploadFileToGitHub(
+            config,
+            expectedPath,
+            serializedContent,
+            `Move note: ${note.title}`
+          );
+          if (upRes.success) {
+            note.githubSha = upRes.sha;
+            note.githubPath = expectedPath;
+            note.syncStatus = 'synced';
+            await saveNote(note);
+            summary.uploaded++;
+          }
+        } else {
+          note.syncStatus = 'synced';
+          note.githubPath = remotePath;
+          await saveNote(note);
+        }
       }
     } else {
       // [경우 E] 원격에 해당 파일이 없는 경우:
