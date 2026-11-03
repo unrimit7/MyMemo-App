@@ -1593,6 +1593,15 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           alt: img.alt || '첨부 이미지',
         });
       }
+      return;
+    }
+
+    // 3. 링크(<a>) 클릭 처리: PWA 및 모바일/PC 어디서나 확실하게 새 창(새 브라우저 탭)으로 열기
+    const anchor = target.closest('a');
+    if (anchor && anchor.href) {
+      e.preventDefault();
+      window.open(anchor.href, '_blank', 'noopener,noreferrer');
+      return;
     }
   };
 
