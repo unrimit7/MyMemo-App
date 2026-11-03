@@ -577,6 +577,12 @@ export function App() {
 
     const folderPath = getFolderHierarchyPath(targetProj.id, projects);
     const noteTitle = folderPath ? `[${folderPath}] ${dateStr} 업무일지` : `${dateStr} 업무일지`;
+
+    // 캘린더 날짜(dateStr)로 생성 시 createdAt의 날짜도 dateStr 기준(시간은 현재 시각)으로 설정
+    const now = new Date();
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const targetDate = new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds());
+
     const newNote: Note = {
       id: `note-${Date.now()}`,
       projectId: targetProj.id,
@@ -584,8 +590,8 @@ export function App() {
       content: `# 📋 ${dateStr} (${targetProj.name})\n\n- [ ] `,
       isLocalOnly: targetProj.isLocalOnly,
       syncStatus: targetProj.isLocalOnly ? 'local_only' : 'pending',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: !isNaN(targetDate.getTime()) ? targetDate.toISOString() : now.toISOString(),
+      updatedAt: now.toISOString(),
     };
 
     await saveNote(newNote);
