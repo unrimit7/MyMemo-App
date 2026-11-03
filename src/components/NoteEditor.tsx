@@ -6,6 +6,8 @@ import { processFileForNote } from '../utils/file';
 import { cleanLegacyAttachments, renderAttachmentsInHtml } from '../utils/attachment';
 import { exportNoteToPdf } from '../utils/exportPdf';
 import { getFolderHierarchyPath, updateTitleWithFolderPath } from '../utils/folderPath';
+import { PdfViewerModal } from './PdfViewerModal';
+import { loadPdfDocument, renderPdfPageToCanvas } from '../utils/pdfViewer';
 import type { AttachmentItem } from '../types';
 import { 
   Lock, 
@@ -127,6 +129,12 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const [isDragOverEditor, setIsDragOverEditor] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<{ attId: string; src: string; alt: string } | null>(null);
+  const [activePdfModal, setActivePdfModal] = useState<{
+    data: string;
+    title: string;
+    initialPage: number;
+  } | null>(null);
+  const pdfPagesRef = useRef<Map<string, number>>(new Map());
 
   // 편집창 & 미리보기 분할(Split) 비율 (기본 50%, 15%~85% 조절 가능, 로컬 스토리지 보존)
   const [splitRatio, setSplitRatio] = useState<number>(() => {
@@ -561,6 +569,67 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       clearTimeout(timer2);
     };
   }, [renderedPreviewHtml]);
+
+  // 인라인 PDF 페이지 렌더링 핸들러
+  const renderInlinePdf = useRef<(attId: string) => void>(() => {});
+  renderInlinePdf.current = (attId: string) => {
+    const preview = previewContainerRef.current;
+    if (!preview) return;
+
+    const viewer = preview.querySelector<HTMLElement>(`.pdf-inline-viewer[data-att-id="${attId}"]`);
+    if (!viewer) return;
+
+    const att = localAttachments[attId];
+    if (!att || !att.data) return;
+
+    const canvas = viewer.querySelector<HTMLCanvasElement>(`#pdf-canvas-${attId}`);
+    const loadingBox = viewer.querySelector<HTMLElement>(`#pdf-loading-${attId}`);
+    const pageIndicator = viewer.querySelector<HTMLElement>(`#pdf-page-indicator-${attId}`);
+    const prevBtn = viewer.querySelector<HTMLButtonElement>('.pdf-btn-prev');
+    const nextBtn = viewer.querySelector<HTMLButtonElement>('.pdf-btn-next');
+
+    const currentPage = pdfPagesRef.current.get(attId) || 1;
+
+    loadPdfDocument(att.data, attId)
+      .then((doc) => {
+        const total = doc.numPages;
+        if (pageIndicator) pageIndicator.textContent = `${currentPage} / ${total}`;
+        if (prevBtn) prevBtn.disabled = currentPage <= 1;
+        if (nextBtn) nextBtn.disabled = currentPage >= total;
+
+        if (canvas) {
+          const containerWidth = viewer.clientWidth || preview.clientWidth || 600;
+          renderPdfPageToCanvas(doc, currentPage, canvas, Math.min(containerWidth, 800)).then(() => {
+            if (loadingBox) loadingBox.classList.add('hidden');
+            canvas.classList.remove('hidden');
+          });
+        }
+      })
+      .catch((err) => {
+        console.error('인라인 PDF 렌더링 실패:', err);
+        if (loadingBox) {
+          loadingBox.innerHTML = '<span class="text-rose-400 font-semibold">⚠️ PDF 문서를 로드하지 못했습니다. 상단 저장 버튼을 이용해 주세요.</span>';
+        }
+      });
+  };
+
+  // 미리보기 화면이 갱신되거나 활성화될 때 모든 인라인 PDF 캔버스 자동 렌더링
+  useEffect(() => {
+    if (viewMode !== 'preview' && viewMode !== 'split') return;
+    const preview = previewContainerRef.current;
+    if (!preview) return;
+
+    const viewers = preview.querySelectorAll<HTMLElement>('.pdf-inline-viewer');
+    viewers.forEach((v) => {
+      const attId = v.getAttribute('data-att-id');
+      if (attId) {
+        if (!pdfPagesRef.current.has(attId)) {
+          pdfPagesRef.current.set(attId, 1);
+        }
+        renderInlinePdf.current(attId);
+      }
+    });
+  }, [renderedPreviewHtml, viewMode, localAttachments]);
 
   // 글자 색상 및 형광펜 팔레트 팝업 상태 (훅은 조건문 위에 위치)
   const [showColorPicker, setShowColorPicker] = useState(false);
@@ -1643,9 +1712,59 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       return;
     }
 
-    // 3. 링크(<a>) 클릭 처리: PWA 및 모바일/PC 어디서나 확실하게 새 창(새 브라우저 탭)으로 열기
+    // 3. PDF 인라인 이전/다음 페이지 버튼 클릭
+    const prevPdfBtn = target.closest<HTMLButtonElement>('.pdf-btn-prev');
+    if (prevPdfBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = prevPdfBtn.getAttribute('data-att-id');
+      if (attId) {
+        const curr = pdfPagesRef.current.get(attId) || 1;
+        if (curr > 1) {
+          pdfPagesRef.current.set(attId, curr - 1);
+          renderInlinePdf.current(attId);
+        }
+      }
+      return;
+    }
+
+    const nextPdfBtn = target.closest<HTMLButtonElement>('.pdf-btn-next');
+    if (nextPdfBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = nextPdfBtn.getAttribute('data-att-id');
+      if (attId) {
+        const curr = pdfPagesRef.current.get(attId) || 1;
+        pdfPagesRef.current.set(attId, curr + 1);
+        renderInlinePdf.current(attId);
+      }
+      return;
+    }
+
+    // 4. PDF 캔버스 클릭 또는 [🔍 크게 보기] 버튼 클릭 시 전면 뷰어 모달 열기
+    const fullscreenPdfBtn = target.closest<HTMLElement>('.pdf-btn-fullscreen') || target.closest<HTMLCanvasElement>('canvas.pdf-canvas');
+    if (fullscreenPdfBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = fullscreenPdfBtn.getAttribute('data-att-id');
+      const title = fullscreenPdfBtn.getAttribute('data-file-name') || 'PDF 문서';
+      if (attId && localAttachments[attId]) {
+        const curr = pdfPagesRef.current.get(attId) || 1;
+        setActivePdfModal({
+          data: localAttachments[attId].data,
+          title,
+          initialPage: curr,
+        });
+      }
+      return;
+    }
+
+    // 5. 링크(<a>) 클릭 처리: PWA 및 모바일/PC 어디서나 확실하게 새 창(새 브라우저 탭)으로 열기
     const anchor = target.closest('a');
     if (anchor && anchor.href) {
+      if (anchor.hasAttribute('download')) {
+        return; // 다운로드 링크는 기본 브라우저 다운로드 동작 허용
+      }
       e.preventDefault();
       window.open(anchor.href, '_blank', 'noopener,noreferrer');
       return;
@@ -2449,6 +2568,17 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             />
           </div>
         </div>
+      )}
+
+      {/* PDF 전면 뷰어 모달 (모바일/PC 어디서나 다운로드 없이 고해상도 열람 & 줌) */}
+      {activePdfModal && (
+        <PdfViewerModal
+          isOpen={true}
+          onClose={() => setActivePdfModal(null)}
+          data={activePdfModal.data}
+          title={activePdfModal.title}
+          initialPage={activePdfModal.initialPage}
+        />
       )}
 
       {/* 단축키 안내 팝업 모달 */}

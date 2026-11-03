@@ -55,30 +55,41 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
 
   if (isPdf) {
     return `
-<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl">
-  <!-- 상단 헤더: 문서명과 액션 버튼 -->
-  <div class="px-4 py-3 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl pdf-inline-viewer" data-att-id="${att.id}" data-file-name="${displayName}">
+  <!-- 상단 헤더: 문서명, 페이지 이동, 전면 뷰어, 다운로드 버튼 -->
+  <div class="px-3.5 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
     <div class="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-100 min-w-0">
       <span class="text-base md:text-lg">📄</span>
-      <span class="truncate">${displayName}</span>
+      <span class="truncate" title="${displayName}">${displayName}</span>
     </div>
-    <div class="flex items-center gap-2 shrink-0">
-      <a href="${targetUrl}" download="${downloadName}" class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold no-underline flex items-center gap-1.5 shadow-md shadow-indigo-600/20 active:scale-95 transition-all">
-        <span>⬇️ PDF 열기 / 다운로드</span>
+
+    <div class="flex items-center gap-1.5 shrink-0">
+      <!-- 페이지 이동 컨트롤 -->
+      <div class="flex items-center gap-1 bg-slate-950 border border-slate-800 rounded-lg px-2 py-0.5 text-xs text-slate-300">
+        <button type="button" class="pdf-btn-prev px-1.5 py-0.5 hover:text-white hover:bg-slate-800 rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent" data-att-id="${att.id}" title="이전 페이지">◀</button>
+        <span class="pdf-page-indicator font-semibold text-xs px-1" id="pdf-page-indicator-${att.id}">1 / ?</span>
+        <button type="button" class="pdf-btn-next px-1.5 py-0.5 hover:text-white hover:bg-slate-800 rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent" data-att-id="${att.id}" title="다음 페이지">▶</button>
+      </div>
+
+      <!-- 전면 뷰어로 크게 보기 버튼 -->
+      <button type="button" class="pdf-btn-fullscreen px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-indigo-300 rounded-lg text-xs font-semibold border border-indigo-500/30 flex items-center gap-1 active:scale-95 transition-all" data-att-id="${att.id}" data-file-name="${displayName}" title="전면 뷰어로 크게 보기">
+        <span>🔍 크게 보기</span>
+      </button>
+
+      <!-- 다운로드 버튼 (명시적으로 저장을 원하는 경우에만) -->
+      <a href="${targetUrl}" download="${downloadName}" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-slate-700 flex items-center gap-1 active:scale-95 transition-all no-underline" title="기기에 파일로 다운로드">
+        <span>⬇️ 저장</span>
       </a>
     </div>
   </div>
-  <!-- 본문 인라인 PDF 뷰어 (PC 데스크톱 브라우저는 바로 임베드 표시, 모바일은 기기 뷰어 열기 카드 표시) -->
-  <div class="w-full bg-slate-950">
-    <object data="${targetUrl}" type="application/pdf" tabindex="-1" width="100%" class="w-full h-[650px] md:h-[750px] block border-0 bg-slate-950" style="overflow: hidden;">
-      <div class="p-8 text-center text-xs md:text-sm text-slate-400 space-y-3 bg-slate-950">
-        <p class="text-slate-200 font-semibold text-sm">모바일 환경에서는 기기 PDF 앱으로 문서를 바로 열람할 수 있습니다.</p>
-        <p class="text-xs text-slate-400">아래 버튼을 누르면 기기에서 즉시 문서를 열람하거나 다운로드합니다.</p>
-        <a href="${targetUrl}" download="${downloadName}" class="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/30">
-          <span>📄 ${displayName} 바로 열기 / 다운로드</span>
-        </a>
-      </div>
-    </object>
+
+  <!-- 본문 인라인 PDF 캔버스 뷰어 (모바일 스마트폰 및 모든 PC 브라우저에서 다운로드 없이 화면에 즉시 렌더링!) -->
+  <div class="w-full bg-slate-950 p-2 md:p-4 flex flex-col items-center justify-center overflow-x-auto min-h-[350px]">
+    <div class="pdf-loading-box flex items-center justify-center gap-2 py-10 text-xs text-slate-400" id="pdf-loading-${att.id}">
+      <span class="animate-spin inline-block w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full"></span>
+      <span>PDF 문서 페이지를 렌더링하는 중입니다...</span>
+    </div>
+    <canvas id="pdf-canvas-${att.id}" class="pdf-canvas rounded-lg shadow-xl bg-white max-w-full cursor-zoom-in hidden" data-att-id="${att.id}" data-file-name="${displayName}" title="클릭하면 전면 뷰어로 크게 볼 수 있습니다."></canvas>
   </div>
 </div>
     `.trim();
