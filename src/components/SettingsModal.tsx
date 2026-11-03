@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import type { GitHubConfig } from '../types';
+import React, { useState, useEffect, useRef } from 'react';
+import type { GitHubConfig, Project, Note } from '../types';
 import { testGitHubConnection } from '../services/github';
+import { exportBackupData, downloadBackupBlob, parseBackupFile, type MyMemoBackupData } from '../utils/backup';
 import { 
   X, 
   Database, 
@@ -13,7 +14,11 @@ import {
   Tag,
   RotateCcw,
   BookOpen,
-  Calendar as CalendarIcon
+  Calendar as CalendarIcon,
+  HardDrive,
+  Download,
+  Upload,
+  FileArchive
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -22,6 +27,9 @@ interface SettingsModalProps {
   config: GitHubConfig | null;
   onSaveConfig: (config: GitHubConfig) => void;
   noteCount?: number;
+  projects?: Project[];
+  notes?: Note[];
+  onRestoreBackup?: (backup: MyMemoBackupData, mode: 'merge' | 'overwrite') => Promise<{ restoredProjects: number; restoredNotes: number }>;
   onApplyFolderPrefixes?: () => Promise<number>;
   onRemoveFolderPrefixes?: () => Promise<number>;
   onCreateGuideNote?: () => void;
@@ -35,6 +43,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   config,
   onSaveConfig,
   noteCount = 0,
+  projects = [],
+  notes = [],
+  onRestoreBackup,
   onApplyFolderPrefixes,
   onRemoveFolderPrefixes,
   onCreateGuideNote,
@@ -54,6 +65,74 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const [isBatchProcessing, setIsBatchProcessing] = useState(false);
   const [batchResult, setBatchResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // 로컬 전체 백업 및 복원 상태
+  const [includeAttachments, setIncludeAttachments] = useState(true);
+  const [backupResult, setBackupResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [pendingRestore, setPendingRestore] = useState<MyMemoBackupData | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const restoreFileInputRef = useRef<HTMLInputElement>(null);
+
+  // 전체 백업 생성 및 다운로드
+  const handleExportBackup = () => {
+    try {
+      setBackupResult(null);
+      const { filename, blob, sizeKb, attachmentsCount } = exportBackupData(projects, notes, includeAttachments);
+      downloadBackupBlob(blob, filename);
+
+      const sizeStr = sizeKb > 1024 ? `${(sizeKb / 1024).toFixed(1)} MB` : `${sizeKb} KB`;
+      setBackupResult({
+        success: true,
+        message: `백업 파일(${filename}, ${sizeStr})이 다운로드되었습니다. (메모 ${notes.length}개, 폴더 ${projects.length}개, 첨부 ${attachmentsCount}개)`,
+      });
+    } catch (err: any) {
+      setBackupResult({
+        success: false,
+        message: `백업 파일 생성 실패: ${err.message || '알 수 없는 오류'}`,
+      });
+    }
+  };
+
+  // 백업 파일 선택 시 검증
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const parsed = await parseBackupFile(file);
+      setPendingRestore(parsed);
+      setBackupResult(null);
+    } catch (err: any) {
+      setBackupResult({
+        success: false,
+        message: err.message || '백업 파일을 읽을 수 없습니다.',
+      });
+    } finally {
+      if (restoreFileInputRef.current) restoreFileInputRef.current.value = '';
+    }
+  };
+
+  // 백업 복원 실행
+  const handleExecuteRestore = async (mode: 'merge' | 'overwrite') => {
+    if (!pendingRestore || !onRestoreBackup) return;
+
+    setIsRestoring(true);
+    try {
+      const res = await onRestoreBackup(pendingRestore, mode);
+      setBackupResult({
+        success: true,
+        message: `복원 성공! (폴더 ${res.restoredProjects}개, 메모 ${res.restoredNotes}개 반영 완료)`,
+      });
+      setPendingRestore(null);
+    } catch (err: any) {
+      setBackupResult({
+        success: false,
+        message: `복원 중 오류 발생: ${err.message || '오류'}`,
+      });
+    } finally {
+      setIsRestoring(false);
+    }
+  };
 
   const handleApplyPrefixes = async () => {
     if (!onApplyFolderPrefixes) return;
@@ -395,6 +474,135 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               }`}>
                 {batchResult.success ? <CheckCircle size={14} className="shrink-0" /> : <AlertCircle size={14} className="shrink-0" />}
                 <span>{batchResult.message}</span>
+              </div>
+            )}
+          </div>
+
+          {/* 로컬 전체 데이터 백업 및 복원 (기기 전용 데이터 포함) */}
+          <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60 space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                <HardDrive size={14} className="text-emerald-400" />
+                <span>로컬 전체 데이터 백업 및 복원</span>
+              </h4>
+              <span className="text-[11px] text-emerald-400 font-semibold px-2 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-500/30">
+                기기 전용(🔒) 포함
+              </span>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              GitHub에 업로드되지 않는 <strong>'기기 전용' 메모를 포함한 모든 메모, 폴더 구조, 첨부파일(PDF/이미지)</strong>을 내 PC에 파일 1개(.json)로 안전하게 다운로드하거나 언제든 복원할 수 있습니다.
+            </p>
+
+            {/* 백업 옵션 선택 */}
+            <div className="flex items-center gap-2 pt-1">
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeAttachments}
+                  onChange={(e) => setIncludeAttachments(e.target.checked)}
+                  className="accent-indigo-500 rounded w-4 h-4 cursor-pointer"
+                />
+                <span>이미지 및 PDF 첨부파일 포함</span>
+              </label>
+              <span className="text-[11px] text-slate-500">
+                {includeAttachments ? '(완전 백업)' : '(텍스트만 초경량 백업)'}
+              </span>
+            </div>
+
+            {/* 백업 및 복원 버튼 */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleExportBackup}
+                className="flex items-center justify-center gap-1.5 py-2 px-3 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-semibold transition-all active:scale-95"
+                title="모든 메모와 폴더를 단일 JSON 백업 파일로 내보내기"
+              >
+                <Download size={13} />
+                <span>전체 백업 파일(.json) 다운로드</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => restoreFileInputRef.current?.click()}
+                className="flex items-center justify-center gap-1.5 py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-xl text-xs font-semibold transition-all active:scale-95"
+                title="저장해 둔 백업 파일(.json)을 불러와 복원"
+              >
+                <Upload size={13} />
+                <span>백업 파일로 복원하기...</span>
+              </button>
+
+              <input
+                ref={restoreFileInputRef}
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={handleFileSelected}
+              />
+            </div>
+
+            {/* 복원 대기 확인 패널 */}
+            {pendingRestore && (
+              <div className="p-3 rounded-xl border border-indigo-500/40 bg-indigo-950/40 space-y-2.5 animate-in fade-in">
+                <div className="flex items-center justify-between text-xs font-bold text-indigo-200">
+                  <div className="flex items-center gap-1.5">
+                    <FileArchive size={14} className="text-indigo-400" />
+                    <span>백업 파일 정보 확인</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPendingRestore(null)}
+                    className="text-slate-400 hover:text-white text-xs"
+                  >
+                    취소
+                  </button>
+                </div>
+
+                <div className="text-[11px] text-slate-300 bg-slate-900/80 p-2 rounded-lg border border-slate-800 space-y-1">
+                  <div>📅 백업 일시: {new Date(pendingRestore.createdAt).toLocaleString()}</div>
+                  <div className="flex gap-3 text-indigo-300 font-semibold">
+                    <span>📁 폴더: {pendingRestore.stats.projectsCount}개</span>
+                    <span>📝 메모: {pendingRestore.stats.notesCount}개</span>
+                    <span>📎 첨부파일: {pendingRestore.stats.attachmentsCount}개</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => handleExecuteRestore('merge')}
+                    disabled={isRestoring}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-sm transition-all active:scale-95 disabled:opacity-50"
+                    title="기존 메모를 유지하면서 백업본을 합칩니다."
+                  >
+                    기존 데이터에 병합 복원
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm('기존 데이터를 모두 삭제하고 백업본으로 완전히 덮어쓰시겠습니까?')) {
+                        handleExecuteRestore('overwrite');
+                      }
+                    }}
+                    disabled={isRestoring}
+                    className="px-3 py-1.5 bg-rose-600/80 hover:bg-rose-500 text-white rounded-lg text-xs font-semibold shadow-sm transition-all active:scale-95 disabled:opacity-50"
+                    title="기존 데이터를 지우고 백업본 상태로 복원합니다."
+                  >
+                    전체 덮어쓰기 복원
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 결과 메시지 */}
+            {backupResult && (
+              <div className={`p-2.5 rounded-lg border text-[11px] flex items-center gap-1.5 animate-in fade-in ${
+                backupResult.success 
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' 
+                  : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+              }`}>
+                {backupResult.success ? <CheckCircle size={14} className="shrink-0" /> : <AlertCircle size={14} className="shrink-0" />}
+                <span className="leading-relaxed">{backupResult.message}</span>
               </div>
             )}
           </div>

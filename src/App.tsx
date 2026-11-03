@@ -25,6 +25,7 @@ import { processFileForNote } from './utils/file';
 import { getFolderHierarchyPath, updateTitleWithFolderPath, stripFolderPrefixFromTitle } from './utils/folderPath';
 import { Calendar as CalendarIcon, X, FolderTree } from 'lucide-react';
 import { crossTabSync } from './services/crossTabSync';
+import type { MyMemoBackupData } from './utils/backup';
 
 interface DeleteConfirmState {
   isOpen: boolean;
@@ -1392,6 +1393,60 @@ MyMemo의 모든 메모는 **내 개인 GitHub 저장소(Repository)**에 안전
     runSync(false, newConfig);
   };
 
+  // 로컬 전체 백업 파일 복원 핸들러
+  const handleRestoreBackup = async (
+    backup: MyMemoBackupData,
+    mode: 'merge' | 'overwrite'
+  ): Promise<{ restoredProjects: number; restoredNotes: number }> => {
+    let finalProjects = [...projects];
+    let finalNotes = [...notes];
+
+    if (mode === 'overwrite') {
+      for (const n of notes) {
+        await deleteNote(n.id);
+      }
+      for (const p of projects) {
+        await deleteProject(p.id);
+      }
+      finalProjects = [];
+      finalNotes = [];
+    }
+
+    // 프로젝트 복원
+    for (const bp of backup.projects) {
+      const existingIdx = finalProjects.findIndex((p) => p.id === bp.id);
+      if (existingIdx !== -1) {
+        finalProjects[existingIdx] = bp;
+      } else {
+        finalProjects.push(bp);
+      }
+      await saveProject(bp);
+    }
+
+    // 메모 복원
+    for (const bn of backup.notes) {
+      const existingIdx = finalNotes.findIndex((n) => n.id === bn.id);
+      if (existingIdx !== -1) {
+        finalNotes[existingIdx] = bn;
+      } else {
+        finalNotes.push(bn);
+      }
+      await saveNote(bn);
+    }
+
+    setProjects(finalProjects);
+    setNotes(finalNotes);
+    crossTabSync.broadcastChange('sync_complete');
+
+    setSyncToast(`🎉 백업 복원 완료: 폴더 ${backup.projects.length}개, 메모 ${backup.notes.length}개가 안전하게 복원되었습니다.`);
+    setTimeout(() => setSyncToast(null), 4000);
+
+    return {
+      restoredProjects: backup.projects.length,
+      restoredNotes: backup.notes.length,
+    };
+  };
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 font-sans">
       {/* 토스트 알림 배너 */}
@@ -1532,6 +1587,9 @@ MyMemo의 모든 메모는 **내 개인 GitHub 저장소(Repository)**에 안전
         config={gitHubConfig}
         onSaveConfig={handleSaveConfig}
         noteCount={notes.length}
+        projects={projects}
+        notes={notes}
+        onRestoreBackup={handleRestoreBackup}
         onApplyFolderPrefixes={handleApplyAllFolderPrefixes}
         onRemoveFolderPrefixes={handleRemoveAllFolderPrefixes}
         onCreateGuideNote={handleCreateOrOpenGuideNote}
