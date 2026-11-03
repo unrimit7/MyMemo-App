@@ -277,11 +277,21 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
   const notesDir = (config.notesDir || 'notes').replace(/^\/|\/$/g, '');
   const treeUrl = `https://api.github.com/repos/${config.owner}/${config.repo}/git/trees/${config.branch || 'main'}?recursive=1`;
   
+  let treeData: { tree?: Array<{ path: string; sha: string; url: string; type: string }> } = { tree: [] };
   const treeRes = await fetch(treeUrl, { headers: getHeaders(config.token) });
-  if (!treeRes.ok) {
-    throw new Error('원격 저장소 브랜치 트리 조회 실패: ' + (await treeRes.text()));
+  
+  if (treeRes.ok) {
+    treeData = await treeRes.json();
+  } else {
+    const errText = await treeRes.text();
+    // 신규 생성된 빈 레포지토리(Git Repository is empty / 409 또는 404)인 경우 빈 트리로 정상 처리!
+    if (treeRes.status === 409 || errText.includes('Git Repository is empty') || treeRes.status === 404) {
+      console.log('원격 저장소가 비어 있는 신규 레포지토리입니다. 초기 동기화를 진행합니다.');
+      treeData = { tree: [] };
+    } else {
+      throw new Error('원격 저장소 브랜치 트리 조회 실패: ' + errText);
+    }
   }
-  const treeData = await treeRes.json();
   const remoteFiles: Array<{ path: string; sha: string; url: string }> = (treeData.tree || []).filter(
     (item: any) => item.type === 'blob' && item.path.startsWith(notesDir) && item.path.endsWith('.md')
   );
