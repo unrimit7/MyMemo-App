@@ -1641,7 +1641,20 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const rawFileName = (localTitle || note.title || '메모').trim();
     // 윈도우 파일 시스템에서 파일명으로 사용할 수 없는 특수문자(\ / : * ? " < > |) 치환
     const safeFileName = rawFileName.replace(/[\\/:*?"<>|]/g, '_');
-    const blob = new Blob([localContent], { type: 'text/markdown;charset=utf-8' });
+
+    // attachment:attId 링크를 실제 Base64 데이터(data:image/..., data:application/pdf 등)로 치환하여 단일 md 파일만으로도 외부 마크다운 뷰어(Obsidian, VS Code 등)에서 이미지가 보이도록 완전 포함
+    let exportContent = localContent;
+    if (localAttachments && Object.keys(localAttachments).length > 0) {
+      exportContent = exportContent.replace(/attachment:([a-zA-Z0-9_-]+)/g, (match, attId) => {
+        const att = localAttachments[attId];
+        if (att && att.data) {
+          return att.data;
+        }
+        return match;
+      });
+    }
+
+    const blob = new Blob([exportContent], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -1704,70 +1717,83 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       )}
 
       {/* 상단 툴바 1: 내비게이션 & 빵가루 경로 & 로컬 토글 */}
-      <div className="p-3 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2 bg-slate-950/70">
-        <div className="flex items-center gap-2 min-w-0">
-          <button
-            onClick={onBackToList}
-            className="md:hidden p-1.5 -ml-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 flex items-center gap-1 text-xs shrink-0"
-          >
-            <ArrowLeft size={16} />
-            <span>목록</span>
-          </button>
-
-          {/* 데스크톱: 좌측 패널(사이드바, 메모목록) 접힘 상태일 때 펼치기 토글 버튼 */}
-          <div className="hidden md:flex items-center gap-1.5 mr-1 shrink-0">
-            {isSidebarCollapsed && onToggleSidebar && (
-              <button
-                onClick={onToggleSidebar}
-                className="p-1.5 text-slate-400 hover:text-indigo-300 hover:bg-slate-900 border border-slate-800/90 rounded-lg transition-colors flex items-center gap-1 text-xs shadow-sm"
-                title="사이드바(폴더 목록) 펼치기"
-              >
-                <Folder size={13} className="text-indigo-400" />
-                <span className="font-medium text-[11px]">폴더 펼치기</span>
-              </button>
-            )}
-            {isNoteListCollapsed && onToggleNoteList && (
-              <button
-                onClick={onToggleNoteList}
-                className="p-1.5 text-slate-400 hover:text-indigo-300 hover:bg-slate-900 border border-slate-800/90 rounded-lg transition-colors flex items-center gap-1 text-xs shadow-sm"
-                title="메모 목록 펼치기"
-              >
-                <PanelLeftOpen size={14} className="text-indigo-400" />
-                <span className="font-medium text-[11px]">목록 펼치기</span>
-              </button>
-            )}
-          </div>
-
-          {/* 계층 경로 빵가루 드롭다운 (현재 메모의 소속 폴더 이동) */}
-          <div 
-            className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-300 max-w-[240px] md:max-w-md truncate" 
-            title="현재 메모의 소속 폴더를 다른 폴더로 이동할 수 있습니다."
-          >
-            <Folder size={12} className="text-indigo-400 shrink-0" />
-            <span className="text-[11px] text-slate-400 font-medium shrink-0">폴더:</span>
-            <select
-              value={note.projectId}
-              onChange={(e) => handleFolderChange(e.target.value)}
-              className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer truncate max-w-full font-medium"
-              title="클릭하여 다른 폴더를 선택하면 메모가 해당 폴더로 이동합니다."
+      <div className="p-2 md:p-3 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2 bg-slate-950/70">
+        <div className="flex items-center justify-between w-full md:w-auto gap-2 min-w-0">
+          <div className="flex items-center gap-1.5 md:gap-2 min-w-0">
+            <button
+              onClick={onBackToList}
+              className="md:hidden p-1.5 -ml-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 flex items-center gap-1 text-xs shrink-0"
             >
-              {hierarchicalProjects.map(({ project: p, depth }) => {
-                const indent = '　'.repeat(depth) + (depth > 0 ? '└ ' : '');
-                return (
-                  <option key={p.id} value={p.id} className="bg-slate-900 text-slate-200">
-                    {indent}{p.isLocalOnly ? `🔒 ${p.name}` : p.name}
-                  </option>
-                );
-              })}
-            </select>
+              <ArrowLeft size={16} />
+              <span>목록</span>
+            </button>
+
+            {/* 데스크톱: 좌측 패널(사이드바, 메모목록) 접힘 상태일 때 펼치기 토글 버튼 */}
+            <div className="hidden md:flex items-center gap-1.5 mr-1 shrink-0">
+              {isSidebarCollapsed && onToggleSidebar && (
+                <button
+                  onClick={onToggleSidebar}
+                  className="p-1.5 text-slate-400 hover:text-indigo-300 hover:bg-slate-900 border border-slate-800/90 rounded-lg transition-colors flex items-center gap-1 text-xs shadow-sm"
+                  title="사이드바(폴더 목록) 펼치기"
+                >
+                  <Folder size={13} className="text-indigo-400" />
+                  <span className="font-medium text-[11px]">폴더 펼치기</span>
+                </button>
+              )}
+              {isNoteListCollapsed && onToggleNoteList && (
+                <button
+                  onClick={onToggleNoteList}
+                  className="p-1.5 text-slate-400 hover:text-indigo-300 hover:bg-slate-900 border border-slate-800/90 rounded-lg transition-colors flex items-center gap-1 text-xs shadow-sm"
+                  title="메모 목록 펼치기"
+                >
+                  <PanelLeftOpen size={14} className="text-indigo-400" />
+                  <span className="font-medium text-[11px]">목록 펼치기</span>
+                </button>
+              )}
+            </div>
+
+            {/* 계층 경로 빵가루 드롭다운 (현재 메모의 소속 폴더 이동) */}
+            <div 
+              className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-300 max-w-[190px] sm:max-w-[240px] md:max-w-md truncate" 
+              title="현재 메모의 소속 폴더를 다른 폴더로 이동할 수 있습니다."
+            >
+              <Folder size={12} className="text-indigo-400 shrink-0" />
+              <span className="text-[11px] text-slate-400 font-medium shrink-0 hidden sm:inline">폴더:</span>
+              <select
+                value={note.projectId}
+                onChange={(e) => handleFolderChange(e.target.value)}
+                className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer truncate max-w-full font-medium"
+                title="클릭하여 다른 폴더를 선택하면 메모가 해당 폴더로 이동합니다."
+              >
+                {hierarchicalProjects.map(({ project: p, depth }) => {
+                  const indent = '　'.repeat(depth) + (depth > 0 ? '└ ' : '');
+                  return (
+                    <option key={p.id} value={p.id} className="bg-slate-900 text-slate-200">
+                      {indent}{p.isLocalOnly ? `🔒 ${p.name}` : p.name}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
           </div>
+
+          {/* 모바일 상단 우측 전용: 잘리지 않고 바로 보이는 메모 삭제 버튼 */}
+          {onDeleteNote && (
+            <button
+              onClick={() => onDeleteNote(note.id)}
+              className="md:hidden p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-800/50 rounded-lg transition-colors shrink-0 shadow-sm"
+              title="현재 메모 삭제"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
         </div>
 
-        {/* 오른쪽: 기기 전용(로컬) 토글 & 뷰 모드 */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* 오른쪽: 기기 전용(로컬) 토글 & 뷰 모드 & PDF/MD & 데스크톱 삭제 */}
+        <div className="flex items-center gap-1.5 md:gap-2 overflow-x-auto scrollbar-none py-0.5 max-w-full shrink-0">
           <button
             onClick={() => onUpdateNote({ isLocalOnly: !note.isLocalOnly })}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all shrink-0 ${
               note.isLocalOnly
                 ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-sm shadow-amber-500/10'
                 : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
@@ -1776,18 +1802,18 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           >
             {note.isLocalOnly ? (
               <>
-                <Lock size={13} className="text-amber-400" />
-                <span className="font-semibold">이 기기에만 저장됨</span>
+                <Lock size={13} className="text-amber-400 shrink-0" />
+                <span className="font-semibold text-[11px] sm:text-xs">이 기기에만 저장됨</span>
               </>
             ) : (
               <>
-                <Unlock size={13} className="text-slate-500" />
-                <span>GitHub 동기화 대상</span>
+                <Unlock size={13} className="text-slate-500 shrink-0" />
+                <span className="text-[11px] sm:text-xs">GitHub 동기화 대상</span>
               </>
             )}
           </button>
 
-          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5 text-slate-400">
+          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5 text-slate-400 shrink-0">
             <button
               onClick={() => setViewMode('edit')}
               className={`p-1.5 md:p-1.5 rounded text-xs transition-colors flex items-center gap-1 ${
@@ -1829,7 +1855,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                 localContent
               );
             }}
-            className="flex items-center gap-1 px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-indigo-300 border border-slate-800 rounded-lg text-xs font-medium transition-all shadow-sm active:scale-95 shrink-0"
+            className="flex items-center gap-1 px-2 py-1 md:px-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-indigo-300 border border-slate-800 rounded-lg text-xs font-medium transition-all shadow-sm active:scale-95 shrink-0"
             title="현재 메모를 깔끔한 PDF 문서로 내보내기 / 인쇄"
           >
             <FileDown size={13} className="text-indigo-400" />
@@ -1839,18 +1865,18 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           {/* 📝 MD 파일로 내 컴퓨터에 다운로드 저장 */}
           <button
             onClick={handleExportToMarkdown}
-            className="flex items-center gap-1 px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-emerald-300 border border-slate-800 rounded-lg text-xs font-medium transition-all shadow-sm active:scale-95 shrink-0"
-            title="현재 메모를 마크다운(.md) 파일로 내 컴퓨터에 다운로드 저장"
+            className="flex items-center gap-1 px-2 py-1 md:px-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-emerald-300 border border-slate-800 rounded-lg text-xs font-medium transition-all shadow-sm active:scale-95 shrink-0"
+            title="현재 메모를 마크다운(.md) 파일로 내 컴퓨터에 다운로드 저장 (이미지/첨부파일 Base64 포함)"
           >
             <Download size={13} className="text-emerald-400" />
             <span className="hidden sm:inline">MD 저장</span>
           </button>
 
-          {/* 메모 삭제 버튼 */}
+          {/* 데스크톱 메모 삭제 버튼 */}
           {onDeleteNote && (
             <button
               onClick={() => onDeleteNote(note.id)}
-              className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-900 border border-slate-800 rounded-lg transition-colors"
+              className="hidden md:block p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-900 border border-slate-800 rounded-lg transition-colors shrink-0"
               title="현재 메모 삭제"
             >
               <Trash2 size={13} />

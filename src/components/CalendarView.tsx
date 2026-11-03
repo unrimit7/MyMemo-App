@@ -10,7 +10,8 @@ import {
   FileText, 
   Folder, 
   Lock,
-  Calendar as CalendarIcon
+  Calendar as CalendarIcon,
+  Menu
 } from 'lucide-react';
 
 interface CalendarViewProps {
@@ -21,6 +22,7 @@ interface CalendarViewProps {
   onCreateNoteForDate: (dateStr: string, targetProjectId?: string) => void;
   onClose: () => void;
   onMoveNoteDate?: (noteId: string, targetDateStr: string) => void;
+  onOpenSidebar?: () => void;
 }
 
 export const CalendarView: React.FC<CalendarViewProps> = ({
@@ -31,6 +33,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   onCreateNoteForDate,
   onClose,
   onMoveNoteDate,
+  onOpenSidebar,
 }) => {
   const today = useMemo(() => new Date(), []);
   const [currentYear, setCurrentYear] = useState<number>(today.getFullYear());
@@ -388,9 +391,20 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     <div className="flex-1 flex flex-col h-full bg-slate-950 text-slate-100 overflow-hidden select-none">
       {/* 상단 헤더: 달력 내비게이션 & 계층형 트리 체크박스 필터 & 닫기 */}
       <div className="p-3 md:px-6 border-b border-slate-800 bg-slate-900/60 flex flex-wrap items-center justify-between gap-3 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-indigo-400">
-            <CalendarIcon size={20} />
+        <div className="flex items-center gap-2 md:gap-3">
+          {onOpenSidebar && (
+            <button
+              type="button"
+              onClick={onOpenSidebar}
+              className="md:hidden p-1.5 -ml-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors shrink-0"
+              title="메뉴(사이드바) 열기"
+            >
+              <Menu size={18} />
+            </button>
+          )}
+
+          <div className="flex items-center gap-1.5 text-indigo-400 shrink-0">
+            <CalendarIcon size={20} className="hidden xs:block" />
             <h2 className="font-bold text-base md:text-lg text-slate-100 tracking-tight">
               {currentYear}년 {currentMonth + 1}월
             </h2>

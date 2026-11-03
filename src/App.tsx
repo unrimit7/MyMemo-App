@@ -1107,6 +1107,7 @@ MyMemo의 모든 메모는 **내 개인 GitHub 저장소(Repository)**에 안전
           onCreateNoteForDate={handleCreateNoteForDate}
           onClose={handleCloseCalendar}
           onMoveNoteDate={handleMoveNoteToDate}
+          onOpenSidebar={() => setIsSidebarOpenMobile(true)}
         />
       ) : (
         <>
