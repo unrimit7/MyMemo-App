@@ -181,6 +181,13 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     setSelectedDateStr(`${y}-${m}-${d}`);
   };
 
+  // 하단 메모 목록에서 마우스 휠을 위/아래로 굴릴 때 좌/우 가로 스크롤로 부드럽게 변환
+  const handleBottomListWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.deltaY !== 0) {
+      e.currentTarget.scrollLeft += e.deltaY;
+    }
+  };
+
   // 메모의 기준 날짜 (YYYY-MM-DD) 추출
   // [1순위] 본문 내용의 날짜 (상단 헤더 # 📋 YYYY-MM-DD 등) -> 제목은 사용자가 캘린더에 보기 좋게 자유롭게 지을 수 있도록 최우선 적용!
   // [2순위] 제목 내 날짜 (YYYY-MM-DD / YYMMDD)
@@ -686,8 +693,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           </div>
         </div>
 
-        {/* 선택 날짜의 메모 태그 리스트 */}
-        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-1">
+        {/* 선택 날짜의 메모 태그 리스트 (마우스 휠 위/아래 회전 시 좌우로 가로 스크롤) */}
+        <div 
+          onWheel={handleBottomListWheel}
+          className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto scrollbar-thin scrollbar-thumb-slate-700/60 scrollbar-track-transparent py-1"
+        >
           {selectedDateNotes.length === 0 ? (
             <span className="text-xs text-slate-500">작성된 메모가 없습니다. [+ 새 메모]를 눌러 기록해 보세요!</span>
           ) : (
