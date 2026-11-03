@@ -907,6 +907,7 @@ export function App() {
 
   // 캘린더에서 특정 메모를 클릭하여 열기
   const handleSelectNoteFromCalendar = (noteId: string) => {
+    setActiveNoteId(noteId);
     if (calendarModalPreview) {
       setCalendarPreviewNoteId(noteId);
     } else {
@@ -1057,28 +1058,30 @@ export function App() {
   };
 
   // 메모 내용 수정 핸들러 (수정 3초 후 자동 동기화 예약)
-  const handleUpdateNote = async (updated: Partial<Note>) => {
-    if (!activeNote) return;
+  const handleUpdateNote = async (updated: Partial<Note>, specificNoteId?: string) => {
+    const targetNoteId = specificNoteId || calendarPreviewNoteId || activeNoteId;
+    const targetNote = notes.find((n) => n.id === targetNoteId);
+    if (!targetNote) return;
 
     // 소속 폴더 이동 시 알림 토스트 표시 및 활성 폴더 목록 연동
-    if (updated.projectId && updated.projectId !== activeNote.projectId) {
+    if (updated.projectId && updated.projectId !== targetNote.projectId) {
       const targetProj = projects.find((p) => p.id === updated.projectId);
       if (targetProj) {
         setSyncToast(`📁 메모가 '${targetProj.name}' 폴더로 이동되었습니다.`);
         setTimeout(() => setSyncToast(null), 3000);
-        if (activeProjectId !== 'ALL') {
+        if (activeProjectId !== 'ALL' && !isCalendarOpen) {
           setActiveProjectId(updated.projectId);
           localStorage.setItem('mymemo_active_project_id', updated.projectId);
         }
       }
     }
 
-    const isLocalOnlyNow = updated.isLocalOnly !== undefined ? updated.isLocalOnly : activeNote.isLocalOnly;
+    const isLocalOnlyNow = updated.isLocalOnly !== undefined ? updated.isLocalOnly : targetNote.isLocalOnly;
 
     // 본문에 날짜 헤더(# 📋 YYYY-MM-DD 등)가 입력/수정되면 내부 기준일(createdAt)도 함께 자동 동기화!
     // 이렇게 하면 나중에 사용자가 본문에서 날짜 헤더를 지우더라도, 지정했던 날짜 자리에 그대로 남아있게 됩니다.
-    let finalCreatedAt = activeNote.createdAt;
-    const contentToCheck = updated.content !== undefined ? updated.content : activeNote.content;
+    let finalCreatedAt = targetNote.createdAt;
+    const contentToCheck = updated.content !== undefined ? updated.content : targetNote.content;
     if (contentToCheck) {
       const headerMatch = contentToCheck.match(/#+\s*.*?\b(\d{4})[-./](\d{1,2})[-./](\d{1,2})\b/);
       if (headerMatch) {
@@ -1094,7 +1097,7 @@ export function App() {
     }
 
     const updatedNote: Note = {
-      ...activeNote,
+      ...targetNote,
       ...updated,
       createdAt: finalCreatedAt,
       updatedAt: new Date().toISOString(),
@@ -1530,7 +1533,7 @@ MyMemo의 모든 메모는 **내 개인 GitHub 저장소(Repository)**에 안전
                 <NoteEditor
                   note={previewNote}
                   projects={projects}
-                  onUpdateNote={handleUpdateNote}
+                  onUpdateNote={(updated) => handleUpdateNote(updated, previewNote.id)}
                   onBackToList={() => setCalendarPreviewNoteId(null)}
                   onDeleteNote={(id) => {
                     setCalendarPreviewNoteId(null);

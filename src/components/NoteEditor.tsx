@@ -483,6 +483,52 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const previewScrollTopRef = useRef<number>(0);
+  const isSyncingScrollRef = useRef<'editor' | 'preview' | null>(null);
+
+  // 분할 뷰(Split View) 양방향 스크롤 실시간 동기화 핸들러
+  const handleEditorScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
+    if (viewMode !== 'split') return;
+    if (isSyncingScrollRef.current === 'preview') return;
+
+    const editor = e.currentTarget;
+    const preview = previewContainerRef.current;
+    if (!preview) return;
+
+    isSyncingScrollRef.current = 'editor';
+    const editorScrollable = editor.scrollHeight - editor.clientHeight;
+    if (editorScrollable > 0) {
+      const percentage = editor.scrollTop / editorScrollable;
+      const previewScrollable = preview.scrollHeight - preview.clientHeight;
+      preview.scrollTop = percentage * previewScrollable;
+      previewScrollTopRef.current = preview.scrollTop;
+    }
+
+    requestAnimationFrame(() => {
+      isSyncingScrollRef.current = null;
+    });
+  };
+
+  const handlePreviewScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    previewScrollTopRef.current = e.currentTarget.scrollTop;
+    if (viewMode !== 'split') return;
+    if (isSyncingScrollRef.current === 'editor') return;
+
+    const preview = e.currentTarget;
+    const editor = textareaRef.current;
+    if (!editor) return;
+
+    isSyncingScrollRef.current = 'preview';
+    const previewScrollable = preview.scrollHeight - preview.clientHeight;
+    if (previewScrollable > 0) {
+      const percentage = preview.scrollTop / previewScrollable;
+      const editorScrollable = editor.scrollHeight - editor.clientHeight;
+      editor.scrollTop = percentage * editorScrollable;
+    }
+
+    requestAnimationFrame(() => {
+      isSyncingScrollRef.current = null;
+    });
+  };
 
   // 메모 변경 시 미리보기 스크롤 상단 리셋
   useEffect(() => {
@@ -2274,6 +2320,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               onChange={handleContentChange}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
+              onScroll={handleEditorScroll}
               placeholder="마크다운 문법으로 자유롭게 작성해 보세요... 이미지는 Ctrl + V 로 바로 붙여넣을 수 있습니다!"
               className="w-full flex-1 bg-transparent text-slate-200 text-sm md:text-base leading-relaxed resize-none focus:outline-none font-mono placeholder-slate-600 scrollbar-thin"
               spellCheck={false}
@@ -2313,9 +2360,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         {(viewMode === 'preview' || viewMode === 'split') && (
           <div 
             ref={previewContainerRef}
-            onScroll={(e) => {
-              previewScrollTopRef.current = e.currentTarget.scrollTop;
-            }}
+            onScroll={handlePreviewScroll}
             style={viewMode === 'split' ? { width: `calc(${100 - splitRatio}% - 0px)` } : undefined}
             className={`flex-1 h-full overflow-y-auto markdown-preview prose prose-invert max-w-none ${
               viewMode === 'split' ? 'pl-3 pr-2' : 'pr-2'
