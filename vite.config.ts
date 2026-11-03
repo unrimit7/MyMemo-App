@@ -18,6 +18,10 @@ export default defineConfig({
         theme_color: '#0f172a',
         background_color: '#0f172a',
         display: 'standalone',
+        // 단일 인스턴스 정책: 이미 앱 창이 열려있다면 새 창을 띄우지 않고 기존 창에 포커스
+        launch_handler: {
+          client_mode: ['focus-existing', 'auto']
+        },
         icons: [
           {
             src: 'favicon-32x32.png',

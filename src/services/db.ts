@@ -58,6 +58,7 @@ export async function seedInitialDataIfNeeded(): Promise<void> {
       isLocalOnly: false,
       color: '#6366f1',
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
 
     const secureProject: Project = {
@@ -66,6 +67,7 @@ export async function seedInitialDataIfNeeded(): Promise<void> {
       isLocalOnly: true,
       color: '#ef4444',
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
 
     await db.put('projects', defaultProject);

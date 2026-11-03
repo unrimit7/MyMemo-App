@@ -496,6 +496,23 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
           await saveNote(note);
           summary.uploaded++;
         }
+      } else if (!isLocalPending && !isRemoteChanged && remotePath !== expectedPath) {
+        // [경우 D] 본문 내용은 동일하나, 폴더명 변경이나 하위 폴더 계층 이동으로 원격 파일 경로가 변경된 경우:
+        // 원격의 이전 위치 파일 삭제 및 새 경로로 이동 업로드
+        await deleteFileFromGitHub(config, remotePath, remoteFile.sha, `Move note: ${note.title}`);
+        const upRes = await uploadFileToGitHub(
+          config,
+          expectedPath,
+          serializedContent,
+          `Move note to new path: ${note.title}`
+        );
+        if (upRes.success) {
+          note.githubSha = upRes.sha;
+          note.githubPath = expectedPath;
+          note.syncStatus = 'synced';
+          await saveNote(note);
+          summary.uploaded++;
+        }
       } else if (isLocalPending && isRemoteChanged) {
         // [경우 C] 양쪽 기기에서 동시에 수정된 경우 (충돌):
         // 더 최신 수정 일시를 가진 쪽을 우선 반영하거나 분기

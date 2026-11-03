@@ -23,6 +23,7 @@ import { CalendarView } from './components/CalendarView';
 import { processFileForNote } from './utils/file';
 import { getFolderHierarchyPath, updateTitleWithFolderPath, stripFolderPrefixFromTitle } from './utils/folderPath';
 import { Calendar as CalendarIcon, X, FolderTree } from 'lucide-react';
+import { crossTabSync } from './services/crossTabSync';
 
 interface DeleteConfirmState {
   isOpen: boolean;
@@ -48,6 +49,7 @@ export function App() {
   const [isSidebarOpenMobile, setIsSidebarOpenMobile] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncToast, setSyncToast] = useState<string | null>(null);
+  const [otherTabsCount, setOtherTabsCount] = useState<number>(0);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
 
   // 모바일 화면 뷰 모드 ('list' 또는 'editor')
@@ -190,6 +192,15 @@ export function App() {
       return;
     }
 
+    // 다른 창에서 이미 동기화가 진행 중이면 중복 실행 방지
+    if (!crossTabSync.acquireSyncLock()) {
+      if (!silent) {
+        setSyncToast('⚠️ 다른 창에서 이미 GitHub 동기화가 진행 중입니다.');
+        setTimeout(() => setSyncToast(null), 3000);
+      }
+      return;
+    }
+
     isSyncingRef.current = true;
     setIsSyncing(true);
     if (!silent) {
@@ -207,6 +218,8 @@ export function App() {
       await saveGitHubConfig(updatedConfig);
       setGitHubConfig(updatedConfig);
 
+      crossTabSync.broadcastChange('sync_complete');
+
       if (!silent) {
         setSyncToast(
           `동기화 완료! (업로드: ${summary.uploaded}, 다운로드: ${summary.downloaded}, 로컬보호: ${summary.skippedLocalOnly})`
@@ -219,6 +232,7 @@ export function App() {
         setSyncToast(`동기화 실패: ${err.message || '네트워크 오류'}`);
       }
     } finally {
+      crossTabSync.releaseSyncLock();
       isSyncingRef.current = false;
       setIsSyncing(false);
       setTimeout(() => setSyncToast(null), 3500);
@@ -269,13 +283,43 @@ export function App() {
     initApp();
   }, []);
 
-  // 2. 화면으로 복귀할 때 서비스워커 갱신 확인 및 자동 동기화 (autoSync 옵션 켜진 경우에만)
+  // 멀티 탭/창 실시간 연동 리스너 등록
   useEffect(() => {
-    const handleVisibilityChange = () => {
+    crossTabSync.setOtherTabsCallback((count) => {
+      setOtherTabsCount(count);
+    });
+
+    const unsubscribe = crossTabSync.subscribe(async (msg) => {
+      if (msg.type === 'DATA_CHANGED') {
+        const [latestNotes, latestProjects] = await Promise.all([
+          getAllNotes(),
+          getAllProjects(),
+        ]);
+        setNotes(latestNotes);
+        setProjects(latestProjects);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // 2. 화면으로 복귀할 때 서비스워커 갱신 확인 및 최신 데이터 동기화 (autoSync 옵션 켜진 경우에만)
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
       if (document.visibilityState === 'visible') {
         if ('serviceWorker' in navigator) {
           navigator.serviceWorker.getRegistration().then((reg) => reg?.update());
         }
+        // 다른 창에서 데이터가 바뀌었을 수 있으므로 로컬 데이터 갱신
+        const [latestNotes, latestProjects] = await Promise.all([
+          getAllNotes(),
+          getAllProjects(),
+        ]);
+        setNotes(latestNotes);
+        setProjects(latestProjects);
+
         if (gitHubConfig?.isConnected && gitHubConfig.autoSync) {
           runSync(true);
         }
@@ -320,6 +364,7 @@ export function App() {
     await saveProject(newProject);
     setProjects((prev) => [...prev, newProject]);
     setActiveProjectId(newProject.id);
+    crossTabSync.broadcastChange('projects');
   };
 
   // 프로젝트(폴더) 정보(이름 및 기기 전용 여부) 수정 핸들러
@@ -376,6 +421,11 @@ export function App() {
       let noteIsLocalOnly = note.isLocalOnly;
       let noteSyncStatus = note.syncStatus;
 
+      // 폴더명이 바뀌었으면 GitHub 원격 파일 경로도 변경되어야 하므로 일반 동기화 대상은 pending으로 전환!
+      if (isNameChanged && !noteIsLocalOnly) {
+        noteSyncStatus = 'pending';
+      }
+
       if (newIsLocalOnly) {
         // [일반 -> 기기 전용으로 전환]:
         noteIsLocalOnly = true;
@@ -403,6 +453,7 @@ export function App() {
     }
 
     setNotes((prev) => prev.map((n) => updatedNotesMap.get(n.id) || n));
+    crossTabSync.broadcastChange('projects');
 
     // 3. 토스트 알림 및 원격 동기화 처리
     if (isLocalOnlyChanged) {
@@ -640,6 +691,8 @@ export function App() {
       setTimeout(() => setSyncToast(null), 3000);
     }
 
+    crossTabSync.broadcastChange('projects');
+
     if (gitHubConfig?.isConnected && gitHubConfig.autoSync) {
       setTimeout(() => runSync(true), 1500);
     }
@@ -690,6 +743,8 @@ export function App() {
     };
     setSyncToast(`🔀 폴더가 '${sortNames[sortType]}'으로 정렬되었습니다.`);
     setTimeout(() => setSyncToast(null), 3000);
+
+    crossTabSync.broadcastChange('projects');
 
     if (gitHubConfig?.isConnected && gitHubConfig.autoSync) {
       setTimeout(() => runSync(true), 1500);
@@ -823,6 +878,7 @@ export function App() {
       if (gitHubConfig?.isConnected && gitHubConfig.autoSync) {
         setTimeout(() => runSync(true), 1500);
       }
+      crossTabSync.broadcastChange('notes');
     } else if (type === 'project') {
       const getDescendants = (rootId: string): string[] => {
         const children = projects.filter((p) => p.parentId === rootId);
@@ -859,6 +915,7 @@ export function App() {
       if (gitHubConfig?.isConnected && gitHubConfig.autoSync) {
         setTimeout(() => runSync(true), 1500);
       }
+      crossTabSync.broadcastChange('projects');
     }
   };
 
@@ -965,6 +1022,7 @@ export function App() {
     setNotes((prev) => [newNote, ...prev]);
     setIsCalendarOpen(false);
     handleSelectNote(newNote.id);
+    crossTabSync.broadcastChange('notes');
   };
 
   // 캘린더에서 특정 메모를 드래그하여 다른 날짜로 이동하는 핸들러
@@ -1021,6 +1079,7 @@ export function App() {
     setNotes((prev) => prev.map((n) => (n.id === noteId ? updatedNote : n)));
     setSyncToast(`📅 '${targetNote.title}' 일정이 ${targetDateStr}로 이동되었습니다.`);
     setTimeout(() => setSyncToast(null), 3000);
+    crossTabSync.broadcastChange('notes');
   };
 
   // 모바일 목록으로 복귀 핸들러
@@ -1055,6 +1114,7 @@ export function App() {
     await saveNote(newNote);
     setNotes((prev) => [newNote, ...prev]);
     handleSelectNote(newNote.id);
+    crossTabSync.broadcastChange('notes');
   };
 
   // 메모 내용 수정 핸들러 (수정 3초 후 자동 동기화 예약)
@@ -1108,6 +1168,7 @@ export function App() {
 
     await saveNote(updatedNote);
     setNotes((prev) => prev.map((n) => (n.id === updatedNote.id ? updatedNote : n)));
+    crossTabSync.broadcastChange('notes');
 
     // autoSync 설정이 true로 켜져 있는 경우에만 3.5초 뒤 자동 업로드
     if (!isLocalOnlyNow && gitHubConfig?.isConnected && gitHubConfig.autoSync) {
@@ -1362,6 +1423,7 @@ MyMemo의 모든 메모는 **내 개인 GitHub 저장소(Repository)**에 안전
         pendingCount={pendingCount}
         isCalendarActive={isCalendarOpen}
         onOpenCalendar={handleOpenCalendar}
+        otherTabsCount={otherTabsCount}
         width={sidebarWidth}
         isResizing={isResizingSidebar}
       />

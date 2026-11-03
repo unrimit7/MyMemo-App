@@ -47,6 +47,7 @@ interface SidebarProps {
   onOpenCalendar?: () => void;
   width?: number;
   isResizing?: boolean;
+  otherTabsCount?: number;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -76,6 +77,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenCalendar,
   width,
   isResizing,
+  otherTabsCount = 0,
 }) => {
   // 드래그 오버 중인 폴더 ID 및 위치 정보
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
@@ -776,6 +778,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <Download size={14} className="text-indigo-400" />
               <span>이 기기에 앱 설치</span>
             </button>
+          )}
+
+          {/* 멀티 창/탭 실시간 연동 표시 배지 */}
+          {otherTabsCount !== undefined && otherTabsCount > 0 && !isCollapsed && (
+            <div 
+              title="같은 PC에서 여러 창/탭이 열려 있으며, 실시간으로 데이터가 상호 연동되고 있습니다."
+              className="flex items-center justify-center gap-1.5 py-1 px-2 mb-2 bg-emerald-950/40 border border-emerald-500/30 rounded-lg text-[11px] text-emerald-400 font-medium"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>멀티 창 연동 중 ({otherTabsCount + 1}개 창)</span>
+            </div>
           )}
 
           <button
