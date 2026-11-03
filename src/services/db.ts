@@ -46,6 +46,24 @@ export async function getDB(): Promise<IDBPDatabase<MyMemoDB>> {
   return dbPromise;
 }
 
+/**
+ * 브라우저 및 윈도우 스토리지 센스(디스크 정리)로부터 MyMemo 데이터를 영구 보존(Persistent Storage)하도록 요청합니다.
+ */
+export async function requestPersistentStorage(): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
+    try {
+      const isPersisted = await navigator.storage.persisted();
+      if (!isPersisted) {
+        return await navigator.storage.persist();
+      }
+      return isPersisted;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 // 초기 기본 데이터 시딩
 export async function seedInitialDataIfNeeded(): Promise<void> {
   const db = await getDB();

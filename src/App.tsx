@@ -11,7 +11,8 @@ import {
   getGitHubConfig, 
   saveGitHubConfig,
   trackDeletedNote,
-  trackDeletedProject
+  trackDeletedProject,
+  requestPersistentStorage
 } from './services/db';
 import { syncWithGitHub, getProjectFolderPath } from './services/github';
 import { Sidebar } from './components/Sidebar';
@@ -242,6 +243,9 @@ export function App() {
   // 1. 초기 데이터 로딩 및 앱 켤 때 자동 동기화 1회 실행
   useEffect(() => {
     const initApp = async () => {
+      // 브라우저 및 윈도우 스토리지 센스로부터 로컬 데이터 영구 보존 요청
+      requestPersistentStorage().catch(() => {});
+
       await seedInitialDataIfNeeded();
       const loadedProjects = await getAllProjects();
       const loadedNotes = await getAllNotes();
