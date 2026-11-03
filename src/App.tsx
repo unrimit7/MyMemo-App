@@ -632,11 +632,13 @@ export function App() {
     }
     const newCreatedAt = !isNaN(dateObj.getTime()) ? dateObj.toISOString() : `${targetDateStr}T09:00:00.000Z`;
 
-    // 3. 본문 상단 헤더(# 📋 YYYY-MM-DD 또는 # YYYY-MM-DD 등)가 있다면 새 날짜로 갱신
+    // 3. 본문 상단 헤더(# 📋 YYYY-MM-DD 또는 # YYYY-MM-DD 등)가 있다면 새 날짜로 갱신 (없으면 추가)
     let newContent = targetNote.content;
     const headerDateRegex = /(#+\s*(?:📋\s*)?)(\d{4})[-./](\d{1,2})[-./](\d{1,2})/;
     if (headerDateRegex.test(newContent)) {
       newContent = newContent.replace(headerDateRegex, `$1${targetDateStr}`);
+    } else {
+      newContent = `# 📋 ${targetDateStr}\n\n${newContent}`;
     }
 
     const updatedNote: Note = {

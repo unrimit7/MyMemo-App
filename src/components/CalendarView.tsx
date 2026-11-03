@@ -182,29 +182,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   };
 
   // 메모의 기준 날짜 (YYYY-MM-DD) 추출
-  // 1. 제목에 포함된 YYYY-MM-DD / YYMMDD 날짜
-  // 2. 본문 상단 헤더(# 📋 YYYY-MM-DD) 또는 본문 내 날짜 (제목을 바꿨을 때도 캘린더 위치 유지!)
-  // 3. 메모 생성일(createdAt) 기준
+  // [1순위] 본문 내용의 날짜 (상단 헤더 # 📋 YYYY-MM-DD 등) -> 제목은 사용자가 캘린더에 보기 좋게 자유롭게 지을 수 있도록 최우선 적용!
+  // [2순위] 제목 내 날짜 (YYYY-MM-DD / YYMMDD)
+  // [3순위] 메모 생성일시 (createdAt)
   const getNoteDateStr = (note: Note): string => {
-    // 1-1. 제목에서 YYYY-MM-DD, YYYY.MM.DD, YYYY/MM/DD 검색
-    const titleMatch = note.title.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
-    if (titleMatch) {
-      const year = titleMatch[1];
-      const month = titleMatch[2].padStart(2, '0');
-      const day = titleMatch[3].padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    }
-
-    // 1-2. 제목에서 6자리 YYMMDD 검색 (예: 261102, 261114)
-    const titleShortMatch = note.title.match(/\b(2\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\b/);
-    if (titleShortMatch) {
-      const year = `20${titleShortMatch[1]}`;
-      const month = titleShortMatch[2];
-      const day = titleShortMatch[3];
-      return `${year}-${month}-${day}`;
-    }
-
-    // 2-1. 본문 상단 헤더(# 📋 YYYY-MM-DD 등)에서 날짜 검색
+    // 1-1. [1순위 최우선] 본문 상단 헤더(# 📋 YYYY-MM-DD, # YYYY-MM-DD 등)에서 날짜 검색
     const headerMatch = note.content.match(/#+\s*.*?\b(\d{4})[-./](\d{1,2})[-./](\d{1,2})\b/);
     if (headerMatch) {
       const year = headerMatch[1];
@@ -213,7 +195,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       return `${year}-${month}-${day}`;
     }
 
-    // 2-2. 본문 전체에서 첫 번째 YYYY-MM-DD 검색
+    // 1-2. [1순위 보조] 본문 전체에서 첫 번째 YYYY-MM-DD (또는 YYYY.MM.DD, YYYY/MM/DD) 검색
     const contentMatch = note.content.match(/\b(\d{4})[-./](\d{1,2})[-./](\d{1,2})\b/);
     if (contentMatch) {
       const year = contentMatch[1];
@@ -222,7 +204,25 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       return `${year}-${month}-${day}`;
     }
 
-    // 3. 메모 생성일시(createdAt) 기준
+    // 2-1. [2순위] 제목에서 YYYY-MM-DD, YYYY.MM.DD, YYYY/MM/DD 검색
+    const titleMatch = note.title.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
+    if (titleMatch) {
+      const year = titleMatch[1];
+      const month = titleMatch[2].padStart(2, '0');
+      const day = titleMatch[3].padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    // 2-2. [2순위 보조] 제목에서 6자리 YYMMDD 검색 (예: 261102, 261114)
+    const titleShortMatch = note.title.match(/\b(2\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\b/);
+    if (titleShortMatch) {
+      const year = `20${titleShortMatch[1]}`;
+      const month = titleShortMatch[2];
+      const day = titleShortMatch[3];
+      return `${year}-${month}-${day}`;
+    }
+
+    // 3. [3순위] 메모 생성일시(createdAt) 기준
     const d = new Date(note.createdAt);
     if (isNaN(d.getTime())) return '';
     const year = d.getFullYear();
