@@ -8,6 +8,7 @@ import { exportNoteToPdf } from '../utils/exportPdf';
 import { getFolderHierarchyPath, updateTitleWithFolderPath } from '../utils/folderPath';
 import { PdfViewerModal } from './PdfViewerModal';
 import { PdfEditorModal } from './PdfEditorModal';
+import { ImageEditorModal } from './ImageEditorModal';
 import { loadPdfDocument, renderPdfPageToCanvas, extractPdfText, invalidatePdfCache } from '../utils/pdfViewer';
 import { HwpViewerModal } from './HwpViewerModal';
 import { HwpEditorModal } from './HwpEditorModal';
@@ -152,6 +153,11 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     initialPage: number;
   } | null>(null);
   const [activeHwpEditorModal, setActiveHwpEditorModal] = useState<{
+    attId: string;
+    data: string;
+    title: string;
+  } | null>(null);
+  const [activeImageEditorModal, setActiveImageEditorModal] = useState<{
     attId: string;
     data: string;
     title: string;
@@ -1839,6 +1845,24 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       return;
     }
 
+    // 1-1. 이미지 [✏️ 편집] 버튼 클릭 시 이미지 편집기 모달 열기
+    const editImgBtn = target.closest<HTMLElement>('.img-btn-edit');
+    if (editImgBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = editImgBtn.getAttribute('data-att-id');
+      const title = editImgBtn.getAttribute('data-file-name') || '첨부 이미지';
+      const att = attId ? localAttachmentsRef.current[attId] : null;
+      if (att && att.data) {
+        setActiveImageEditorModal({
+          attId: attId!,
+          data: att.data,
+          title,
+        });
+      }
+      return;
+    }
+
     // 2. 이미지 클릭 시 확대 및 크기 조절 라이트박스 열기
     if (target && target.tagName === 'IMG') {
       const img = target as HTMLImageElement;
@@ -2867,6 +2891,29 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               </div>
             )}
 
+            {/* 이미지 직접 편집 버튼 */}
+            {lightboxImage.attId && (
+              <button
+                type="button"
+                onClick={() => {
+                  const att = localAttachmentsRef.current[lightboxImage.attId];
+                  if (att && att.data) {
+                    setActiveImageEditorModal({
+                      attId: lightboxImage.attId,
+                      data: att.data,
+                      title: lightboxImage.alt.split('|')[0] || '첨부 이미지',
+                    });
+                    setLightboxImage(null);
+                  }
+                }}
+                className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white flex items-center gap-1 shadow-sm transition-all"
+                title="이미지 편집기 열기 (그리기, 자르기, 영역 이동/지우기, 모자이크, 회전)"
+              >
+                <Edit3 size={13} />
+                <span>편집</span>
+              </button>
+            )}
+
             {/* 닫기 버튼 */}
             <button
               type="button"
@@ -3017,6 +3064,39 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               setTimeout(() => {
                 renderInlineHwp.current(attId, updatedDataUrl);
               }, 120);
+            }
+          }}
+        />
+      )}
+
+      {/* 첨부 이미지 웹 직접 편집기 모달 */}
+      {activeImageEditorModal && (
+        <ImageEditorModal
+          isOpen={true}
+          onClose={() => setActiveImageEditorModal(null)}
+          data={activeImageEditorModal.data}
+          title={activeImageEditorModal.title}
+          attId={activeImageEditorModal.attId}
+          onSave={async (updatedDataUrl) => {
+            const attId = activeImageEditorModal.attId;
+            if (attId) {
+              // 1. Blob URL 캐시 무효화 (새 이미지 즉시 반영)
+              invalidateAttachmentBlobUrl(attId);
+
+              // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장
+              const updatedAtts = {
+                ...localAttachmentsRef.current,
+                [attId]: {
+                  ...(localAttachmentsRef.current[attId] || {}),
+                  data: updatedDataUrl,
+                },
+              };
+              setLocalAttachments(updatedAtts);
+              localAttachmentsRef.current = updatedAtts;
+              onUpdateNote({ attachments: updatedAtts });
+
+              // 3. 편집 모달 내부 데이터 동기화
+              setActiveImageEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
             }
           }}
         />

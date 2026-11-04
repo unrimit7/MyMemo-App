@@ -405,7 +405,12 @@ export function renderAttachmentsInHtml(
         }
       }
 
-      return `<img ${pre}src="${att.data}" alt="${cleanAlt}" style="${widthStyle}" class="rounded-xl my-3 border border-slate-800 shadow-md cursor-zoom-in hover:opacity-95 transition-opacity note-image" data-att-id="${attId}"${post} />`;
+      return `<span class="relative inline-block group my-3 note-image-wrapper align-middle" style="${widthStyle || 'max-width: 100%;'}">
+        <img ${pre}src="${att.data}" alt="${cleanAlt}" style="width: 100%; height: auto; display: block;" class="rounded-xl border border-slate-800 shadow-md cursor-zoom-in hover:opacity-95 transition-opacity note-image" data-att-id="${attId}"${post} />
+        <button type="button" class="img-btn-edit absolute top-2 right-2 bg-slate-900/90 hover:bg-indigo-600 text-slate-200 hover:text-white px-2 py-1 rounded-lg text-xs font-bold shadow-lg border border-slate-700/80 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-xs cursor-pointer" data-att-id="${attId}" data-file-name="${cleanAlt}" title="이미지 편집 (그리기, 자르기, 영역 이동, 모자이크, 텍스트)">
+          ✏️ 편집
+        </button>
+      </span>`;
     }
   );
 
