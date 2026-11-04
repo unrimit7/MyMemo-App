@@ -410,7 +410,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
           isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'
         }`}
       >
-        <div className="w-max min-w-full min-h-full flex items-center justify-start p-1 sm:p-3">
+        <div className="w-max min-w-full min-h-full flex flex-col items-center justify-start py-4 sm:py-6 px-2">
           {isLoading && (
             <div className="flex flex-col items-center justify-center h-64 gap-3 text-slate-400 text-sm m-auto">
               <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />

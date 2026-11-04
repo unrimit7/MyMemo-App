@@ -694,21 +694,21 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-md text-slate-100 animate-in fade-in select-none">
       {/* 상단 툴바: 제목, 도구 선택, 저장 및 닫기 */}
-      <div className="flex flex-wrap items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-800 gap-2 shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-emerald-400 font-bold text-sm md:text-base">✏️ PDF 주석/서명</span>
-          <span className="text-xs md:text-sm font-semibold truncate text-slate-200 max-w-[150px] md:max-w-xs" title={title}>
+      <div className="flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-800 gap-2 shrink-0 overflow-x-auto">
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-emerald-400 font-bold text-xs sm:text-sm">✏️ PDF 주석/서명</span>
+          <span className="text-xs sm:text-sm font-semibold truncate text-slate-200 max-w-[120px] sm:max-w-[200px]" title={title}>
             {title}
           </span>
           {saveSuccess && (
-            <span className="flex items-center gap-1 text-xs text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 font-bold">
+            <span className="flex items-center gap-1 text-[11px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 font-bold">
               <CheckCircle size={12} /> 저장됨
             </span>
           )}
         </div>
 
         {/* 중앙: 주석 도구 팔레트 */}
-        <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+        <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 shrink-0">
           {/* 손/선택 툴 */}
           <button
             type="button"
@@ -829,7 +829,7 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
       </div>
 
       {/* 보조 옵션 툴바 (색상 팔레트 및 페이지 이동 컨트롤) */}
-      <div className="flex flex-wrap items-center justify-between px-3 py-1.5 bg-slate-900/60 border-b border-slate-800/80 gap-2 text-xs">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-slate-900/60 border-b border-slate-800/80 gap-2 text-xs overflow-x-auto shrink-0">
         {/* 색상 및 두께 선택 */}
         <div className="flex items-center gap-2">
           {activeTool === 'pen' && (
@@ -975,11 +975,11 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
       {/* 메인 뷰어 및 주석 캔버스 영역 */}
       <div 
         ref={containerRef}
-        className={`flex-1 overflow-auto bg-slate-950 p-2 sm:p-4 relative flex items-center justify-start ${
+        className={`flex-1 overflow-auto bg-slate-950 p-2 sm:p-4 relative ${
           activeTool === 'pan' ? 'cursor-grab touch-pan-x touch-pan-y' : 'cursor-crosshair'
         }`}
       >
-        <div className="w-max min-w-full min-h-full flex items-center justify-center p-2">
+        <div className="w-max min-w-full min-h-full flex flex-col items-center justify-start py-4 sm:py-8 px-2">
           {isLoading && (
             <div className="flex flex-col items-center justify-center h-64 gap-3 text-slate-400 text-sm">
               <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
