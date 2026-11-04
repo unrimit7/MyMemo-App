@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Download, FileText, Check } from 'lucide-react';
 import { loadHwpDocument, renderHwpPageToSvg, extractHwpText } from '../utils/hwpViewer';
 import type { HwpDocument } from '@rhwp/core';
@@ -30,6 +30,7 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
   const [isCopied, setIsCopied] = useState<boolean>(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastTapRef = useRef<number>(0);
 
   // HWP 문서 로드
   useEffect(() => {
@@ -73,6 +74,82 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
       console.error('HWP 페이지 SVG 렌더링 오류:', err);
     }
   }, [isOpen, hwpDoc, currentPage, totalPages]);
+
+  // 터치 제스처 (스마트폰 두 손가락 핀치 줌: 20% 아주 작게 ~ 400% 아주 크게)
+  const touchStartDistRef = useRef<number | null>(null);
+  const touchStartZoomRef = useRef<number>(1.0);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const getDistance = (t1: Touch, t2: Touch) => {
+      const dx = t1.clientX - t2.clientX;
+      const dy = t1.clientY - t2.clientY;
+      return Math.hypot(dx, dy);
+    };
+
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        touchStartDistRef.current = getDistance(e.touches[0], e.touches[1]);
+        touchStartZoomRef.current = zoom;
+      }
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2 && touchStartDistRef.current !== null) {
+        e.preventDefault(); // 브라우저 자체 제스처 간섭 방지
+        const currentDist = getDistance(e.touches[0], e.touches[1]);
+        const scaleRatio = currentDist / touchStartDistRef.current;
+        const newZoom = Math.min(4.0, Math.max(0.2, Math.round(touchStartZoomRef.current * scaleRatio * 100) / 100));
+        setZoom(newZoom);
+      }
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) {
+        touchStartDistRef.current = null;
+      }
+    };
+
+    container.addEventListener('touchstart', handleTouchStart, { passive: true });
+    container.addEventListener('touchmove', handleTouchMove, { passive: false });
+    container.addEventListener('touchend', handleTouchEnd, { passive: true });
+    container.addEventListener('touchcancel', handleTouchEnd, { passive: true });
+
+    return () => {
+      container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchmove', handleTouchMove);
+      container.removeEventListener('touchend', handleTouchEnd);
+      container.removeEventListener('touchcancel', handleTouchEnd);
+    };
+  }, [zoom]);
+
+  // PC: Ctrl + 마우스 휠 및 노트북 트랙패드 핀치 줌 지원 (20% ~ 400%)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.15 : 0.85;
+        setZoom((prev) => Math.min(4.0, Math.max(0.2, Math.round(prev * factor * 100) / 100)));
+      }
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => container.removeEventListener('wheel', handleWheel);
+  }, []);
+
+  // 더블 탭 시 100% <-> 200% 배율 토글 (모바일 편의 기능)
+  const handleDoubleTap = useCallback(() => {
+    const now = Date.now();
+    if (now - lastTapRef.current < 300) {
+      setZoom((prev) => (prev >= 1.5 ? 1.0 : 2.0));
+    }
+    lastTapRef.current = now;
+  }, []);
 
   // 키보드 단축키 (Esc: 닫기, 좌/우: 페이지 이동)
   useEffect(() => {
@@ -127,27 +204,46 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
     }
   };
 
+  const handleZoomOut = () => {
+    setZoom((z) => {
+      const step = z <= 0.6 ? 0.1 : 0.2;
+      return Math.max(0.2, Math.round((z - step) * 10) / 10);
+    });
+  };
+
+  const handleZoomIn = () => {
+    setZoom((z) => {
+      const step = z < 0.6 ? 0.1 : 0.2;
+      return Math.min(4.0, Math.round((z + step) * 10) / 10);
+    });
+  };
+
+  // 화면 폭에 비례한 기준 너비 및 줌 배율 적용 너비
+  const containerWidth = containerRef.current?.clientWidth || window.innerWidth;
+  const baseWidth = Math.min(Math.max(260, containerWidth - 32), 850);
+  const targetWidth = Math.round(baseWidth * zoom);
+
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-md animate-in fade-in duration-200 select-none"
       role="dialog"
       aria-modal="true"
     >
-      {/* 상단 툴바 */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-3 md:px-5 py-2.5 bg-slate-900 border-b border-slate-800 text-slate-200 shrink-0 z-10 shadow-lg">
+      {/* 상단 툴바 (모바일/PC 컴팩트 구성) */}
+      <div className="flex items-center justify-between gap-1 sm:gap-2 px-2 sm:px-4 py-2 bg-slate-900 border-b border-slate-800 text-slate-200 shrink-0 z-10 shadow-lg">
         {/* 제목 */}
-        <div className="flex items-center gap-2 min-w-0 max-w-[200px] md:max-w-md">
-          <span className="text-lg">📝</span>
-          <span className="font-bold text-xs md:text-sm truncate text-slate-100" title={title}>
+        <div className="flex items-center gap-1.5 min-w-0 max-w-[100px] xs:max-w-[140px] sm:max-w-xs md:max-w-md">
+          <span className="text-base sm:text-lg shrink-0">📝</span>
+          <span className="font-bold text-xs sm:text-sm truncate text-slate-100" title={title}>
             {title}
           </span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 font-bold shrink-0">
-            HWP 뷰어
+          <span className="text-[9px] sm:text-[10px] px-1 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 font-bold shrink-0 hidden xs:inline-block">
+            HWP
           </span>
         </div>
 
         {/* 페이지 네비게이션 */}
-        <div className="flex items-center gap-1.5 bg-slate-950/70 border border-slate-800 rounded-lg px-2 py-1 text-xs">
+        <div className="flex items-center gap-0.5 sm:gap-1 bg-slate-950/80 border border-slate-800 rounded-lg px-1.5 py-0.5 sm:px-2 sm:py-1 text-xs shrink-0">
           <button
             type="button"
             onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
@@ -155,10 +251,10 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
             className="p-1 hover:bg-slate-800 rounded text-slate-300 disabled:opacity-30 disabled:hover:bg-transparent"
             title="이전 페이지 (←)"
           >
-            <ChevronLeft size={16} />
+            <ChevronLeft size={15} />
           </button>
 
-          <span className="font-semibold text-slate-200 px-1 text-xs">
+          <span className="font-semibold text-slate-200 px-0.5 sm:px-1 text-[11px] sm:text-xs">
             {currentPage} <span className="text-slate-500 font-normal">/</span> {totalPages}
           </span>
 
@@ -169,69 +265,67 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
             className="p-1 hover:bg-slate-800 rounded text-slate-300 disabled:opacity-30 disabled:hover:bg-transparent"
             title="다음 페이지 (→)"
           >
-            <ChevronRight size={16} />
+            <ChevronRight size={15} />
           </button>
         </div>
 
-        {/* 줌 배율 & 액션 컨트롤 */}
-        <div className="flex items-center gap-1">
+        {/* 줌 배율 컨트롤 (20% 아주 작게 ~ 400% 아주 크게) */}
+        <div className="flex items-center gap-0.5 sm:gap-1 bg-slate-950/80 border border-slate-800 rounded-lg px-1 py-0.5 shrink-0">
           <button
             type="button"
-            onClick={() => setZoom((z) => Math.max(0.6, Math.round((z - 0.2) * 10) / 10))}
-            className="p-1.5 hover:bg-slate-800 text-slate-300 rounded-lg transition-colors hidden sm:block"
-            title="축소"
+            onClick={handleZoomOut}
+            className="p-1 sm:p-1.5 hover:bg-slate-800 text-slate-300 rounded transition-colors active:scale-95"
+            title="축소 (최소 20%까지 아주 작게 보기)"
           >
-            <ZoomOut size={16} />
+            <ZoomOut size={14} className="sm:w-4 sm:h-4" />
           </button>
 
           <button
             type="button"
             onClick={() => setZoom(1.0)}
-            className="px-2 py-1 text-[11px] font-semibold text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded hidden sm:block"
-            title="배율 초기화 (100%)"
+            className="px-1 sm:px-1.5 py-0.5 text-[10px] sm:text-xs font-bold text-indigo-300 hover:text-white rounded transition-colors"
+            title="배율 초기화 (100% 클릭 시 기본 화면 맞춤)"
           >
             {Math.round(zoom * 100)}%
           </button>
 
           <button
             type="button"
-            onClick={() => setZoom((z) => Math.min(2.5, Math.round((z + 0.2) * 10) / 10))}
-            className="p-1.5 hover:bg-slate-800 text-slate-300 rounded-lg transition-colors hidden sm:block"
-            title="확대"
+            onClick={handleZoomIn}
+            className="p-1 sm:p-1.5 hover:bg-slate-800 text-slate-300 rounded transition-colors active:scale-95"
+            title="확대 (최대 400%까지 아주 크게 보기)"
           >
-            <ZoomIn size={16} />
+            <ZoomIn size={14} className="sm:w-4 sm:h-4" />
           </button>
+        </div>
 
-          <div className="h-4 w-[1px] bg-slate-800 mx-1 hidden sm:block" />
-
-          {/* 본문 메모로 가져오기 버튼 */}
+        {/* 액션 컨트롤 (본문 복사, 다운로드 & 닫기) */}
+        <div className="flex items-center gap-1 shrink-0">
+          {/* 본문 텍스트 복사/가져오기 버튼 */}
           <button
             type="button"
             onClick={handleImportToMemo}
-            disabled={isLoading}
-            className="flex items-center gap-1 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-sm transition-all active:scale-95 disabled:opacity-50"
-            title="한글 문서 내용을 마크다운 메모 본문으로 바로 가져옵니다."
+            className="flex items-center gap-1 p-1.5 sm:px-2 sm:py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 rounded-lg text-xs font-semibold border border-blue-500/30 transition-all active:scale-95"
+            title="HWP 본문 텍스트 추출"
           >
-            {isCopied ? <Check size={14} className="text-emerald-300" /> : <FileText size={14} />}
-            <span>{isCopied ? '메모에 반영됨!' : '메모로 가져오기'}</span>
+            {isCopied ? <Check size={14} className="text-emerald-400" /> : <FileText size={14} className="text-blue-400" />}
+            <span className="hidden md:inline">{isCopied ? '복사 완료!' : '본문 추출'}</span>
           </button>
 
-          {/* 다운로드 버튼 */}
           <button
             type="button"
             onClick={handleDownload}
-            className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-lg text-xs font-semibold border border-slate-700 transition-all active:scale-95"
+            className="flex items-center gap-1 p-1.5 sm:px-2.5 sm:py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-lg text-xs font-semibold border border-slate-700 transition-all active:scale-95"
             title="원본 파일 다운로드"
           >
             <Download size={14} className="text-indigo-400" />
             <span className="hidden md:inline">다운로드</span>
           </button>
 
-          {/* 닫기 버튼 */}
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 rounded-lg transition-colors ml-1"
+            className="p-1.5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 rounded-lg transition-colors"
             title="닫기 (Esc)"
           >
             <X size={18} />
@@ -239,20 +333,21 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
         </div>
       </div>
 
-      {/* 본문 뷰어 영역 (SVG 렌더링) */}
+      {/* 본문 뷰어 영역 (SVG 렌더링, 자유 줌 및 스크롤) */}
       <div
         ref={containerRef}
-        className="flex-1 overflow-auto p-3 md:p-6 flex items-start justify-center bg-slate-950"
+        onClick={handleDoubleTap}
+        className="flex-1 overflow-auto p-2 sm:p-4 md:p-6 flex items-start justify-center bg-slate-950 cursor-grab active:cursor-grabbing touch-pan-x touch-pan-y"
       >
         {isLoading && (
-          <div className="flex flex-col items-center justify-center h-64 gap-3 text-slate-400 text-sm">
+          <div className="flex flex-col items-center justify-center h-64 gap-3 text-slate-400 text-sm m-auto">
             <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
             <span>한글 문서를 렌더링하는 중입니다...</span>
           </div>
         )}
 
         {renderError && (
-          <div className="p-6 bg-rose-950/40 border border-rose-800 rounded-2xl text-center text-rose-300 space-y-2 max-w-md my-auto">
+          <div className="p-6 bg-rose-950/40 border border-rose-800 rounded-2xl text-center text-rose-300 space-y-2 max-w-md m-auto">
             <p className="font-bold text-sm">⚠️ {renderError}</p>
             <button
               type="button"
@@ -266,8 +361,8 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
 
         {svgHtml && !isLoading && !renderError && (
           <div
-            style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}
-            className="transition-transform duration-100 shadow-2xl rounded-xl bg-white p-2 md:p-4 my-2 text-slate-900 max-w-full"
+            style={{ width: `${targetWidth}px`, maxWidth: 'none' }}
+            className="m-auto shadow-2xl rounded-xl bg-white p-2 md:p-4 my-2 text-slate-900 transition-all duration-75 [&>svg]:w-full [&>svg]:h-auto [&>svg]:max-w-none"
             dangerouslySetInnerHTML={{ __html: svgHtml }}
           />
         )}
