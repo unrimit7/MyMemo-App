@@ -145,8 +145,64 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
     return () => container.removeEventListener('wheel', handleWheel);
   }, []);
 
-  // 더블 탭 시 100% <-> 200% 배율 토글 (모바일 편의 기능)
+  // PC: 마우스 클릭 드래그로 화면 이동 (Pan Hand Tool)
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const dragStartRef = useRef<{ x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
+  const hasMovedRef = useRef<boolean>(false);
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return; // 좌클릭만 처리
+    const container = containerRef.current;
+    if (!container) return;
+
+    // 네이티브 이미지/텍스트 드래그 방지
+    e.preventDefault();
+
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      scrollLeft: container.scrollLeft,
+      scrollTop: container.scrollTop,
+    };
+    hasMovedRef.current = false;
+    setIsDragging(true);
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!dragStartRef.current || !containerRef.current) return;
+      const dx = e.clientX - dragStartRef.current.x;
+      const dy = e.clientY - dragStartRef.current.y;
+
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+        hasMovedRef.current = true;
+      }
+
+      containerRef.current.scrollLeft = dragStartRef.current.scrollLeft - dx;
+      containerRef.current.scrollTop = dragStartRef.current.scrollTop - dy;
+    };
+
+    const handleMouseUp = () => {
+      if (dragStartRef.current) {
+        dragStartRef.current = null;
+        setIsDragging(false);
+      }
+    };
+
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove, { passive: false });
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
+
+  // 더블 탭 시 100% <-> 200% 배율 토글 (드래그 이동 중에는 무시)
   const handleDoubleTap = useCallback(() => {
+    if (hasMovedRef.current) return;
     const now = Date.now();
     if (now - lastTapRef.current < 300) {
       setZoom((prev) => (prev >= 1.5 ? 1.0 : 2.0));
@@ -348,11 +404,14 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
         </div>
       </div>
 
-      {/* 본문 뷰어 영역 (화면 너비에 갇히지 않고 확대 시 실제로 커지며 가로/세로 자유 스크롤) */}
+      {/* 본문 뷰어 영역 (화면 너비에 갇히지 않고 확대 시 실제로 커지며 마우스 드래그 및 터치 스크롤 지원) */}
       <div
         ref={containerRef}
+        onMouseDown={handleMouseDown}
         onClick={handleDoubleTap}
-        className="flex-1 overflow-auto bg-slate-950 p-2 sm:p-4 touch-pan-x touch-pan-y relative"
+        className={`flex-1 overflow-auto bg-slate-950 p-2 sm:p-4 touch-pan-x touch-pan-y relative ${
+          isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'
+        }`}
       >
         <div className="w-max min-w-full min-h-full flex items-center justify-start p-1 sm:p-3">
           {isLoading && (
