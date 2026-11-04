@@ -617,7 +617,14 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             .catch((err) => {
               console.error('인라인 PDF 페이지 렌더링 실패:', err);
               if (loadingBox) {
-                loadingBox.innerHTML = '<span class="text-rose-400 font-semibold">⚠️ PDF 페이지를 표시하지 못했습니다. 상단 전체화면 또는 다운로드 버튼을 이용해 주세요.</span>';
+                const errMsg = err?.message || String(err);
+                loadingBox.innerHTML = `<div class="p-3 bg-rose-950/40 border border-rose-500/30 rounded-xl text-center space-y-1.5 max-w-md mx-auto">
+                  <div class="text-rose-400 font-semibold text-xs">⚠️ PDF 페이지를 표시하지 못했습니다.</div>
+                  <div class="text-[11px] text-slate-400 font-mono break-all">${errMsg}</div>
+                  <div class="flex items-center justify-center gap-2 pt-1">
+                    <button type="button" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded border border-slate-700" onclick="window.location.reload()">새로고침</button>
+                  </div>
+                </div>`;
               }
             });
         }
@@ -625,7 +632,14 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       .catch((err) => {
         console.error('인라인 PDF 렌더링 실패:', err);
         if (loadingBox) {
-          loadingBox.innerHTML = '<span class="text-rose-400 font-semibold">⚠️ PDF 문서를 로드하지 못했습니다. 상단 저장 버튼을 이용해 주세요.</span>';
+          const errMsg = err?.message || String(err);
+          loadingBox.innerHTML = `<div class="p-3 bg-rose-950/40 border border-rose-500/30 rounded-xl text-center space-y-1.5 max-w-md mx-auto">
+            <div class="text-rose-400 font-semibold text-xs">⚠️ PDF 문서를 로드하지 못했습니다.</div>
+            <div class="text-[11px] text-slate-400 font-mono break-all">${errMsg}</div>
+            <div class="flex items-center justify-center gap-2 pt-1">
+              <button type="button" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded border border-slate-700" onclick="window.location.reload()">새로고침</button>
+            </div>
+          </div>`;
         }
       });
   };

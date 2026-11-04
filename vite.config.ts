@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
-// 모바일 브라우저(Samsung Internet, iOS Safari 등) 웹 워커 내 ES2024 호환성 패치 플러그인
+// 모바일 브라우저(Samsung Internet, iOS Safari, 모바일 웹뷰 등) 웹 워커 내 ES2024 호환성 완벽 폴리필 플러그인
 function patchPdfWorkerPlugin() {
   const polyfill = `
 if (typeof Promise !== 'undefined' && !Promise.withResolvers) {
@@ -19,6 +19,29 @@ if (typeof Promise !== 'undefined' && !Promise.withResolvers) {
 if (typeof Response !== 'undefined' && !Response.prototype.bytes) {
   Response.prototype.bytes = async function () {
     return new Uint8Array(await this.arrayBuffer());
+  };
+}
+if (typeof Blob !== 'undefined' && !Blob.prototype.bytes) {
+  Blob.prototype.bytes = async function () {
+    return new Uint8Array(await this.arrayBuffer());
+  };
+}
+if (typeof Array !== 'undefined' && !Array.prototype.toSpliced) {
+  Array.prototype.toSpliced = function (start, deleteCount, ...items) {
+    const copy = Array.from(this);
+    copy.splice(start, deleteCount, ...items);
+    return copy;
+  };
+}
+if (typeof Set !== 'undefined' && !Set.prototype.intersection) {
+  Set.prototype.intersection = function (other) {
+    const res = new Set();
+    for (const elem of this) {
+      if (other && (typeof other.has === 'function' ? other.has(elem) : false)) {
+        res.add(elem);
+      }
+    }
+    return res;
   };
 }
 `;
@@ -40,12 +63,16 @@ if (typeof Response !== 'undefined' && !Response.prototype.bytes) {
               /return\s+response\.bytes\(\);/g,
               'return typeof response.bytes === "function" ? response.bytes() : response.arrayBuffer().then((b) => new Uint8Array(b));'
             );
+            patched = patched.replace(
+              /blob\s*=>\s*blob\.bytes\(\)/g,
+              'blob => typeof blob.bytes === "function" ? blob.bytes() : blob.arrayBuffer().then((b) => new Uint8Array(b))'
+            );
             if (item.type === 'asset') {
               item.source = typeof item.source === 'string' ? patched : new TextEncoder().encode(patched);
             } else {
               item.code = patched;
             }
-            console.log(`[patch-pdf-worker] Successfully patched ${fileName}`);
+            console.log(`[patch-pdf-worker] Successfully patched ${fileName} with ES2024 polyfills`);
           }
         }
       }

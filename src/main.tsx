@@ -1,4 +1,4 @@
-// 모바일 브라우저(Samsung Internet, iOS Safari, 구버전 크롬) ES2024 호환성 폴리필
+// 모바일 브라우저(Samsung Internet, iOS Safari, 구버전 크롬/웹뷰) ES2024 호환성 폴리필
 if (typeof Promise !== 'undefined' && !(Promise as any).withResolvers) {
   (Promise as any).withResolvers = function () {
     let resolve: any, reject: any;
@@ -13,6 +13,40 @@ if (typeof Response !== 'undefined' && !Response.prototype.bytes) {
   Response.prototype.bytes = async function () {
     return new Uint8Array(await this.arrayBuffer());
   };
+}
+if (typeof Blob !== 'undefined' && !Blob.prototype.bytes) {
+  Blob.prototype.bytes = async function () {
+    return new Uint8Array(await this.arrayBuffer());
+  };
+}
+if (typeof Array !== 'undefined' && !(Array.prototype as any).toSpliced) {
+  (Array.prototype as any).toSpliced = function (start: number, deleteCount: number, ...items: any[]) {
+    const copy = Array.from(this);
+    copy.splice(start, deleteCount, ...items);
+    return copy;
+  };
+}
+if (typeof Set !== 'undefined' && !(Set.prototype as any).intersection) {
+  (Set.prototype as any).intersection = function (other: any) {
+    const res = new Set();
+    for (const elem of this) {
+      if (other && (typeof other.has === 'function' ? other.has(elem) : false)) {
+        res.add(elem);
+      }
+    }
+    return res;
+  };
+}
+
+// 새 서비스 워커가 업데이트되어 활성화되면 구버전 캐시 대신 즉시 화면을 갱신
+if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!refreshing) {
+      refreshing = true;
+      window.location.reload();
+    }
+  });
 }
 
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';

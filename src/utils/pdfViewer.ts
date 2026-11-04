@@ -37,6 +37,7 @@ export async function loadPdfDocument(dataOrUrl: string, cacheKey?: string): Pro
   const cMapUrl = `${baseUrl}cmaps/`;
   const standardFontDataUrl = `${baseUrl}standard_fonts/`;
   const wasmUrl = `${baseUrl}wasm/`;
+  const iccUrl = `${baseUrl}iccs/`;
 
   // 한글(CJK) 및 스캔 문서(JBIG2, OpenJPEG) 유실 방지를 위한 필수 디코더 파라미터
   const commonParams = {
@@ -44,6 +45,7 @@ export async function loadPdfDocument(dataOrUrl: string, cacheKey?: string): Pro
     cMapPacked: true,
     standardFontDataUrl,
     wasmUrl,
+    iccUrl,
     enableXfa: true,
   };
 
