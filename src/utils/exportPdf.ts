@@ -23,6 +23,34 @@ function isSvgLandscape(svgStr: string): boolean {
 }
 
 /**
+ * 가로(Landscape, width > height)로 작성된 SVG 문서를 90도 시계방향으로 눕혀
+ * 세로 A4 규격(viewBox: 0 0 H W)에 맞추고 꽉 차게 표시하도록 변환합니다.
+ */
+function rotateSvg90Degrees(svgStr: string): string {
+  const vbMatch = svgStr.match(/viewBox=["']\s*([-\d.]+)\s+([-\d.]+)\s+([\d.]+)\s+([\d.]+)\s*["']/i);
+  if (!vbMatch) return svgStr;
+
+  const w = parseFloat(vbMatch[3]);
+  const h = parseFloat(vbMatch[4]);
+  if (w <= h) return svgStr; // 이미 세로 문서이면 회전하지 않음
+
+  const openTagEnd = svgStr.indexOf('>');
+  if (openTagEnd === -1) return svgStr;
+
+  const closeTagStart = svgStr.lastIndexOf('</svg>');
+  if (closeTagStart === -1) return svgStr;
+
+  let openTag = svgStr.slice(0, openTagEnd + 1);
+  const innerContent = svgStr.slice(openTagEnd + 1, closeTagStart);
+
+  // viewBox를 세로 비율 (0 0 H W)로 치환하고 고정 너비/높이는 제거하여 반응형으로 맞춤
+  openTag = openTag.replace(/viewBox=["'][^"']*["']/i, `viewBox="0 0 ${h} ${w}"`);
+  openTag = openTag.replace(/\s+(?:width|height)=["'][^"']*["']/gi, '');
+
+  return `${openTag}<g transform="rotate(90) translate(0, -${h})">${innerContent}</g></svg>`;
+}
+
+/**
  * 인쇄/PDF 내보내기용 첨부파일 HTML 비동기 변환기
  * PDF 및 한글(HWP) 첨부 문서를 실제 고화질 페이지 이미지/SVG로 렌더링하여 인쇄 양식에 온전히 포함시킵니다.
  * 가로(Landscape) 설정 문서는 자동으로 가로 방향 페이지(@page landscape)로 눕혀 꽉 차게 렌더링합니다.
@@ -98,7 +126,11 @@ async function renderAttachmentsForPrint(
           const page = await doc.getPage(p);
           const unscaledVp = page.getViewport({ scale: 1.0 });
           const isLandscape = unscaledVp.width > unscaledVp.height;
-          const viewport = page.getViewport({ scale: isLandscape ? 1.8 : 1.5 });
+          // 가로 문서는 90도 시계방향 회전하여 세로 A4 페이지에 꽉 차게 눕혀 렌더링
+          const viewport = page.getViewport({
+            scale: 1.6,
+            rotation: isLandscape ? 90 : 0,
+          });
           const canvas = document.createElement('canvas');
           canvas.width = viewport.width;
           canvas.height = viewport.height;
@@ -109,9 +141,9 @@ async function renderAttachmentsForPrint(
             await (page.render({ canvasContext: ctx, viewport } as any)).promise;
             const dataUrl = canvas.toDataURL('image/png');
             pagesHtml += `
-              <div class="print-doc-page ${isLandscape ? 'is-landscape' : 'is-portrait'}">
+              <div class="print-doc-page ${isLandscape ? 'is-landscape-rotated' : 'is-portrait'}">
                 <img src="${dataUrl}" alt="페이지 ${p}" />
-                <div class="print-page-number">- ${p} / ${total} 페이지 ${isLandscape ? '(가로 설정)' : ''} -</div>
+                <div class="print-page-number">- ${p} / ${total} 페이지 ${isLandscape ? '(가로 90° 눕힘)' : ''} -</div>
               </div>
             `;
           }
@@ -145,12 +177,16 @@ async function renderAttachmentsForPrint(
         const total = hwpDoc.pageCount();
         let pagesHtml = '';
         for (let p = 0; p < total; p++) {
-          const svg = renderHwpPageToSvg(hwpDoc, p);
+          let svg = renderHwpPageToSvg(hwpDoc, p);
           const isLandscape = isSvgLandscape(svg);
+          // 가로 설정 문서는 90도 회전(눕힘)하여 세로 A4 페이지에 꽉 차게 변환
+          if (isLandscape) {
+            svg = rotateSvg90Degrees(svg);
+          }
           pagesHtml += `
-            <div class="print-doc-page ${isLandscape ? 'is-landscape' : 'is-portrait'}">
+            <div class="print-doc-page ${isLandscape ? 'is-landscape-rotated' : 'is-portrait'}">
               <div class="print-hwp-svg-page">${svg}</div>
-              <div class="print-page-number">- ${p + 1} / ${total} 페이지 ${isLandscape ? '(가로 설정)' : ''} -</div>
+              <div class="print-page-number">- ${p + 1} / ${total} 페이지 ${isLandscape ? '(가로 90° 눕힘)' : ''} -</div>
             </div>
           `;
         }
@@ -246,11 +282,7 @@ export async function exportNoteToPdf(
   <style>
     @page {
       size: A4 portrait;
-      margin: 16mm 14mm 16mm 14mm;
-    }
-    @page landscape-page {
-      size: A4 landscape;
-      margin: 10mm 14mm 10mm 14mm;
+      margin: 14mm 12mm 14mm 12mm;
     }
     *, *::before, *::after {
       box-sizing: border-box;
@@ -469,67 +501,33 @@ export async function exportNoteToPdf(
       font-size: 12.5px;
       color: #1e293b;
     }
-    /* 문서 각 페이지 공통 */
+    /* 문서 각 페이지 (세로 A4 용지 1페이지에 온전히 맞춤) */
     .print-doc-page {
-      padding: 12px;
+      padding: 10px 0;
       text-align: center;
       border-bottom: 1px dashed #cbd5e1;
       box-sizing: border-box;
+      break-inside: avoid;
+      page-break-inside: avoid;
+      break-before: page;
+      page-break-before: always;
+      width: 100%;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
     }
+    .print-doc-page:first-child {
+      break-before: auto;
+      page-break-before: auto;
+    }
     .print-doc-page:last-child {
       border-bottom: none;
     }
-
-    /* 세로(Portrait) 페이지: 세로 A4 페이지에 최적화 */
-    .print-doc-page.is-portrait {
-      break-inside: avoid;
-      page-break-inside: avoid;
-    }
-    .print-doc-page.is-portrait img {
-      max-width: 100% !important;
-      max-height: 240mm !important;
-      height: auto !important;
-      border: 1px solid #cbd5e1;
-      border-radius: 4px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-      margin: 0 auto;
-      display: block;
-    }
-    .print-doc-page.is-portrait .print-hwp-svg-page {
-      width: 100%;
-      display: flex;
-      justify-content: center;
-    }
-    .print-doc-page.is-portrait .print-hwp-svg-page svg {
-      max-width: 100% !important;
-      max-height: 240mm !important;
-      height: auto !important;
-      border: 1px solid #cbd5e1;
-      border-radius: 4px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-      margin: 0 auto;
-      display: block;
-    }
-
-    /* 가로(Landscape) 페이지: 가로 A4(297mm x 210mm) 페이지 적용 및 꽉 찬 너비로 눕혀서 배치! */
-    .print-doc-page.is-landscape {
-      page: landscape-page;
-      break-before: page;
-      break-after: page;
-      page-break-before: always;
-      page-break-after: always;
-      width: 100%;
-      min-height: 180mm;
-      padding: 10px 0;
-    }
-    .print-doc-page.is-landscape img {
+    .print-doc-page img {
       width: 100% !important;
-      max-width: 268mm !important;
-      max-height: 180mm !important;
+      max-width: 100% !important;
+      max-height: 250mm !important;
       height: auto !important;
       border: 1px solid #cbd5e1;
       border-radius: 4px;
@@ -538,15 +536,16 @@ export async function exportNoteToPdf(
       display: block;
       object-fit: contain;
     }
-    .print-doc-page.is-landscape .print-hwp-svg-page {
+    .print-hwp-svg-page {
       width: 100%;
       display: flex;
       justify-content: center;
+      align-items: center;
     }
-    .print-doc-page.is-landscape .print-hwp-svg-page svg {
+    .print-hwp-svg-page svg {
       width: 100% !important;
-      max-width: 268mm !important;
-      max-height: 180mm !important;
+      max-width: 100% !important;
+      max-height: 250mm !important;
       height: auto !important;
       border: 1px solid #cbd5e1;
       border-radius: 4px;
@@ -558,7 +557,7 @@ export async function exportNoteToPdf(
       font-size: 11px;
       color: #64748b;
       font-weight: 600;
-      margin-top: 8px;
+      margin-top: 6px;
     }
 
     .print-att-card {
