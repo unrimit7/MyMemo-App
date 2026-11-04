@@ -113,3 +113,47 @@ export function extractHwpText(doc: HwpDocument): string {
     return '';
   }
 }
+
+/**
+ * SVG 문자열을 90도 단위(0, 90, 180, 270도)로 시계방향 회전하여
+ * viewBox 및 내부 좌표계를 완벽히 변환합니다.
+ */
+export function rotateSvg(svgStr: string, degrees: number): string {
+  const normalizedDeg = ((degrees % 360) + 360) % 360;
+  if (normalizedDeg === 0) return svgStr;
+
+  const vbMatch = svgStr.match(/viewBox=["']\s*([-\d.]+)\s+([-\d.]+)\s+([\d.]+)\s+([\d.]+)\s*["']/i);
+  if (!vbMatch) return svgStr;
+
+  const w = parseFloat(vbMatch[3]);
+  const h = parseFloat(vbMatch[4]);
+
+  const openTagEnd = svgStr.indexOf('>');
+  if (openTagEnd === -1) return svgStr;
+
+  const closeTagStart = svgStr.lastIndexOf('</svg>');
+  if (closeTagStart === -1) return svgStr;
+
+  let openTag = svgStr.slice(0, openTagEnd + 1);
+  const innerContent = svgStr.slice(openTagEnd + 1, closeTagStart);
+
+  let newVb = '';
+  let transform = '';
+
+  if (normalizedDeg === 90) {
+    newVb = `0 0 ${h} ${w}`;
+    transform = `rotate(90) translate(0, -${h})`;
+  } else if (normalizedDeg === 180) {
+    newVb = `0 0 ${w} ${h}`;
+    transform = `rotate(180) translate(-${w}, -${h})`;
+  } else if (normalizedDeg === 270) {
+    newVb = `0 0 ${h} ${w}`;
+    transform = `rotate(270) translate(-${w}, 0)`;
+  }
+
+  openTag = openTag.replace(/viewBox=["'][^"']*["']/i, `viewBox="${newVb}"`);
+  openTag = openTag.replace(/\s+(?:width|height)=["'][^"']*["']/gi, '');
+
+  return `${openTag}<g transform="${transform}">${innerContent}</g></svg>`;
+}
+

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Download } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Download, RotateCw } from 'lucide-react';
 import { loadPdfDocument, renderPdfPageToCanvas } from '../utils/pdfViewer';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
@@ -23,6 +23,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
   const [totalPages, setTotalPages] = useState<number>(1);
   const [zoom, setZoom] = useState<number>(1.0);
   const [renderedZoom, setRenderedZoom] = useState<number>(1.0);
+  const [rotation, setRotation] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [renderError, setRenderError] = useState<string | null>(null);
 
@@ -41,6 +42,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
     setCurrentPage(initialPage);
     setZoom(1.0);
     setRenderedZoom(1.0);
+    setRotation(0);
 
     loadPdfDocument(data)
       .then((doc) => {
@@ -75,7 +77,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
     };
   }, [zoom]);
 
-  // 페이지 및 줌 배율 변경 시 캔버스 렌더링
+  // 페이지, 줌 배율 및 회전각 변경 시 캔버스 렌더링
   useEffect(() => {
     if (!isOpen || !pdfDoc || !canvasRef.current) return;
 
@@ -84,7 +86,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
     const containerWidth = containerRef.current?.clientWidth || window.innerWidth;
     const baseWidth = Math.min(Math.max(260, containerWidth - 24), 850);
 
-    renderPdfPageToCanvas(pdfDoc, currentPage, canvas, baseWidth, renderedZoom)
+    renderPdfPageToCanvas(pdfDoc, currentPage, canvas, baseWidth, renderedZoom, rotation)
       .catch((err) => {
         if (isMounted) {
           console.error('PDF 페이지 렌더링 실패:', err);
@@ -94,9 +96,9 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, pdfDoc, currentPage, renderedZoom]);
+  }, [isOpen, pdfDoc, currentPage, renderedZoom, rotation]);
 
-  // 터치 제스처 (스마트폰 두 손가락 핀치 줌: 20% 아주 작게 ~ 400% 아주 크게)
+  // 터치 제스처 (스마트폰 두 손가락 핀치 줌: 20% 아주 작게 ~ 500% 아주 크게)
   const touchStartDistRef = useRef<number | null>(null);
   const touchStartZoomRef = useRef<number>(1.0);
 
@@ -122,7 +124,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
         e.preventDefault(); // 브라우저 자체 제스처 간섭 방지
         const currentDist = getDistance(e.touches[0], e.touches[1]);
         const scaleRatio = currentDist / touchStartDistRef.current;
-        const newZoom = Math.min(4.0, Math.max(0.2, Math.round(touchStartZoomRef.current * scaleRatio * 100) / 100));
+        const newZoom = Math.min(5.0, Math.max(0.2, Math.round(touchStartZoomRef.current * scaleRatio * 100) / 100));
         setZoom(newZoom);
       }
     };
@@ -146,7 +148,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
     };
   }, [zoom]);
 
-  // PC: Ctrl + 마우스 휠 및 노트북 트랙패드 핀치 줌 지원 (20% ~ 400%)
+  // PC: Ctrl + 마우스 휠 및 노트북 트랙패드 핀치 줌 지원 (20% ~ 500%)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -155,7 +157,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         const factor = e.deltaY < 0 ? 1.15 : 0.85;
-        setZoom((prev) => Math.min(4.0, Math.max(0.2, Math.round(prev * factor * 100) / 100)));
+        setZoom((prev) => Math.min(5.0, Math.max(0.2, Math.round(prev * factor * 100) / 100)));
       }
     };
 
@@ -172,7 +174,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
     lastTapRef.current = now;
   }, []);
 
-  // Esc 키 닫기 및 키보드 좌/우 페이지 이동
+  // Esc 키 닫기 및 키보드 좌/우 페이지 이동, R 회전
   useEffect(() => {
     if (!isOpen) return;
 
@@ -183,6 +185,8 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
         setCurrentPage((prev) => Math.max(1, prev - 1));
       } else if (e.key === 'ArrowRight') {
         setCurrentPage((prev) => Math.min(totalPages, prev + 1));
+      } else if (e.key.toLowerCase() === 'r') {
+        setRotation((r) => (r + 90) % 360);
       }
     };
 
@@ -213,7 +217,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
   const handleZoomIn = () => {
     setZoom((z) => {
       const step = z < 0.6 ? 0.1 : 0.2;
-      return Math.min(4.0, Math.round((z + step) * 10) / 10);
+      return Math.min(5.0, Math.round((z + step) * 10) / 10);
     });
   };
 
@@ -229,7 +233,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
       {/* 상단 툴바 (모바일/PC 모두 터치 친화적 컴팩트 배치) */}
       <div className="flex items-center justify-between gap-1 sm:gap-2 px-2 sm:px-4 py-2 bg-slate-900 border-b border-slate-800 text-slate-200 shrink-0 z-10 shadow-lg">
         {/* 제목 */}
-        <div className="flex items-center gap-1.5 min-w-0 max-w-[110px] xs:max-w-[150px] sm:max-w-xs md:max-w-md">
+        <div className="flex items-center gap-1.5 min-w-0 max-w-[100px] xs:max-w-[140px] sm:max-w-xs md:max-w-md">
           <span className="text-base sm:text-lg shrink-0">📄</span>
           <span className="font-bold text-xs sm:text-sm truncate text-slate-100" title={title}>
             {title}
@@ -263,7 +267,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
           </button>
         </div>
 
-        {/* 줌 배율 컨트롤 (모바일 & PC 공통 표시: 20% ~ 400% 자유 조절) */}
+        {/* 줌 배율 컨트롤 (20% 아주 작게 ~ 500% 아주 크게) & 회전 버튼 */}
         <div className="flex items-center gap-0.5 sm:gap-1 bg-slate-950/80 border border-slate-800 rounded-lg px-1 py-0.5 shrink-0">
           <button
             type="button"
@@ -287,9 +291,20 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
             type="button"
             onClick={handleZoomIn}
             className="p-1 sm:p-1.5 hover:bg-slate-800 text-slate-300 rounded transition-colors active:scale-95"
-            title="확대 (최대 400%까지 아주 크게 보기)"
+            title="확대 (최대 500%까지 자유롭게 확대하여 글씨 읽기)"
           >
             <ZoomIn size={14} className="sm:w-4 sm:h-4" />
+          </button>
+
+          {/* 90도 회전 버튼 */}
+          <button
+            type="button"
+            onClick={() => setRotation((r) => (r + 90) % 360)}
+            className="p-1 sm:p-1.5 hover:bg-slate-800 text-amber-300 hover:text-amber-200 rounded transition-colors active:scale-95 flex items-center gap-0.5 border-l border-slate-800 pl-1.5 ml-0.5"
+            title="90도 회전 (가로 문서를 세로로 눕혀서 보기)"
+          >
+            <RotateCw size={13} className="sm:w-3.5 sm:h-3.5" />
+            <span className="text-[10px] font-bold">{rotation ? `${rotation}°` : '회전'}</span>
           </button>
         </div>
 
@@ -316,45 +331,47 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
         </div>
       </div>
 
-      {/* 캔버스 뷰어 본체 (가로/세로 자유 스크롤 및 핀치 줌 지원) */}
+      {/* 캔버스 뷰어 본체 (화면 너비에 갇히지 않고 줌 배율대로 자유 확대 & 가로/세로 스크롤) */}
       <div 
         ref={containerRef}
         onClick={handleDoubleTap}
-        className="flex-1 overflow-auto p-2 sm:p-4 md:p-6 flex items-start justify-center bg-slate-950 cursor-grab active:cursor-grabbing touch-pan-x touch-pan-y"
+        className="flex-1 overflow-auto bg-slate-950 p-2 sm:p-4 touch-pan-x touch-pan-y relative"
       >
-        {isLoading && (
-          <div className="flex flex-col items-center justify-center h-64 gap-3 text-slate-400 text-sm m-auto">
-            <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-            <span>PDF 문서를 렌더링하는 중입니다...</span>
-          </div>
-        )}
+        <div className="min-w-full min-h-full flex items-center justify-center p-1 sm:p-3">
+          {isLoading && (
+            <div className="flex flex-col items-center justify-center h-64 gap-3 text-slate-400 text-sm m-auto">
+              <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+              <span>PDF 문서를 렌더링하는 중입니다...</span>
+            </div>
+          )}
 
-        {renderError && (
-          <div className="p-6 bg-rose-950/40 border border-rose-800 rounded-2xl text-center text-rose-300 space-y-2 max-w-md m-auto">
-            <p className="font-bold text-sm">⚠️ {renderError}</p>
-            <button
-              type="button"
-              onClick={handleDownload}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold"
-            >
-              기기 다운로드로 열기
-            </button>
-          </div>
-        )}
+          {renderError && (
+            <div className="p-6 bg-rose-950/40 border border-rose-800 rounded-2xl text-center text-rose-300 space-y-2 max-w-md m-auto">
+              <p className="font-bold text-sm">⚠️ {renderError}</p>
+              <button
+                type="button"
+                onClick={handleDownload}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold"
+              >
+                기기 다운로드로 열기
+              </button>
+            </div>
+          )}
 
-        <div 
-          className={`m-auto transition-opacity duration-150 ${isLoading || renderError ? 'hidden' : 'block'}`}
-          style={{
-            transform: visualScale !== 1.0 ? `scale(${visualScale})` : undefined,
-            transformOrigin: 'top center',
-            transition: 'transform 75ms ease-out',
-          }}
-        >
-          <canvas
-            ref={canvasRef}
-            style={{ maxWidth: 'none' }}
-            className="rounded-xl shadow-2xl bg-white block m-auto"
-          />
+          <div 
+            className={`shrink-0 transition-opacity duration-150 ${isLoading || renderError ? 'hidden' : 'block'}`}
+            style={{
+              transform: visualScale !== 1.0 ? `scale(${visualScale})` : undefined,
+              transformOrigin: 'center center',
+              transition: 'transform 75ms ease-out',
+            }}
+          >
+            <canvas
+              ref={canvasRef}
+              style={{ maxWidth: 'none', display: 'block' }}
+              className="rounded-xl shadow-2xl bg-white"
+            />
+          </div>
         </div>
       </div>
     </div>

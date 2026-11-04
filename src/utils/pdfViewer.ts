@@ -123,7 +123,8 @@ export async function renderPdfPageToCanvas(
   pageNumber: number,
   canvas: HTMLCanvasElement,
   targetWidth?: number,
-  zoomScale: number = 1.0
+  zoomScale: number = 1.0,
+  rotationOffset: number = 0
 ): Promise<{ width: number; height: number }> {
   // 이전 렌더링 태스크가 진행 중이면 취소하여 캔버스 충돌 방지
   if (activeRenderTasks.has(canvas)) {
@@ -136,7 +137,8 @@ export async function renderPdfPageToCanvas(
   }
 
   const page = await pdfDoc.getPage(pageNumber);
-  const unscaledViewport = page.getViewport({ scale: 1.0 });
+  const effectiveRotation = (((page.rotate || 0) + rotationOffset) % 360 + 360) % 360;
+  const unscaledViewport = page.getViewport({ scale: 1.0, rotation: effectiveRotation });
 
   // 화면 가로폭에 맞춘 반응형 스케일 계산
   let baseScale = 1.0;
@@ -147,7 +149,7 @@ export async function renderPdfPageToCanvas(
   }
 
   const finalScale = baseScale * zoomScale;
-  const viewport = page.getViewport({ scale: finalScale });
+  const viewport = page.getViewport({ scale: finalScale, rotation: effectiveRotation });
 
   // 모바일 레티나 및 고해상도 모니터 선명도 보정 (안전 범위 2.0 제한)
   let dpr = Math.min(window.devicePixelRatio || 1, 2.0);
