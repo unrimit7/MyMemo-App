@@ -4,8 +4,28 @@ import { loadPdfDocument } from './pdfViewer';
 import { loadHwpDocument, renderHwpPageToSvg } from './hwpViewer';
 
 /**
+ * SVG 문자열에서 viewBox 또는 width/height를 파싱하여 가로(Landscape) 여부를 판별합니다.
+ */
+function isSvgLandscape(svgStr: string): boolean {
+  if (!svgStr) return false;
+  const vbMatch = svgStr.match(/viewBox=["']\s*([-\d.]+)\s+([-\d.]+)\s+([\d.]+)\s+([\d.]+)\s*["']/i);
+  if (vbMatch) {
+    const w = parseFloat(vbMatch[3]);
+    const h = parseFloat(vbMatch[4]);
+    return w > h;
+  }
+  const wMatch = svgStr.match(/width=["']([\d.]+)p?[xt]?["']/i);
+  const hMatch = svgStr.match(/height=["']([\d.]+)p?[xt]?["']/i);
+  if (wMatch && hMatch) {
+    return parseFloat(wMatch[1]) > parseFloat(hMatch[1]);
+  }
+  return false;
+}
+
+/**
  * 인쇄/PDF 내보내기용 첨부파일 HTML 비동기 변환기
  * PDF 및 한글(HWP) 첨부 문서를 실제 고화질 페이지 이미지/SVG로 렌더링하여 인쇄 양식에 온전히 포함시킵니다.
+ * 가로(Landscape) 설정 문서는 자동으로 가로 방향 페이지(@page landscape)로 눕혀 꽉 차게 렌더링합니다.
  */
 async function renderAttachmentsForPrint(
   html: string,
@@ -76,7 +96,9 @@ async function renderAttachmentsForPrint(
         let pagesHtml = '';
         for (let p = 1; p <= total; p++) {
           const page = await doc.getPage(p);
-          const viewport = page.getViewport({ scale: 1.5 });
+          const unscaledVp = page.getViewport({ scale: 1.0 });
+          const isLandscape = unscaledVp.width > unscaledVp.height;
+          const viewport = page.getViewport({ scale: isLandscape ? 1.8 : 1.5 });
           const canvas = document.createElement('canvas');
           canvas.width = viewport.width;
           canvas.height = viewport.height;
@@ -87,9 +109,9 @@ async function renderAttachmentsForPrint(
             await (page.render({ canvasContext: ctx, viewport } as any)).promise;
             const dataUrl = canvas.toDataURL('image/png');
             pagesHtml += `
-              <div class="print-doc-page">
+              <div class="print-doc-page ${isLandscape ? 'is-landscape' : 'is-portrait'}">
                 <img src="${dataUrl}" alt="페이지 ${p}" />
-                <div class="print-page-number">- ${p} / ${total} 페이지 -</div>
+                <div class="print-page-number">- ${p} / ${total} 페이지 ${isLandscape ? '(가로 설정)' : ''} -</div>
               </div>
             `;
           }
@@ -124,10 +146,11 @@ async function renderAttachmentsForPrint(
         let pagesHtml = '';
         for (let p = 0; p < total; p++) {
           const svg = renderHwpPageToSvg(hwpDoc, p);
+          const isLandscape = isSvgLandscape(svg);
           pagesHtml += `
-            <div class="print-doc-page">
+            <div class="print-doc-page ${isLandscape ? 'is-landscape' : 'is-portrait'}">
               <div class="print-hwp-svg-page">${svg}</div>
-              <div class="print-page-number">- ${p + 1} / ${total} 페이지 -</div>
+              <div class="print-page-number">- ${p + 1} / ${total} 페이지 ${isLandscape ? '(가로 설정)' : ''} -</div>
             </div>
           `;
         }
@@ -223,7 +246,11 @@ export async function exportNoteToPdf(
   <style>
     @page {
       size: A4 portrait;
-      margin: 18mm 15mm 20mm 15mm;
+      margin: 16mm 14mm 16mm 14mm;
+    }
+    @page landscape-page {
+      size: A4 landscape;
+      margin: 10mm 14mm 10mm 14mm;
     }
     *, *::before, *::after {
       box-sizing: border-box;
@@ -442,18 +469,29 @@ export async function exportNoteToPdf(
       font-size: 12.5px;
       color: #1e293b;
     }
+    /* 문서 각 페이지 공통 */
     .print-doc-page {
-      padding: 16px 12px;
+      padding: 12px;
       text-align: center;
       border-bottom: 1px dashed #cbd5e1;
-      break-inside: avoid;
-      page-break-inside: avoid;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
     }
     .print-doc-page:last-child {
       border-bottom: none;
     }
-    .print-doc-page img {
+
+    /* 세로(Portrait) 페이지: 세로 A4 페이지에 최적화 */
+    .print-doc-page.is-portrait {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .print-doc-page.is-portrait img {
       max-width: 100% !important;
+      max-height: 240mm !important;
       height: auto !important;
       border: 1px solid #cbd5e1;
       border-radius: 4px;
@@ -461,14 +499,54 @@ export async function exportNoteToPdf(
       margin: 0 auto;
       display: block;
     }
-    .print-hwp-svg-page {
+    .print-doc-page.is-portrait .print-hwp-svg-page {
       width: 100%;
-      overflow: hidden;
       display: flex;
       justify-content: center;
     }
-    .print-hwp-svg-page svg {
+    .print-doc-page.is-portrait .print-hwp-svg-page svg {
       max-width: 100% !important;
+      max-height: 240mm !important;
+      height: auto !important;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      margin: 0 auto;
+      display: block;
+    }
+
+    /* 가로(Landscape) 페이지: 가로 A4(297mm x 210mm) 페이지 적용 및 꽉 찬 너비로 눕혀서 배치! */
+    .print-doc-page.is-landscape {
+      page: landscape-page;
+      break-before: page;
+      break-after: page;
+      page-break-before: always;
+      page-break-after: always;
+      width: 100%;
+      min-height: 180mm;
+      padding: 10px 0;
+    }
+    .print-doc-page.is-landscape img {
+      width: 100% !important;
+      max-width: 268mm !important;
+      max-height: 180mm !important;
+      height: auto !important;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      margin: 0 auto;
+      display: block;
+      object-fit: contain;
+    }
+    .print-doc-page.is-landscape .print-hwp-svg-page {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+    }
+    .print-doc-page.is-landscape .print-hwp-svg-page svg {
+      width: 100% !important;
+      max-width: 268mm !important;
+      max-height: 180mm !important;
       height: auto !important;
       border: 1px solid #cbd5e1;
       border-radius: 4px;
