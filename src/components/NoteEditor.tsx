@@ -7,7 +7,8 @@ import { cleanLegacyAttachments, renderAttachmentsInHtml, invalidateAttachmentBl
 import { exportNoteToPdf } from '../utils/exportPdf';
 import { getFolderHierarchyPath, updateTitleWithFolderPath } from '../utils/folderPath';
 import { PdfViewerModal } from './PdfViewerModal';
-import { loadPdfDocument, renderPdfPageToCanvas, extractPdfText } from '../utils/pdfViewer';
+import { PdfEditorModal } from './PdfEditorModal';
+import { loadPdfDocument, renderPdfPageToCanvas, extractPdfText, invalidatePdfCache } from '../utils/pdfViewer';
 import { HwpViewerModal } from './HwpViewerModal';
 import { HwpEditorModal } from './HwpEditorModal';
 import { loadHwpDocument, renderHwpPageToSvg, extractHwpText, invalidateHwpCache } from '../utils/hwpViewer';
@@ -135,6 +136,12 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<{ attId: string; src: string; alt: string } | null>(null);
   const [activePdfModal, setActivePdfModal] = useState<{
+    data: string;
+    title: string;
+    initialPage: number;
+  } | null>(null);
+  const [activePdfEditorModal, setActivePdfEditorModal] = useState<{
+    attId: string;
     data: string;
     title: string;
     initialPage: number;
@@ -588,8 +595,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   }, [renderedPreviewHtml]);
 
   // 인라인 PDF 페이지 렌더링 핸들러
-  const renderInlinePdf = useRef<(attId: string) => void>(() => {});
-  renderInlinePdf.current = (attId: string) => {
+  const renderInlinePdf = useRef<(attId: string, customData?: string) => void>(() => {});
+  renderInlinePdf.current = (attId: string, customData?: string) => {
     const preview = previewContainerRef.current;
     if (!preview) return;
 
@@ -597,7 +604,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     if (!viewer) return;
 
     const att = localAttachments[attId];
-    if (!att || !att.data) return;
+    const dataToUse = customData || att?.data;
+    if (!dataToUse) return;
 
     const canvas = viewer.querySelector<HTMLCanvasElement>(`#pdf-canvas-${attId}`);
     const loadingBox = viewer.querySelector<HTMLElement>(`#pdf-loading-${attId}`);
@@ -607,7 +615,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
     const currentPage = pdfPagesRef.current.get(attId) || 1;
 
-    loadPdfDocument(att.data, attId)
+    loadPdfDocument(dataToUse, attId)
       .then((doc) => {
         const total = doc.numPages;
         if (pageIndicator) pageIndicator.textContent = `${currentPage} / ${total}`;
@@ -1890,6 +1898,25 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       return;
     }
 
+    // 4-1. PDF [✏️ 주석/서명] 버튼 클릭 시 PDF 주석 편집기 모달 열기
+    const editPdfBtn = target.closest<HTMLElement>('.pdf-btn-edit');
+    if (editPdfBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = editPdfBtn.getAttribute('data-att-id');
+      const title = editPdfBtn.getAttribute('data-file-name') || 'PDF 문서';
+      if (attId && localAttachments[attId]) {
+        const curr = pdfPagesRef.current.get(attId) || 1;
+        setActivePdfEditorModal({
+          attId,
+          data: localAttachments[attId].data,
+          title,
+          initialPage: curr,
+        });
+      }
+      return;
+    }
+
     // 5. HWP 인라인 이전/다음 페이지 버튼 클릭
     const prevHwpBtn = target.closest<HTMLButtonElement>('.hwp-btn-prev');
     if (prevHwpBtn) {
@@ -2869,6 +2896,60 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           data={activePdfModal.data}
           title={activePdfModal.title}
           initialPage={activePdfModal.initialPage}
+          onOpenEditor={() => {
+            const attId = Object.keys(localAttachments).find(
+              (id) => localAttachments[id].data === activePdfModal.data
+            ) || '';
+            setActivePdfEditorModal({
+              attId,
+              data: activePdfModal.data,
+              title: activePdfModal.title,
+              initialPage: activePdfModal.initialPage || 1,
+            });
+            setActivePdfModal(null);
+          }}
+        />
+      )}
+
+      {/* PDF 주석 및 서명 직접 편집기 모달 */}
+      {activePdfEditorModal && (
+        <PdfEditorModal
+          isOpen={true}
+          onClose={() => setActivePdfEditorModal(null)}
+          data={activePdfEditorModal.data}
+          title={activePdfEditorModal.title}
+          attId={activePdfEditorModal.attId}
+          initialPage={activePdfEditorModal.initialPage}
+          onSave={async (updatedDataUrl) => {
+            const attId = activePdfEditorModal.attId;
+            if (attId) {
+              // 1. 기존 PDF 캐시 및 Blob URL 캐시 즉시 무효화 (새 파일 재로드 보장)
+              invalidatePdfCache(attId);
+              invalidateAttachmentBlobUrl(attId);
+
+              // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장
+              const updatedAtts = {
+                ...localAttachments,
+                [attId]: {
+                  ...(localAttachments[attId] || {}),
+                  data: updatedDataUrl,
+                },
+              };
+              setLocalAttachments(updatedAtts);
+              onUpdateNote({ attachments: updatedAtts });
+
+              // 3. 편집 모달의 내부 데이터 상태도 최신으로 동기화
+              setActivePdfEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
+
+              // 4. 인라인 뷰어에 새 데이터 URL을 즉시 전달하여 재로드 & 재렌더링
+              renderInlinePdf.current(attId, updatedDataUrl);
+
+              // 5. 마크다운 HTML 재계산 및 DOM 갱신 후 한 번 더 보장 렌더링
+              setTimeout(() => {
+                renderInlinePdf.current(attId, updatedDataUrl);
+              }, 120);
+            }
+          }}
         />
       )}
 

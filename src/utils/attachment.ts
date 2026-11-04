@@ -175,6 +175,11 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
         <button type="button" class="pdf-btn-next px-1.5 py-0.5 hover:text-white hover:bg-slate-800 rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent" data-att-id="${att.id}" title="다음 페이지">▶</button>
       </div>
 
+      <!-- PDF 직접 주석/서명 편집 버튼 -->
+      <button type="button" class="pdf-btn-edit px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 rounded-lg text-xs font-semibold border border-emerald-500/30 flex items-center gap-1 active:scale-95 transition-all" data-att-id="${att.id}" data-file-name="${displayName}" title="PDF 위에 텍스트 입력, 형광펜, 펜 드로잉, 서명/도장 편집">
+        <span>✏️ 주석/서명</span>
+      </button>
+
       <!-- 본문 메모로 가져오기 버튼 -->
       <button type="button" class="pdf-btn-import px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white rounded-lg text-xs font-semibold border border-indigo-500/40 flex items-center gap-1 active:scale-95 transition-all" data-att-id="${att.id}" data-file-name="${displayName}" title="PDF 문서의 텍스트를 마크다운 본문으로 가져오기">
         <span>📝 메모로 가져오기</span>

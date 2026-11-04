@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Download, RotateCw } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Download, RotateCw, Edit3 } from 'lucide-react';
 import { loadPdfDocument, renderPdfPageToCanvas } from '../utils/pdfViewer';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
@@ -9,6 +9,7 @@ interface PdfViewerModalProps {
   data: string;
   title: string;
   initialPage?: number;
+  onOpenEditor?: () => void;
 }
 
 export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
@@ -17,6 +18,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
   data,
   title,
   initialPage = 1,
+  onOpenEditor,
 }) => {
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(initialPage);
@@ -364,8 +366,20 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
           </button>
         </div>
 
-        {/* 액션 컨트롤 (다운로드 & 닫기) */}
+        {/* 액션 컨트롤 (편집, 다운로드 & 닫기) */}
         <div className="flex items-center gap-1 shrink-0">
+          {onOpenEditor && (
+            <button
+              type="button"
+              onClick={onOpenEditor}
+              className="flex items-center gap-1 p-1.5 sm:px-2.5 sm:py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 rounded-lg text-xs font-semibold border border-emerald-500/30 transition-all active:scale-95"
+              title="PDF 문서 위에 텍스트 입력, 형광펜, 펜 드로잉, 서명/도장 편집"
+            >
+              <Edit3 size={14} />
+              <span className="hidden sm:inline">주석/서명</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={handleDownload}

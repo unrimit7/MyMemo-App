@@ -54,6 +54,36 @@ if (typeof window !== 'undefined' && 'GlobalWorkerOptions' in pdfjsLib) {
 // PDF 문서 캐시 (중복 파싱 방지)
 const pdfDocCache = new Map<string, PDFDocumentProxy>();
 
+/**
+ * 특정 첨부파일 ID 또는 전체 PDF 캐시를 무효화(삭제)합니다.
+ */
+export function invalidatePdfCache(cacheKey?: string): void {
+  if (cacheKey) {
+    for (const key of Array.from(pdfDocCache.keys())) {
+      if (key === cacheKey || key.startsWith(`${cacheKey}_`)) {
+        try {
+          const doc = pdfDocCache.get(key) as any;
+          doc?.destroy?.();
+          doc?.cleanup?.();
+        } catch {
+          // ignore
+        }
+        pdfDocCache.delete(key);
+      }
+    }
+  } else {
+    pdfDocCache.forEach((doc: any) => {
+      try {
+        doc?.destroy?.();
+        doc?.cleanup?.();
+      } catch {
+        // ignore
+      }
+    });
+    pdfDocCache.clear();
+  }
+}
+
 // 진행 중인 캔버스 렌더링 태스크 추적 (다중 렌더링 충돌 취소 방지)
 const activeRenderTasks = new WeakMap<HTMLCanvasElement, any>();
 
@@ -72,7 +102,9 @@ function getAssetBaseUrl(): string {
 }
 
 export async function loadPdfDocument(dataOrUrl: string, cacheKey?: string): Promise<PDFDocumentProxy> {
-  const key = cacheKey || dataOrUrl.slice(0, 80);
+  // 데이터 내용의 길이와 서명을 포함시켜 내용이 수정되면 자동으로 새 캐시 키가 생성되도록 보장
+  const dataSignature = `${dataOrUrl.length}_${dataOrUrl.slice(-32)}`;
+  const key = cacheKey ? `${cacheKey}_${dataSignature}` : dataOrUrl.slice(0, 80);
   if (pdfDocCache.has(key)) {
     return pdfDocCache.get(key)!;
   }
