@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@rhwp/core": "^0.8.7",
+    "@rhwp/editor": "^0.8.7",
     "idb": "^8.0.4",
     "lucide-react": "^1.64.0",
     "marked": "^18.1.2",

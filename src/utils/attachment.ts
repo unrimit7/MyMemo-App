@@ -86,9 +86,14 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
         <button type="button" class="hwp-btn-next px-1.5 py-0.5 hover:text-white hover:bg-slate-800 rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent" data-att-id="${att.id}" title="다음 페이지">▶</button>
       </div>
 
+      <!-- 한글 직접 편집 버튼 -->
+      <button type="button" class="hwp-btn-edit px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 rounded-lg text-xs font-semibold border border-emerald-500/30 flex items-center gap-1 active:scale-95 transition-all" data-att-id="${att.id}" data-file-name="${displayName}" title="한글 문서 원본을 웹에서 직접 수정/편집">
+        <span>✏️ 직접 편집</span>
+      </button>
+
       <!-- 본문 메모로 가져오기 버튼 -->
       <button type="button" class="hwp-btn-import px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white rounded-lg text-xs font-semibold border border-indigo-500/40 flex items-center gap-1 active:scale-95 transition-all" data-att-id="${att.id}" data-file-name="${displayName}" title="한글 문서 내용을 마크다운 본문으로 가져오기">
-        <span>📝 메모로 가져오기</span>
+        <span>📝 가져오기</span>
       </button>
 
       <!-- 전면 뷰어로 크게 보기 버튼 -->

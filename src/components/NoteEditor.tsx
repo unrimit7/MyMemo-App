@@ -9,6 +9,7 @@ import { getFolderHierarchyPath, updateTitleWithFolderPath } from '../utils/fold
 import { PdfViewerModal } from './PdfViewerModal';
 import { loadPdfDocument, renderPdfPageToCanvas, extractPdfText } from '../utils/pdfViewer';
 import { HwpViewerModal } from './HwpViewerModal';
+import { HwpEditorModal } from './HwpEditorModal';
 import { loadHwpDocument, renderHwpPageToSvg, extractHwpText } from '../utils/hwpViewer';
 import type { AttachmentItem } from '../types';
 import { 
@@ -142,6 +143,11 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     data: string;
     title: string;
     initialPage: number;
+  } | null>(null);
+  const [activeHwpEditorModal, setActiveHwpEditorModal] = useState<{
+    attId: string;
+    data: string;
+    title: string;
   } | null>(null);
   const pdfPagesRef = useRef<Map<string, number>>(new Map());
   const hwpPagesRef = useRef<Map<string, number>>(new Map());
@@ -1912,6 +1918,23 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       return;
     }
 
+    // 5-1. HWP [✏️ 직접 편집] 버튼 클릭 시 웹 한글 에디터 모달 열기
+    const editHwpBtn = target.closest<HTMLElement>('.hwp-btn-edit');
+    if (editHwpBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = editHwpBtn.getAttribute('data-att-id');
+      const title = editHwpBtn.getAttribute('data-file-name') || '한글 문서';
+      if (attId && localAttachments[attId]) {
+        setActiveHwpEditorModal({
+          attId,
+          data: localAttachments[attId].data,
+          title,
+        });
+      }
+      return;
+    }
+
     // 6. HWP 뷰어 클릭 또는 [🔍 크게 보기] 클릭 시 전면 모달 열기
     const fullscreenHwpBtn = target.closest<HTMLElement>('.hwp-btn-fullscreen') || target.closest<HTMLElement>('.hwp-svg-container');
     if (fullscreenHwpBtn) {
@@ -2848,7 +2871,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         />
       )}
 
-      {/* 한글(HWP/HWPX) 전면 뷰어 모달 (모바일/PC 어디서나 열람 & 텍스트 추출) */}
+      {/* 한글(HWP/HWPX) 전면 뷰어 모달 (모바일/PC 어디서나 열람 & 텍스트 추출 & 직접 편집 연동) */}
       {activeHwpModal && (
         <HwpViewerModal
           isOpen={true}
@@ -2856,6 +2879,46 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           data={activeHwpModal.data}
           title={activeHwpModal.title}
           initialPage={activeHwpModal.initialPage}
+          onOpenEditor={() => {
+            const attId = Object.keys(localAttachments).find(
+              (id) => localAttachments[id].data === activeHwpModal.data
+            ) || '';
+            setActiveHwpEditorModal({
+              attId,
+              data: activeHwpModal.data,
+              title: activeHwpModal.title,
+            });
+            setActiveHwpModal(null);
+          }}
+        />
+      )}
+
+      {/* 한글(HWP/HWPX) 웹 직접 편집기 모달 (문서 원본 직접 수정 및 메모 자동 저장) */}
+      {activeHwpEditorModal && (
+        <HwpEditorModal
+          isOpen={true}
+          onClose={() => setActiveHwpEditorModal(null)}
+          data={activeHwpEditorModal.data}
+          title={activeHwpEditorModal.title}
+          attId={activeHwpEditorModal.attId}
+          onSave={async (updatedDataUrl) => {
+            const attId = activeHwpEditorModal.attId;
+            if (attId && localAttachments[attId]) {
+              const updatedAtts = {
+                ...localAttachments,
+                [attId]: {
+                  ...localAttachments[attId],
+                  data: updatedDataUrl,
+                },
+              };
+              setLocalAttachments(updatedAtts);
+              onUpdateNote({ attachments: updatedAtts });
+              // 인라인 뷰어 재렌더링 트리거
+              setTimeout(() => {
+                renderInlineHwp.current(attId);
+              }, 150);
+            }
+          }}
         />
       )}
 

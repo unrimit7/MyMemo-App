@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Download, FileText, Check, RotateCw } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Download, FileText, Check, RotateCw, Edit3 } from 'lucide-react';
 import { loadHwpDocument, renderHwpPageToSvg, extractHwpText, rotateSvg } from '../utils/hwpViewer';
 import type { HwpDocument } from '@rhwp/core';
 
@@ -10,6 +10,7 @@ interface HwpViewerModalProps {
   title: string;
   initialPage?: number;
   onImportText?: (text: string) => void;
+  onOpenEditor?: () => void;
 }
 
 export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
@@ -19,6 +20,7 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
   title,
   initialPage = 1,
   onImportText,
+  onOpenEditor,
 }) => {
   const [hwpDoc, setHwpDoc] = useState<HwpDocument | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(initialPage);
@@ -371,8 +373,20 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
           </button>
         </div>
 
-        {/* 액션 컨트롤 (본문 복사, 다운로드 & 닫기) */}
+        {/* 액션 컨트롤 (직접 편집, 본문 복사, 다운로드 & 닫기) */}
         <div className="flex items-center gap-1 shrink-0">
+          {onOpenEditor && (
+            <button
+              type="button"
+              onClick={onOpenEditor}
+              className="flex items-center gap-1 p-1.5 sm:px-2.5 sm:py-1.5 bg-emerald-600/30 hover:bg-emerald-600 text-emerald-200 hover:text-white rounded-lg text-xs font-semibold border border-emerald-500/40 transition-all active:scale-95 shadow-xs"
+              title="한글 문서 웹 직접 편집기로 열기"
+            >
+              <Edit3 size={14} className="text-emerald-400" />
+              <span className="hidden md:inline">직접 편집</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={handleImportToMemo}
