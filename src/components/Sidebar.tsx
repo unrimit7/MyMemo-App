@@ -527,7 +527,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         className={`
           fixed md:static inset-y-0 left-0 z-50
           ${!width ? 'w-72' : 'w-72 md:w-auto'} bg-slate-950 border-r border-slate-800
-          flex flex-col h-full shrink-0
+          flex flex-col h-full shrink-0 min-h-0
           ${isResizing ? 'select-none transition-none' : 'transition-transform duration-200 ease-in-out'}
           ${isOpenMobile ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
           ${isCollapsed ? 'md:hidden' : 'md:flex'}
@@ -689,7 +689,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}
 
         {/* 폴더 리스트 */}
-        <div className="flex-1 overflow-y-auto px-2 space-y-1">
+        <div className="flex-1 min-h-0 overflow-y-auto px-2 space-y-1">
           {/* 전체 메모 보기 */}
           <button
             onClick={() => {

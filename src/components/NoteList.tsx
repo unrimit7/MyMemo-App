@@ -127,7 +127,7 @@ export const NoteList: React.FC<NoteListProps> = ({
 
   return (
     <div 
-      className={`w-full bg-slate-900 border-r border-slate-800 flex flex-col h-full transition-colors ${
+      className={`w-full bg-slate-900 border-r border-slate-800 flex flex-col h-full min-h-0 transition-colors ${
         isDragOverList ? 'ring-2 ring-indigo-500 ring-inset bg-indigo-950/20' : ''
       }`}
       onDragOver={(e) => {
@@ -272,51 +272,51 @@ export const NoteList: React.FC<NoteListProps> = ({
         </button>
       </div>
 
-      {/* 하위 폴더 섹션: 메인 폴더 접속 시 안의 폴더가 나오도록 표시 */}
-      {subprojects.length > 0 && !searchQuery.trim() && (
-        <div className="p-2.5 border-b border-slate-800/80 bg-slate-950/40">
-          <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2 px-1 flex items-center justify-between">
-            <span className="flex items-center gap-1.5">
-              <Folder size={12} className="text-indigo-400" />
-              하위 폴더 ({subprojects.length})
-            </span>
-          </div>
-          <div className="grid grid-cols-1 gap-1.5">
-            {subprojects.map((sub) => {
-              const count = noteCounts[sub.id] || 0;
-              return (
-                <button
-                  key={sub.id}
-                  onClick={() => onSelectProject?.(sub.id)}
-                  className="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-slate-800 hover:border-indigo-500/50 text-left transition-all group cursor-pointer"
-                >
-                  <div className="flex items-center gap-2 truncate">
-                    {sub.isLocalOnly ? (
-                      <Lock size={14} className="text-amber-400 shrink-0" />
-                    ) : (
-                      <Folder size={14} className="text-indigo-400 group-hover:text-indigo-300 shrink-0" />
-                    )}
-                    <span className="text-xs font-medium text-slate-200 group-hover:text-white truncate">
-                      {sub.name}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-slate-400 group-hover:text-slate-200 shrink-0">
-                    <span className="text-[11px] font-mono text-slate-500 group-hover:text-slate-400">
-                      {count}
-                    </span>
-                    <ChevronRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* 메모 목록 */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+      {/* 메모 및 하위 폴더 본문 스크롤 영역 (하위 폴더가 많아도 매끄럽게 함께 스크롤) */}
+      <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-2">
+        {/* 하위 폴더 섹션: 메인 폴더 접속 시 안의 폴더가 많을 때도 함께 스크롤 */}
         {subprojects.length > 0 && !searchQuery.trim() && (
-          <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-1.5 pt-2 pb-1 flex items-center justify-between">
+          <div className="p-2 border border-slate-800/80 rounded-xl bg-slate-950/40">
+            <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2 px-1 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Folder size={12} className="text-indigo-400" />
+                하위 폴더 ({subprojects.length})
+              </span>
+            </div>
+            <div className="grid grid-cols-1 gap-1.5">
+              {subprojects.map((sub) => {
+                const count = noteCounts[sub.id] || 0;
+                return (
+                  <button
+                    key={sub.id}
+                    onClick={() => onSelectProject?.(sub.id)}
+                    className="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-slate-800 hover:border-indigo-500/50 text-left transition-all group cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      {sub.isLocalOnly ? (
+                        <Lock size={14} className="text-amber-400 shrink-0" />
+                      ) : (
+                        <Folder size={14} className="text-indigo-400 group-hover:text-indigo-300 shrink-0" />
+                      )}
+                      <span className="text-xs font-medium text-slate-200 group-hover:text-white truncate">
+                        {sub.name}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-slate-400 group-hover:text-slate-200 shrink-0">
+                      <span className="text-[11px] font-mono text-slate-500 group-hover:text-slate-400">
+                        {count}
+                      </span>
+                      <ChevronRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {subprojects.length > 0 && !searchQuery.trim() && (
+          <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-1.5 pt-1 flex items-center justify-between">
             <span>메모 ({filteredNotes.length})</span>
           </div>
         )}

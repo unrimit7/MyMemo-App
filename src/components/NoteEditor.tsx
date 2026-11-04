@@ -599,10 +599,17 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
         if (canvas) {
           const containerWidth = viewer.clientWidth || preview.clientWidth || 600;
-          renderPdfPageToCanvas(doc, currentPage, canvas, Math.min(containerWidth, 800)).then(() => {
-            if (loadingBox) loadingBox.classList.add('hidden');
-            canvas.classList.remove('hidden');
-          });
+          renderPdfPageToCanvas(doc, currentPage, canvas, Math.min(containerWidth, 800))
+            .then(() => {
+              if (loadingBox) loadingBox.classList.add('hidden');
+              canvas.classList.remove('hidden');
+            })
+            .catch((err) => {
+              console.error('인라인 PDF 페이지 렌더링 실패:', err);
+              if (loadingBox) {
+                loadingBox.innerHTML = '<span class="text-rose-400 font-semibold">⚠️ PDF 페이지를 표시하지 못했습니다. 상단 전체화면 또는 다운로드 버튼을 이용해 주세요.</span>';
+              }
+            });
         }
       })
       .catch((err) => {

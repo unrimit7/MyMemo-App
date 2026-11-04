@@ -15,9 +15,16 @@ const activeRenderTasks = new WeakMap<HTMLCanvasElement, any>();
 
 function getAssetBaseUrl(): string {
   if (typeof window === 'undefined') return './';
-  const pathname = window.location.pathname;
-  const dir = pathname.substring(0, pathname.lastIndexOf('/') + 1);
-  return `${window.location.origin}${dir}`;
+  let href = window.location.href.split('#')[0].split('?')[0];
+  if (!href.endsWith('/')) {
+    const lastPart = href.substring(href.lastIndexOf('/') + 1);
+    if (!lastPart.includes('.')) {
+      href += '/';
+    } else {
+      href = href.substring(0, href.lastIndexOf('/') + 1);
+    }
+  }
+  return href;
 }
 
 export async function loadPdfDocument(dataOrUrl: string, cacheKey?: string): Promise<PDFDocumentProxy> {
@@ -29,12 +36,14 @@ export async function loadPdfDocument(dataOrUrl: string, cacheKey?: string): Pro
   const baseUrl = getAssetBaseUrl();
   const cMapUrl = `${baseUrl}cmaps/`;
   const standardFontDataUrl = `${baseUrl}standard_fonts/`;
+  const wasmUrl = `${baseUrl}wasm/`;
 
-  // 한글(CJK) 및 특수 폰트 유실 방지를 위한 필수 디코더 파라미터
+  // 한글(CJK) 및 스캔 문서(JBIG2, OpenJPEG) 유실 방지를 위한 필수 디코더 파라미터
   const commonParams = {
     cMapUrl,
     cMapPacked: true,
     standardFontDataUrl,
+    wasmUrl,
     enableXfa: true,
   };
 
@@ -94,10 +103,22 @@ export async function renderPdfPageToCanvas(
   const finalScale = baseScale * zoomScale;
   const viewport = page.getViewport({ scale: finalScale });
 
-  // 모바일 레티나 및 고해상도 모니터 선명도 보정
-  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
-  canvas.width = Math.floor(viewport.width * dpr);
-  canvas.height = Math.floor(viewport.height * dpr);
+  // 모바일 레티나 및 고해상도 모니터 선명도 보정 (안전 범위 2.0 제한)
+  let dpr = Math.min(window.devicePixelRatio || 1, 2.0);
+  
+  // 모바일 브라우저(iOS Safari / Chrome 등)의 캔버스 최대 해상도 초과로 인한 캔버스 크래시 방지
+  const maxCanvasDimension = 3840;
+  let canvasW = Math.floor(viewport.width * dpr);
+  let canvasH = Math.floor(viewport.height * dpr);
+  if (canvasW > maxCanvasDimension || canvasH > maxCanvasDimension) {
+    const scaleFactor = maxCanvasDimension / Math.max(canvasW, canvasH);
+    canvasW = Math.floor(canvasW * scaleFactor);
+    canvasH = Math.floor(canvasH * scaleFactor);
+    dpr = dpr * scaleFactor;
+  }
+
+  canvas.width = canvasW;
+  canvas.height = canvasH;
   canvas.style.width = `${Math.floor(viewport.width)}px`;
   canvas.style.height = `${Math.floor(viewport.height)}px`;
 
