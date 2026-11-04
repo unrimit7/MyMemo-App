@@ -52,3 +52,24 @@ export interface SyncSummary {
   skippedLocalOnly: number;
   timestamp: string;
 }
+
+export type AppTheme = 'navy' | 'black' | 'charcoal' | 'forest' | 'wine' | 'sepia' | 'light';
+
+export interface ThemeOption {
+  id: AppTheme;
+  name: string;
+  desc: string;
+  bgHex: string;
+  accentHex: string;
+  isDark: boolean;
+}
+
+export const THEME_OPTIONS: ThemeOption[] = [
+  { id: 'navy', name: '미드나잇 네이비', desc: '깊고 세련된 다크 블루 (기본)', bgHex: '#0b1120', accentHex: '#6366f1', isDark: true },
+  { id: 'black', name: '딥 블랙 (OLED)', desc: '배터리 절약 & 칠흑의 올블랙', bgHex: '#000000', accentHex: '#38bdf8', isDark: true },
+  { id: 'charcoal', name: '모던 차콜', desc: '차분하고 단정한 슬레이트 그레이', bgHex: '#121316', accentHex: '#818cf8', isDark: true },
+  { id: 'forest', name: '포레스트 나이트', desc: '눈이 편안한 딥 에메랄드 그린', bgHex: '#06120d', accentHex: '#10b981', isDark: true },
+  { id: 'wine', name: '로즈 버건디', desc: '우아하고 포근한 와인 버건디', bgHex: '#12080f', accentHex: '#f43f5e', isDark: true },
+  { id: 'sepia', name: '웜 세피아', desc: '아늑한 서재 감성의 다크 브라운', bgHex: '#130f0c', accentHex: '#f59e0b', isDark: true },
+  { id: 'light', name: '클래식 라이트', desc: '화사하고 깔끔한 소프트 화이트', bgHex: '#f8fafc', accentHex: '#4f46e5', isDark: false },
+];

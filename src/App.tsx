@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import type { Project, Note, GitHubConfig, SyncStatus } from './types';
+import type { Project, Note, GitHubConfig, SyncStatus, AppTheme } from './types';
+import { THEME_OPTIONS } from './types';
 import { 
   seedInitialDataIfNeeded, 
   getAllProjects, 
@@ -96,6 +97,25 @@ export function App() {
   });
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [isResizingNoteList, setIsResizingNoteList] = useState(false);
+
+  // 앱 분위기 (테마) 설정 상태
+  const [currentTheme, setCurrentTheme] = useState<AppTheme>(() => {
+    if (typeof window === 'undefined') return 'navy';
+    const saved = localStorage.getItem('mymemo_theme') as AppTheme;
+    if (saved && THEME_OPTIONS.some((t) => t.id === saved)) return saved;
+    return 'navy';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', currentTheme);
+    localStorage.setItem('mymemo_theme', currentTheme);
+  }, [currentTheme]);
+
+  const handleCycleTheme = () => {
+    const currentIndex = THEME_OPTIONS.findIndex((t) => t.id === currentTheme);
+    const nextIndex = (currentIndex + 1) % THEME_OPTIONS.length;
+    setCurrentTheme(THEME_OPTIONS[nextIndex].id);
+  };
 
   // 사이드바 너비 마우스 드래그 리사이징 핸들러
   const handleSidebarResizeStart = (e: React.MouseEvent) => {
@@ -1492,6 +1512,8 @@ MyMemo의 모든 메모는 **내 개인 GitHub 저장소(Repository)**에 안전
         isCalendarActive={isCalendarOpen}
         onOpenCalendar={handleOpenCalendar}
         otherTabsCount={otherTabsCount}
+        currentTheme={currentTheme}
+        onCycleTheme={handleCycleTheme}
         width={sidebarWidth}
         isResizing={isResizingSidebar}
       />
@@ -1598,6 +1620,8 @@ MyMemo의 모든 메모는 **내 개인 GitHub 저장소(Repository)**에 안전
         noteCount={notes.length}
         projects={projects}
         notes={notes}
+        currentTheme={currentTheme}
+        onChangeTheme={setCurrentTheme}
         onRestoreBackup={handleRestoreBackup}
         onApplyFolderPrefixes={handleApplyAllFolderPrefixes}
         onRemoveFolderPrefixes={handleRemoveAllFolderPrefixes}

@@ -1,5 +1,236 @@
 @import "tailwindcss";
 
+:root {
+  color-scheme: dark;
+  --scrollbar-thumb: #334155;
+  --scrollbar-thumb-hover: #475569;
+  --scrollbar-track: transparent;
+}
+
+/* 전역 스크롤바 디자인 (Windows PWA 및 Chrome/Edge 기본 흰색 스크롤바를 앱 분위기에 맞춘 슬림 다크 톤으로 완벽 치환) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 9999px;
+  transition: background-color 0.15s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* 1. 기본 미드나잇 네이비 (Midnight Navy) */
+[data-theme="navy"] {
+  color-scheme: dark;
+  --scrollbar-thumb: #334155;
+  --scrollbar-thumb-hover: #475569;
+  --scrollbar-track: transparent;
+}
+
+/* 2. 딥 블랙 (OLED Pure Black) */
+[data-theme="black"] {
+  color-scheme: dark;
+  --scrollbar-thumb: #27272a;
+  --scrollbar-thumb-hover: #3f3f46;
+  --scrollbar-track: transparent;
+}
+[data-theme="black"] body,
+[data-theme="black"] .bg-slate-950,
+[data-theme="black"] aside {
+  background-color: #000000 !important;
+}
+[data-theme="black"] .bg-slate-900 {
+  background-color: #0a0a0a !important;
+}
+[data-theme="black"] .bg-slate-800,
+[data-theme="black"] .bg-slate-850 {
+  background-color: #161616 !important;
+}
+[data-theme="black"] .border-slate-800,
+[data-theme="black"] .border-slate-800\/60,
+[data-theme="black"] .border-slate-800\/70,
+[data-theme="black"] .border-slate-800\/80 {
+  border-color: #222222 !important;
+}
+
+/* 3. 모던 차콜 (Modern Charcoal) */
+[data-theme="charcoal"] {
+  color-scheme: dark;
+  --scrollbar-thumb: #3f424e;
+  --scrollbar-thumb-hover: #565a6b;
+  --scrollbar-track: transparent;
+}
+[data-theme="charcoal"] body,
+[data-theme="charcoal"] .bg-slate-950,
+[data-theme="charcoal"] aside {
+  background-color: #121316 !important;
+}
+[data-theme="charcoal"] .bg-slate-900 {
+  background-color: #18191e !important;
+}
+[data-theme="charcoal"] .bg-slate-800,
+[data-theme="charcoal"] .bg-slate-850 {
+  background-color: #24262e !important;
+}
+[data-theme="charcoal"] .border-slate-800,
+[data-theme="charcoal"] .border-slate-800\/60,
+[data-theme="charcoal"] .border-slate-800\/70,
+[data-theme="charcoal"] .border-slate-800\/80 {
+  border-color: #2f323c !important;
+}
+
+/* 4. 포레스트 나이트 (Forest Night) */
+[data-theme="forest"] {
+  color-scheme: dark;
+  --scrollbar-thumb: #1b3d2f;
+  --scrollbar-thumb-hover: #295743;
+  --scrollbar-track: transparent;
+}
+[data-theme="forest"] body,
+[data-theme="forest"] .bg-slate-950,
+[data-theme="forest"] aside {
+  background-color: #06120d !important;
+}
+[data-theme="forest"] .bg-slate-900 {
+  background-color: #0b1a13 !important;
+}
+[data-theme="forest"] .bg-slate-800,
+[data-theme="forest"] .bg-slate-850 {
+  background-color: #142a20 !important;
+}
+[data-theme="forest"] .border-slate-800,
+[data-theme="forest"] .border-slate-800\/60,
+[data-theme="forest"] .border-slate-800\/70,
+[data-theme="forest"] .border-slate-800\/80 {
+  border-color: #1e3d30 !important;
+}
+
+/* 5. 로즈 버건디 (Rose Burgundy) */
+[data-theme="wine"] {
+  color-scheme: dark;
+  --scrollbar-thumb: #3d1c31;
+  --scrollbar-thumb-hover: #542744;
+  --scrollbar-track: transparent;
+}
+[data-theme="wine"] body,
+[data-theme="wine"] .bg-slate-950,
+[data-theme="wine"] aside {
+  background-color: #12080f !important;
+}
+[data-theme="wine"] .bg-slate-900 {
+  background-color: #1b0d17 !important;
+}
+[data-theme="wine"] .bg-slate-800,
+[data-theme="wine"] .bg-slate-850 {
+  background-color: #291524 !important;
+}
+[data-theme="wine"] .border-slate-800,
+[data-theme="wine"] .border-slate-800\/60,
+[data-theme="wine"] .border-slate-800\/70,
+[data-theme="wine"] .border-slate-800\/80 {
+  border-color: #3b1e34 !important;
+}
+
+/* 6. 웜 세피아 (Warm Sepia) */
+[data-theme="sepia"] {
+  color-scheme: dark;
+  --scrollbar-thumb: #413327;
+  --scrollbar-thumb-hover: #584636;
+  --scrollbar-track: transparent;
+}
+[data-theme="sepia"] body,
+[data-theme="sepia"] .bg-slate-950,
+[data-theme="sepia"] aside {
+  background-color: #14100c !important;
+}
+[data-theme="sepia"] .bg-slate-900 {
+  background-color: #1c1712 !important;
+}
+[data-theme="sepia"] .bg-slate-800,
+[data-theme="sepia"] .bg-slate-850 {
+  background-color: #2b231c !important;
+}
+[data-theme="sepia"] .border-slate-800,
+[data-theme="sepia"] .border-slate-800\/60,
+[data-theme="sepia"] .border-slate-800\/70,
+[data-theme="sepia"] .border-slate-800\/80 {
+  border-color: #3e3228 !important;
+}
+
+/* 7. 클래식 라이트 (Classic Light) */
+[data-theme="light"] {
+  color-scheme: light;
+  --scrollbar-thumb: #cbd5e1;
+  --scrollbar-thumb-hover: #94a3b8;
+  --scrollbar-track: #f1f5f9;
+}
+[data-theme="light"] body,
+[data-theme="light"] .bg-slate-950,
+[data-theme="light"] aside {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+[data-theme="light"] .bg-slate-900 {
+  background-color: #ffffff !important;
+}
+[data-theme="light"] .bg-slate-800,
+[data-theme="light"] .bg-slate-850 {
+  background-color: #f1f5f9 !important;
+}
+[data-theme="light"] .border-slate-800,
+[data-theme="light"] .border-slate-800\/60,
+[data-theme="light"] .border-slate-800\/70,
+[data-theme="light"] .border-slate-800\/80,
+[data-theme="light"] .border-slate-700 {
+  border-color: #e2e8f0 !important;
+}
+[data-theme="light"] .text-slate-100,
+[data-theme="light"] .text-slate-200 {
+  color: #0f172a !important;
+}
+[data-theme="light"] .text-slate-300,
+[data-theme="light"] .text-slate-400 {
+  color: #475569 !important;
+}
+[data-theme="light"] .text-slate-500 {
+  color: #64748b !important;
+}
+[data-theme="light"] input,
+[data-theme="light"] textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+[data-theme="light"] .markdown-preview h1,
+[data-theme="light"] .markdown-preview h2,
+[data-theme="light"] .markdown-preview h3 {
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+}
+[data-theme="light"] .markdown-preview p,
+[data-theme="light"] .markdown-preview li,
+[data-theme="light"] .markdown-preview ul,
+[data-theme="light"] .markdown-preview ol {
+  color: #334155 !important;
+}
+
 @layer base {
   body {
     @apply bg-slate-900 text-slate-100 antialiased selection:bg-indigo-500 selection:text-white;

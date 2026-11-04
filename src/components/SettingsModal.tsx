@@ -18,8 +18,10 @@ import {
   HardDrive,
   Download,
   Upload,
-  FileArchive
+  FileArchive,
+  Palette
 } from 'lucide-react';
+import { type AppTheme, THEME_OPTIONS } from '../types';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -29,6 +31,8 @@ interface SettingsModalProps {
   noteCount?: number;
   projects?: Project[];
   notes?: Note[];
+  currentTheme?: AppTheme;
+  onChangeTheme?: (theme: AppTheme) => void;
   onRestoreBackup?: (backup: MyMemoBackupData, mode: 'merge' | 'overwrite') => Promise<{ restoredProjects: number; restoredNotes: number }>;
   onApplyFolderPrefixes?: () => Promise<number>;
   onRemoveFolderPrefixes?: () => Promise<number>;
@@ -45,6 +49,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   noteCount = 0,
   projects = [],
   notes = [],
+  currentTheme = 'navy',
+  onChangeTheme,
   onRestoreBackup,
   onApplyFolderPrefixes,
   onRemoveFolderPrefixes,
@@ -247,6 +253,68 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* 모달 본문 (스크롤) */}
         <div className="p-6 overflow-y-auto space-y-4 text-xs">
+          {/* 앱 분위기 (테마) 설정 */}
+          <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60 space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                <Palette size={15} className="text-indigo-400" />
+                <span>앱 분위기 (테마) 설정</span>
+              </h4>
+              <span className="text-[11px] text-slate-400">
+                스크롤바 & 배경 실시간 적용
+              </span>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              원하는 분위기를 선택하면 스크롤바와 배경 화면의 분위기가 즉시 조화롭게 변경됩니다.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+              {THEME_OPTIONS.map((t) => {
+                const isActive = currentTheme === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => onChangeTheme?.(t.id)}
+                    className={`flex items-center justify-between p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      isActive
+                        ? 'border-indigo-500 bg-indigo-600/20 text-white shadow-md ring-1 ring-indigo-500/50'
+                        : 'border-slate-800 bg-slate-900/70 hover:border-slate-700 hover:bg-slate-800 text-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {/* 색상 미리보기 원형 인디케이터 */}
+                      <div 
+                        className="w-5 h-5 rounded-full border border-white/20 shrink-0 flex items-center justify-center shadow-inner"
+                        style={{ backgroundColor: t.bgHex }}
+                      >
+                        <div 
+                          className="w-2 h-2 rounded-full"
+                          style={{ backgroundColor: t.accentHex }}
+                        />
+                      </div>
+                      <div className="truncate">
+                        <div className="font-semibold text-xs leading-tight truncate">
+                          {t.name}
+                        </div>
+                        <div className="text-[10px] text-slate-400 leading-tight truncate">
+                          {t.desc}
+                        </div>
+                      </div>
+                    </div>
+
+                    {isActive && (
+                      <span className="text-indigo-400 shrink-0 text-xs font-bold pl-1">
+                        ✓
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* 보안 알림 배너 */}
           <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-start gap-2.5 text-emerald-300">
             <ShieldCheck size={18} className="shrink-0 mt-0.5 text-emerald-400" />

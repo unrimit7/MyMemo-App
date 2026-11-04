@@ -17,12 +17,16 @@ import {
   PanelLeftClose,
   Calendar,
   ArrowUpDown,
-  GripVertical
+  GripVertical,
+  Palette
 } from 'lucide-react';
+import { type AppTheme, THEME_OPTIONS } from '../types';
 
 interface SidebarProps {
   projects: Project[];
   activeProjectId: string;
+  currentTheme?: AppTheme;
+  onCycleTheme?: () => void;
   onSelectProject: (id: string) => void;
   onCreateProject: (name: string, isLocalOnly: boolean, parentId?: string | null) => void;
   onDeleteProject: (id: string) => void;
@@ -78,6 +82,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   width,
   isResizing,
   otherTabsCount = 0,
+  currentTheme = 'navy',
+  onCycleTheme,
 }) => {
   // 드래그 오버 중인 폴더 ID 및 위치 정보
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
@@ -830,13 +836,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
             </div>
 
-            <button
-              onClick={onOpenSettings}
-              className="p-1.5 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-lg transition-colors"
-              title="GitHub 연동 설정"
-            >
-              <Settings size={16} />
-            </button>
+            <div className="flex items-center gap-1">
+              {onCycleTheme && (
+                <button
+                  type="button"
+                  onClick={onCycleTheme}
+                  className="p-1.5 text-slate-400 hover:text-indigo-400 hover:bg-slate-800 rounded-lg transition-colors"
+                  title={`현재 테마: ${THEME_OPTIONS.find(t => t.id === currentTheme)?.name || '기본'} (클릭하여 다른 분위기로 변경)`}
+                >
+                  <Palette size={15} />
+                </button>
+              )}
+
+              <button
+                onClick={onOpenSettings}
+                className="p-1.5 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-lg transition-colors"
+                title="설정 (테마 및 GitHub 동기화)"
+              >
+                <Settings size={16} />
+              </button>
+            </div>
           </div>
         </div>
       </aside>
