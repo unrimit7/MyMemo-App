@@ -354,7 +354,7 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
         onClick={handleDoubleTap}
         className="flex-1 overflow-auto bg-slate-950 p-2 sm:p-4 touch-pan-x touch-pan-y relative"
       >
-        <div className="min-w-full min-h-full flex items-center justify-center p-1 sm:p-3">
+        <div className="w-max min-w-full min-h-full flex items-center justify-start p-1 sm:p-3">
           {isLoading && (
             <div className="flex flex-col items-center justify-center h-64 gap-3 text-slate-400 text-sm m-auto">
               <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
@@ -382,7 +382,7 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
                 minWidth: `${targetWidth}px`,
                 maxWidth: 'none',
               }}
-              className="shrink-0 shadow-2xl rounded-xl bg-white p-2 sm:p-4 my-auto text-slate-900 transition-all duration-75 [&>svg]:w-full [&>svg]:h-auto [&>svg]:block [&>svg]:max-w-none"
+              className="shrink-0 m-auto shadow-2xl rounded-xl bg-white p-2 sm:p-4 my-auto text-slate-900 transition-all duration-75 [&>svg]:w-full [&>svg]:h-auto [&>svg]:block [&>svg]:max-w-none"
               dangerouslySetInnerHTML={{ __html: svgHtml }}
             />
           )}

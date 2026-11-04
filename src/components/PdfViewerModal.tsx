@@ -337,7 +337,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
         onClick={handleDoubleTap}
         className="flex-1 overflow-auto bg-slate-950 p-2 sm:p-4 touch-pan-x touch-pan-y relative"
       >
-        <div className="min-w-full min-h-full flex items-center justify-center p-1 sm:p-3">
+        <div className="w-max min-w-full min-h-full flex items-center justify-start p-1 sm:p-3">
           {isLoading && (
             <div className="flex flex-col items-center justify-center h-64 gap-3 text-slate-400 text-sm m-auto">
               <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
@@ -359,7 +359,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
           )}
 
           <div 
-            className={`shrink-0 transition-opacity duration-150 ${isLoading || renderError ? 'hidden' : 'block'}`}
+            className={`shrink-0 m-auto transition-opacity duration-150 ${isLoading || renderError ? 'hidden' : 'block'}`}
             style={{
               transform: visualScale !== 1.0 ? `scale(${visualScale})` : undefined,
               transformOrigin: 'center center',
