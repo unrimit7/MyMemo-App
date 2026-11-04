@@ -201,3 +201,37 @@ export async function renderPdfPageToCanvas(
 
   return { width: viewport.width, height: viewport.height };
 }
+
+/**
+ * PDF 문서 전체에서 텍스트를 페이지별로 추출하여 마크다운 포맷으로 반환
+ */
+export async function extractPdfText(pdfDoc: PDFDocumentProxy): Promise<string> {
+  const pageTexts: string[] = [];
+  const numPages = pdfDoc.numPages;
+
+  for (let i = 1; i <= numPages; i++) {
+    const page = await pdfDoc.getPage(i);
+    const textContent = await page.getTextContent();
+    let lastY: number | null = null;
+    let pageStr = '';
+
+    for (const item of textContent.items as any[]) {
+      if ('str' in item) {
+        if (lastY !== null && Math.abs(item.transform[5] - lastY) > 5) {
+          pageStr += '\n';
+        } else if (pageStr.length > 0 && !pageStr.endsWith(' ') && !pageStr.endsWith('\n')) {
+          pageStr += ' ';
+        }
+        pageStr += item.str;
+        lastY = item.transform[5];
+      }
+    }
+
+    const trimmed = pageStr.trim();
+    if (trimmed) {
+      pageTexts.push(`#### [${i} 페이지]\n\n${trimmed}`);
+    }
+  }
+
+  return pageTexts.join('\n\n---\n\n');
+}

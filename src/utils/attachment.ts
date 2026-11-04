@@ -133,6 +133,11 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
         <button type="button" class="pdf-btn-next px-1.5 py-0.5 hover:text-white hover:bg-slate-800 rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent" data-att-id="${att.id}" title="다음 페이지">▶</button>
       </div>
 
+      <!-- 본문 메모로 가져오기 버튼 -->
+      <button type="button" class="pdf-btn-import px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white rounded-lg text-xs font-semibold border border-indigo-500/40 flex items-center gap-1 active:scale-95 transition-all" data-att-id="${att.id}" data-file-name="${displayName}" title="PDF 문서의 텍스트를 마크다운 본문으로 가져오기">
+        <span>📝 메모로 가져오기</span>
+      </button>
+
       <!-- 전면 뷰어로 크게 보기 버튼 -->
       <button type="button" class="pdf-btn-fullscreen px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-indigo-300 rounded-lg text-xs font-semibold border border-indigo-500/30 flex items-center gap-1 active:scale-95 transition-all" data-att-id="${att.id}" data-file-name="${displayName}" title="전면 뷰어로 크게 보기">
         <span>🔍 크게 보기</span>

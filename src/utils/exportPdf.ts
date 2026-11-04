@@ -1,20 +1,187 @@
-import type { Note } from '../types';
+import type { Note, AttachmentItem } from '../types';
 import { marked } from 'marked';
-import { renderAttachmentsInHtml } from './attachment';
+import { loadPdfDocument } from './pdfViewer';
+import { loadHwpDocument, renderHwpPageToSvg } from './hwpViewer';
+
+/**
+ * 인쇄/PDF 내보내기용 첨부파일 HTML 비동기 변환기
+ * PDF 및 한글(HWP) 첨부 문서를 실제 고화질 페이지 이미지/SVG로 렌더링하여 인쇄 양식에 온전히 포함시킵니다.
+ */
+async function renderAttachmentsForPrint(
+  html: string,
+  attachments: Record<string, AttachmentItem> = {}
+): Promise<string> {
+  if (!html || Object.keys(attachments).length === 0) return html;
+
+  let result = html;
+
+  // 1. 일반 이미지 (<img src="attachment:att-xxx">)
+  result = result.replace(
+    /<img\s+([^>]*?)src=["']attachment:([^"']+)["']([^>]*?)>/gi,
+    (_match, pre, attId, post) => {
+      const att = attachments[attId];
+      if (!att || !att.data) return '';
+      return `<img ${pre}src="${att.data}" style="max-width: 100%; height: auto; display: block; margin: 12px auto; border-radius: 6px; border: 1px solid #e2e8f0;" ${post} />`;
+    }
+  );
+
+  // 2. 문서 및 링크: <a href="attachment:att-xxx"> 또는 [📄 PDF: ...](attachment:att-xxx)
+  const attLinks: Array<{ fullMatch: string; attId: string; label: string }> = [];
+
+  // 패턴 A: <a href="attachment:att-xxx">라벨</a>
+  result.replace(
+    /<a\s+[^>]*href=["']attachment:([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
+    (fullMatch, attId, label) => {
+      attLinks.push({ fullMatch, attId, label });
+      return fullMatch;
+    }
+  );
+
+  // 패턴 B: [라벨](attachment:att-xxx) (p 태그 여부 무관)
+  result.replace(
+    /(?:<p>)?\s*!?\[([\s\S]*?)\]\((?:attachment:)?(att-[a-zA-Z0-9_-]+)\)\s*(?:<\/p>)?/gi,
+    (fullMatch, label, attId) => {
+      attLinks.push({ fullMatch, attId, label });
+      return fullMatch;
+    }
+  );
+
+  for (const { fullMatch, attId, label } of attLinks) {
+    const att = attachments[attId];
+    if (!att || !att.data) continue;
+
+    const cleanLabel = (label || '')
+      .replace(/^[\s📄📎🖼️📝]*/, '')
+      .replace(/^(?:PDF\s*문서:\s*|한글\s*문서:\s*|한글:\s*|파일:\s*)/i, '')
+      .trim();
+    const displayName = cleanLabel || att.name;
+
+    const isPdf =
+      att.type === 'application/pdf' ||
+      att.name.toLowerCase().endsWith('.pdf') ||
+      att.data.startsWith('data:application/pdf');
+
+    const isHwp =
+      att.name.toLowerCase().endsWith('.hwp') ||
+      att.name.toLowerCase().endsWith('.hwpx') ||
+      att.type === 'application/x-hwp' ||
+      att.type === 'application/haansofthwp' ||
+      att.type === 'application/vnd.hancom.hwp' ||
+      att.type === 'application/vnd.hancom.hwpx';
+
+    if (isPdf) {
+      try {
+        const doc = await loadPdfDocument(att.data, att.id);
+        const total = doc.numPages;
+        let pagesHtml = '';
+        for (let p = 1; p <= total; p++) {
+          const page = await doc.getPage(p);
+          const viewport = page.getViewport({ scale: 1.5 });
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            await (page.render({ canvasContext: ctx, viewport } as any)).promise;
+            const dataUrl = canvas.toDataURL('image/png');
+            pagesHtml += `
+              <div class="print-doc-page">
+                <img src="${dataUrl}" alt="페이지 ${p}" />
+                <div class="print-page-number">- ${p} / ${total} 페이지 -</div>
+              </div>
+            `;
+          }
+        }
+
+        const replacement = `
+          <div class="print-doc-container">
+            <div class="print-doc-header">
+              <span class="print-doc-badge">📄 PDF 문서</span>
+              <span class="print-doc-title">${displayName} (총 ${total}페이지)</span>
+            </div>
+            <div class="print-doc-pages">
+              ${pagesHtml}
+            </div>
+          </div>
+        `;
+        result = result.split(fullMatch).join(replacement);
+      } catch (err) {
+        console.error('PDF 인쇄용 렌더링 실패:', err);
+        const fallback = `
+          <div class="print-att-card">
+            <span>📄</span>
+            <span>${displayName} (PDF 문서 첨부)</span>
+          </div>
+        `;
+        result = result.split(fullMatch).join(fallback);
+      }
+    } else if (isHwp) {
+      try {
+        const hwpDoc = await loadHwpDocument(att.data, att.id);
+        const total = hwpDoc.pageCount();
+        let pagesHtml = '';
+        for (let p = 0; p < total; p++) {
+          const svg = renderHwpPageToSvg(hwpDoc, p);
+          pagesHtml += `
+            <div class="print-doc-page">
+              <div class="print-hwp-svg-page">${svg}</div>
+              <div class="print-page-number">- ${p + 1} / ${total} 페이지 -</div>
+            </div>
+          `;
+        }
+
+        const replacement = `
+          <div class="print-doc-container">
+            <div class="print-doc-header">
+              <span class="print-doc-badge print-doc-badge-hwp">📝 한글(HWP) 문서</span>
+              <span class="print-doc-title">${displayName} (총 ${total}페이지)</span>
+            </div>
+            <div class="print-doc-pages">
+              ${pagesHtml}
+            </div>
+          </div>
+        `;
+        result = result.split(fullMatch).join(replacement);
+      } catch (err) {
+        console.error('HWP 인쇄용 렌더링 실패:', err);
+        const fallback = `
+          <div class="print-att-card">
+            <span>📝</span>
+            <span>${displayName} (한글 문서 첨부)</span>
+          </div>
+        `;
+        result = result.split(fullMatch).join(fallback);
+      }
+    } else {
+      const fallback = `
+        <div class="print-att-card">
+          <span>📎</span>
+          <span>${displayName} (첨부 파일)</span>
+        </div>
+      `;
+      result = result.split(fullMatch).join(fallback);
+    }
+  }
+
+  return result;
+}
 
 /**
  * 메모 내용을 깔끔하고 표준적인 A4 PDF 문서 양식으로 렌더링하여 브라우저의 PDF 저장 / 인쇄 창을 실행합니다.
+ * 본문에 포함된 PDF 및 한글(HWP) 문서도 실제 페이지 그래픽으로 함께 인쇄물에 포함됩니다.
  */
-export function exportNoteToPdf(
+export async function exportNoteToPdf(
   note: Note,
   folderBreadcrumbs: string = '',
   customContent?: string
-): void {
+): Promise<void> {
   const contentToRender = customContent !== undefined ? customContent : note.content;
   let normalizedContent = (contentToRender || '').replace(/^(\s*-\s*\[[ xX]\])([^\s\n])/gm, '$1 $2');
   normalizedContent = normalizedContent.replace(/==([^=\n]+)==/g, '<mark style="background-color: #fef08a; color: #0f172a; padding: 2px 5px; border-radius: 4px;">$1</mark>');
   const rawHtml = marked.parse(normalizedContent, { breaks: true, gfm: true }) as string;
-  const renderedHtml = renderAttachmentsInHtml(rawHtml, note.attachments);
+  const renderedHtml = await renderAttachmentsForPrint(rawHtml, note.attachments);
 
   const createdDate = new Date(note.createdAt).toLocaleDateString('ko-KR', {
     year: 'numeric',
@@ -152,14 +319,14 @@ export function exportNoteToPdf(
       padding: 7px 10px;
       text-align: left;
       vertical-align: middle;
-      word-break: keep-all; /* 한글 단어가 글자 단위로 어색하게 쪼개지는 현상(회\n신, 수\n용) 원천 방지 */
-      overflow-wrap: break-word; /* 지나치게 긴 영문/URL만 자연스럽게 줄바꿈 */
+      word-break: keep-all;
+      overflow-wrap: break-word;
     }
     th {
       background-color: #f1f5f9;
       font-weight: 700;
       color: #1e293b;
-      white-space: nowrap; /* 제목 셀은 글자 꺾임 없이 한 줄로 깔끔하게 표시 */
+      white-space: nowrap;
     }
     th[align="center"], td[align="center"] {
       text-align: center;
@@ -239,10 +406,83 @@ export function exportNoteToPdf(
       text-decoration: none;
     }
 
-    /* 인라인 PDF / 첨부 뷰어 출력 시 프린트 양식 */
-    object {
-      display: none !important;
+    /* 인쇄용 PDF 및 한글(HWP) 문서 뷰어 컨테이너 */
+    .print-doc-container {
+      margin: 20px 0;
+      border: 1.5px solid #cbd5e1;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #ffffff;
+      break-inside: avoid-page;
+      page-break-inside: avoid;
     }
+    .print-doc-header {
+      background: #f8fafc;
+      border-bottom: 1.5px solid #cbd5e1;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .print-doc-badge {
+      background: #4f46e5;
+      color: #ffffff;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 10.5px;
+      font-weight: 700;
+    }
+    .print-doc-badge-hwp {
+      background: #2563eb;
+    }
+    .print-doc-title {
+      font-size: 12.5px;
+      color: #1e293b;
+    }
+    .print-doc-page {
+      padding: 16px 12px;
+      text-align: center;
+      border-bottom: 1px dashed #cbd5e1;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .print-doc-page:last-child {
+      border-bottom: none;
+    }
+    .print-doc-page img {
+      max-width: 100% !important;
+      height: auto !important;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      margin: 0 auto;
+      display: block;
+    }
+    .print-hwp-svg-page {
+      width: 100%;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+    }
+    .print-hwp-svg-page svg {
+      max-width: 100% !important;
+      height: auto !important;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      margin: 0 auto;
+      display: block;
+    }
+    .print-page-number {
+      font-size: 11px;
+      color: #64748b;
+      font-weight: 600;
+      margin-top: 8px;
+    }
+
     .print-att-card {
       border: 1px solid #cbd5e1;
       border-radius: 8px;
@@ -291,7 +531,7 @@ export function exportNoteToPdf(
         if (document.body.contains(iframe)) {
           document.body.removeChild(iframe);
         }
-      }, 2000);
+      }, 3000);
     }
-  }, 350);
+  }, 450);
 }

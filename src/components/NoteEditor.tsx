@@ -7,7 +7,7 @@ import { cleanLegacyAttachments, renderAttachmentsInHtml } from '../utils/attach
 import { exportNoteToPdf } from '../utils/exportPdf';
 import { getFolderHierarchyPath, updateTitleWithFolderPath } from '../utils/folderPath';
 import { PdfViewerModal } from './PdfViewerModal';
-import { loadPdfDocument, renderPdfPageToCanvas } from '../utils/pdfViewer';
+import { loadPdfDocument, renderPdfPageToCanvas, extractPdfText } from '../utils/pdfViewer';
 import { HwpViewerModal } from './HwpViewerModal';
 import { loadHwpDocument, renderHwpPageToSvg, extractHwpText } from '../utils/hwpViewer';
 import type { AttachmentItem } from '../types';
@@ -129,6 +129,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [isProcessingPdf, setIsProcessingPdf] = useState(false);
   const [isProcessingHwp, setIsProcessingHwp] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isDragOverEditor, setIsDragOverEditor] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<{ attId: string; src: string; alt: string } | null>(null);
@@ -1957,6 +1958,34 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       return;
     }
 
+    // 7-2. PDF [📝 메모로 가져오기] 버튼 클릭 시 텍스트 추출 및 본문 반영
+    const importPdfBtn = target.closest<HTMLElement>('.pdf-btn-import');
+    if (importPdfBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = importPdfBtn.getAttribute('data-att-id');
+      if (attId && localAttachments[attId]) {
+        loadPdfDocument(localAttachments[attId].data, attId)
+          .then(async (doc) => {
+            const text = await extractPdfText(doc);
+            if (!text.trim()) {
+              alert('추출할 수 있는 텍스트가 없습니다. (스캔 이미지로만 구성된 PDF는 텍스트 레이어가 포함되어 있지 않습니다.)');
+              return;
+            }
+            const insertBlock = `\n\n### 📄 ${localAttachments[attId].name} 본문\n\n${text}\n\n`;
+            const newContent = `${localContent}${insertBlock}`;
+            setLocalContent(newContent);
+            debouncedSyncToParent({ content: newContent });
+            alert(`'${localAttachments[attId].name}' 문서의 본문 텍스트(${text.length}자)를 메모에 성공적으로 가져왔습니다!`);
+          })
+          .catch((err) => {
+            console.error('PDF 텍스트 추출 실패:', err);
+            alert('PDF 문서 텍스트를 추출하지 못했습니다.');
+          });
+      }
+      return;
+    }
+
     // 8. 링크(<a>) 클릭 처리: PWA 및 모바일/PC 어디서나 확실하게 새 창(새 브라우저 탭)으로 열기
     const anchor = target.closest('a');
     if (anchor && anchor.href) {
@@ -2219,19 +2248,33 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
           {/* 📄 PDF 내보내기 / 인쇄 버튼 */}
           <button
-            onClick={() => {
-              const breadcrumbText = folderBreadcrumbs.map((b) => b.name).join(' > ');
-              exportNoteToPdf(
-                { ...note, title: localTitle, content: localContent, attachments: localAttachments },
-                breadcrumbText,
-                localContent
-              );
+            onClick={async () => {
+              if (isExportingPdf) return;
+              setIsExportingPdf(true);
+              try {
+                const breadcrumbText = folderBreadcrumbs.map((b) => b.name).join(' > ');
+                await exportNoteToPdf(
+                  { ...note, title: localTitle, content: localContent, attachments: localAttachments },
+                  breadcrumbText,
+                  localContent
+                );
+              } catch (e) {
+                console.error('PDF 내보내기 실패:', e);
+                alert('PDF 내보내기 중 오류가 발생했습니다.');
+              } finally {
+                setIsExportingPdf(false);
+              }
             }}
-            className="flex items-center gap-1 px-2 py-1 md:px-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-indigo-300 border border-slate-800 rounded-lg text-xs font-medium transition-all shadow-sm active:scale-95 shrink-0"
-            title="현재 메모를 깔끔한 PDF 문서로 내보내기 / 인쇄"
+            disabled={isExportingPdf}
+            className="flex items-center gap-1 px-2 py-1 md:px-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-indigo-300 border border-slate-800 rounded-lg text-xs font-medium transition-all shadow-sm active:scale-95 shrink-0 disabled:opacity-50"
+            title="현재 메모를 깔끔한 PDF 문서로 내보내기 / 인쇄 (첨부된 PDF/한글 문서 페이지 포함)"
           >
-            <FileDown size={13} className="text-indigo-400" />
-            <span className="hidden sm:inline">PDF 내보내기</span>
+            {isExportingPdf ? (
+              <Loader2 size={13} className="animate-spin text-indigo-400" />
+            ) : (
+              <FileDown size={13} className="text-indigo-400" />
+            )}
+            <span className="hidden sm:inline">{isExportingPdf ? '생성 중...' : 'PDF 내보내기'}</span>
           </button>
 
           {/* 📝 MD 파일로 내 컴퓨터에 다운로드 저장 */}
