@@ -1,3 +1,47 @@
+// TC39 Map/WeakMap getOrInsertComputed & getOrInsert 폴리필 (pdf.js v6 모바일 렌더링 필수)
+if (typeof Map !== 'undefined') {
+  if (!(Map.prototype as any).getOrInsertComputed) {
+    (Map.prototype as any).getOrInsertComputed = function (key: any, callback: (k: any) => any) {
+      if (this.has(key)) {
+        return this.get(key);
+      }
+      const value = callback(key);
+      this.set(key, value);
+      return value;
+    };
+  }
+  if (!(Map.prototype as any).getOrInsert) {
+    (Map.prototype as any).getOrInsert = function (key: any, defaultValue: any) {
+      if (this.has(key)) {
+        return this.get(key);
+      }
+      this.set(key, defaultValue);
+      return defaultValue;
+    };
+  }
+}
+if (typeof WeakMap !== 'undefined') {
+  if (!(WeakMap.prototype as any).getOrInsertComputed) {
+    (WeakMap.prototype as any).getOrInsertComputed = function (key: any, callback: (k: any) => any) {
+      if (this.has(key)) {
+        return this.get(key);
+      }
+      const value = callback(key);
+      this.set(key, value);
+      return value;
+    };
+  }
+  if (!(WeakMap.prototype as any).getOrInsert) {
+    (WeakMap.prototype as any).getOrInsert = function (key: any, defaultValue: any) {
+      if (this.has(key)) {
+        return this.get(key);
+      }
+      this.set(key, defaultValue);
+      return defaultValue;
+    };
+  }
+}
+
 import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 // Vite URL import for pdf.worker

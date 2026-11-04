@@ -44,6 +44,40 @@ if (typeof Set !== 'undefined' && !Set.prototype.intersection) {
     return res;
   };
 }
+if (typeof Map !== 'undefined') {
+  if (!Map.prototype.getOrInsertComputed) {
+    Map.prototype.getOrInsertComputed = function (key, callback) {
+      if (this.has(key)) return this.get(key);
+      const val = callback(key);
+      this.set(key, val);
+      return val;
+    };
+  }
+  if (!Map.prototype.getOrInsert) {
+    Map.prototype.getOrInsert = function (key, defaultVal) {
+      if (this.has(key)) return this.get(key);
+      this.set(key, defaultVal);
+      return defaultVal;
+    };
+  }
+}
+if (typeof WeakMap !== 'undefined') {
+  if (!WeakMap.prototype.getOrInsertComputed) {
+    WeakMap.prototype.getOrInsertComputed = function (key, callback) {
+      if (this.has(key)) return this.get(key);
+      const val = callback(key);
+      this.set(key, val);
+      return val;
+    };
+  }
+  if (!WeakMap.prototype.getOrInsert) {
+    WeakMap.prototype.getOrInsert = function (key, defaultVal) {
+      if (this.has(key)) return this.get(key);
+      this.set(key, defaultVal);
+      return defaultVal;
+    };
+  }
+}
 `;
   return {
     name: 'patch-pdf-worker',

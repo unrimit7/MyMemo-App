@@ -432,7 +432,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
       }
     }
 
-    if (!remoteFile && remoteFileMap.has(legacyPath)) {
+    if (!remoteFile && !note.githubPath && remoteFileMap.has(legacyPath)) {
       remoteFile = remoteFileMap.get(legacyPath);
       remotePath = legacyPath;
     }
@@ -652,35 +652,38 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
       continue;
     }
 
-    // ★ 2. 제목 기반 매칭: 동일 제목 메모가 로컬에 이미 존재하는 경우 중복 신규 생성 차단!
-    const relativePath = path.slice(notesDir.length).replace(/^\//, '');
-    const segments = relativePath.split('/');
-    const remoteFileName = segments.pop()?.replace('.md', '') || '';
-    const cleanRemoteTitle = (parsed.title || remoteFileName).replace(/_\w{6}$/, '');
+    // ★ 2. 레거시(frontmatter에 id가 전혀 없는 구버전 마크다운 파일)에 한해서만 제목 기반 매칭 적용!
+    // frontmatter에 명시적인 ID가 있는 메모는 제목이 같더라도(예: '새 메모'가 여러 개) ID가 다른 별개의 메모이므로 새 메모로 정상 생성!
+    if (!parsed.id) {
+      const relativePath = path.slice(notesDir.length).replace(/^\//, '');
+      const segments = relativePath.split('/');
+      const remoteFileName = segments.pop()?.replace('.md', '') || '';
+      const cleanRemoteTitle = (parsed.title || remoteFileName).replace(/_\w{6}$/, '');
 
-    const existingByTitle = notes.find((n) => {
-      const nTitleClean = n.title.replace(/_\w{6}$/, '');
-      return nTitleClean === cleanRemoteTitle;
-    });
+      const existingByTitle = notes.find((n) => {
+        const nTitleClean = n.title.replace(/_\w{6}$/, '');
+        return nTitleClean === cleanRemoteTitle;
+      });
 
-    if (existingByTitle) {
-      const localTime = new Date(existingByTitle.updatedAt || 0).getTime();
-      const remoteTime = new Date(parsed.updatedAt || 0).getTime();
+      if (existingByTitle) {
+        const localTime = new Date(existingByTitle.updatedAt || 0).getTime();
+        const remoteTime = new Date(parsed.updatedAt || 0).getTime();
 
-      if (remoteTime > localTime) {
-        existingByTitle.content = parsed.content;
-        existingByTitle.attachments = parsed.attachments;
-        existingByTitle.updatedAt = parsed.updatedAt || new Date().toISOString();
-        existingByTitle.githubSha = remoteFile.sha;
-        existingByTitle.githubPath = path;
-        existingByTitle.syncStatus = 'synced';
-        await saveNote(existingByTitle);
-        summary.downloaded++;
-      } else {
-        // 로컬이 최신 상태이므로 원격의 중복 잔여 파일 삭제!
-        await deleteFileFromGitHub(config, path, remoteFile.sha, `Remove legacy duplicate: ${path}`);
+        if (remoteTime > localTime) {
+          existingByTitle.content = parsed.content;
+          existingByTitle.attachments = parsed.attachments;
+          existingByTitle.updatedAt = parsed.updatedAt || new Date().toISOString();
+          existingByTitle.githubSha = remoteFile.sha;
+          existingByTitle.githubPath = path;
+          existingByTitle.syncStatus = 'synced';
+          await saveNote(existingByTitle);
+          summary.downloaded++;
+        } else {
+          // 로컬이 최신 상태이므로 원격의 중복 잔여 파일 삭제!
+          await deleteFileFromGitHub(config, path, remoteFile.sha, `Remove legacy duplicate: ${path}`);
+        }
+        continue;
       }
-      continue;
     }
 
     const folderSegments = path.slice(notesDir.length).replace(/^\//, '').split('/');

@@ -1,4 +1,4 @@
-// 모바일 브라우저(Samsung Internet, iOS Safari, 구버전 크롬/웹뷰) ES2024 호환성 폴리필
+// 모바일 브라우저(Samsung Internet, iOS Safari, 구버전 크롬/웹뷰) ES2024/ES2025 호환성 폴리필
 if (typeof Promise !== 'undefined' && !(Promise as any).withResolvers) {
   (Promise as any).withResolvers = function () {
     let resolve: any, reject: any;
@@ -36,6 +36,49 @@ if (typeof Set !== 'undefined' && !(Set.prototype as any).intersection) {
     }
     return res;
   };
+}
+// TC39 Map/WeakMap getOrInsertComputed & getOrInsert 폴리필 (pdf.js v6 모바일 렌더링 필수)
+if (typeof Map !== 'undefined') {
+  if (!(Map.prototype as any).getOrInsertComputed) {
+    (Map.prototype as any).getOrInsertComputed = function (key: any, callback: (k: any) => any) {
+      if (this.has(key)) {
+        return this.get(key);
+      }
+      const value = callback(key);
+      this.set(key, value);
+      return value;
+    };
+  }
+  if (!(Map.prototype as any).getOrInsert) {
+    (Map.prototype as any).getOrInsert = function (key: any, defaultValue: any) {
+      if (this.has(key)) {
+        return this.get(key);
+      }
+      this.set(key, defaultValue);
+      return defaultValue;
+    };
+  }
+}
+if (typeof WeakMap !== 'undefined') {
+  if (!(WeakMap.prototype as any).getOrInsertComputed) {
+    (WeakMap.prototype as any).getOrInsertComputed = function (key: any, callback: (k: any) => any) {
+      if (this.has(key)) {
+        return this.get(key);
+      }
+      const value = callback(key);
+      this.set(key, value);
+      return value;
+    };
+  }
+  if (!(WeakMap.prototype as any).getOrInsert) {
+    (WeakMap.prototype as any).getOrInsert = function (key: any, defaultValue: any) {
+      if (this.has(key)) {
+        return this.get(key);
+      }
+      this.set(key, defaultValue);
+      return defaultValue;
+    };
+  }
 }
 
 // 새 서비스 워커가 업데이트되어 활성화되면 구버전 캐시 대신 즉시 화면을 갱신
