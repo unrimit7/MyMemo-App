@@ -1,5 +1,6 @@
 import type { AttachmentItem } from '../types';
 import { parseExcelWorkbook } from './excelViewer';
+import { dataUrlToUint8Array, formatHexOffset, formatByteToHex, byteToAsciiChar } from './hexViewer';
 
 function getColumnLabel(index: number): string {
   let label = '';
@@ -116,10 +117,22 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
     att.type === 'application/msword' ||
     att.data?.startsWith('data:application/vnd.openxmlformats-officedocument.wordprocessingml');
 
+  const isBinary =
+    att.name.toLowerCase().endsWith('.bin') ||
+    att.name.toLowerCase().endsWith('.dat') ||
+    att.name.toLowerCase().endsWith('.exe') ||
+    att.name.toLowerCase().endsWith('.dll') ||
+    att.name.toLowerCase().endsWith('.so') ||
+    att.name.toLowerCase().endsWith('.hex') ||
+    att.name.toLowerCase().endsWith('.iso') ||
+    att.name.toLowerCase().endsWith('.rom') ||
+    att.name.toLowerCase().endsWith('.o') ||
+    att.name.toLowerCase().endsWith('.obj');
+
   // 사용자가 마크다운 [대괄호] 안에 수정한 표시 이름이 있으면 우선 사용
   const cleanLabel = (labelText || '')
-    .replace(/^[\s📄📎🖼️📝📊]*/, '')
-    .replace(/^(?:PDF\s*문서:\s*|한글\s*문서:\s*|한글:\s*|엑셀\s*문서:\s*|엑셀:\s*|워드\s*문서:\s*|워드:\s*|DOCX:\s*|파일:\s*)/i, '')
+    .replace(/^[\s📄📎🖼️📝📊💾]*/, '')
+    .replace(/^(?:PDF\s*문서:\s*|한글\s*문서:\s*|한글:\s*|엑셀\s*문서:\s*|엑셀:\s*|워드\s*문서:\s*|워드:\s*|DOCX:\s*|바이너리\s*문서:\s*|바이너리:\s*|HEX:\s*|파일:\s*)/i, '')
     .trim();
   const displayName = cleanLabel || att.name;
   const downloadName = isPdf && !displayName.toLowerCase().endsWith('.pdf')
@@ -394,16 +407,106 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
     return `<img src="${att.data}" alt="${cleanLabel || att.name}" class="rounded-xl max-w-full my-3 border border-slate-800 shadow-md cursor-pointer hover:opacity-95 transition-opacity" />`;
   }
 
+  if (isBinary) {
+    let previewLinesHtml = '';
+    try {
+      const bytes = dataUrlToUint8Array(att.data).slice(0, 64);
+      const rows = Math.min(4, Math.ceil(bytes.length / 16));
+      const lines: string[] = [];
+      for (let r = 0; r < rows; r++) {
+        const offset = r * 16;
+        const offsetStr = formatHexOffset(offset, 8);
+        const hexParts1: string[] = [];
+        const hexParts2: string[] = [];
+        const asciiParts: string[] = [];
+        for (let c = 0; c < 8; c++) {
+          const idx = offset + c;
+          if (idx < bytes.length) {
+            hexParts1.push(formatByteToHex(bytes[idx]));
+            asciiParts.push(byteToAsciiChar(bytes[idx]));
+          } else {
+            hexParts1.push('..');
+            asciiParts.push('.');
+          }
+        }
+        for (let c = 8; c < 16; c++) {
+          const idx = offset + c;
+          if (idx < bytes.length) {
+            hexParts2.push(formatByteToHex(bytes[idx]));
+            asciiParts.push(byteToAsciiChar(bytes[idx]));
+          } else {
+            hexParts2.push('..');
+            asciiParts.push('.');
+          }
+        }
+        lines.push(`
+          <div class="flex items-center text-slate-300 font-mono text-xs leading-5">
+            <span class="text-indigo-400 w-20 shrink-0 font-bold">${offsetStr}</span>
+            <span class="text-slate-200 tracking-wider w-48 shrink-0">${hexParts1.join(' ')}</span>
+            <span class="text-slate-600 px-1.5">|</span>
+            <span class="text-slate-200 tracking-wider w-48 shrink-0">${hexParts2.join(' ')}</span>
+            <span class="text-slate-400 pl-3 shrink-0 tracking-widest">${asciiParts.join('')}</span>
+          </div>
+        `);
+      }
+      previewLinesHtml = lines.join('');
+    } catch {
+      previewLinesHtml = '<div class="text-slate-500 text-xs py-2">바이너리 미리보기 준비 중...</div>';
+    }
+
+    return `
+<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl binary-inline-viewer" data-att-id="${att.id}" data-file-name="${displayName}">
+  <!-- 상단 헤더 -->
+  <div class="px-3.5 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
+    <div class="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-100 min-w-0 font-mono">
+      <span class="text-base md:text-lg">💾</span>
+      <span class="truncate" title="${displayName}">${displayName}</span>
+      <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 font-bold uppercase shrink-0">
+        HEX / BINARY
+      </span>
+    </div>
+
+    <div class="flex items-center gap-1.5 shrink-0">
+      <button type="button" class="hex-btn-edit px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white rounded-lg text-xs font-semibold border border-indigo-500/40 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="울트라에디트 스타일 16진수(HEX) 뷰어 및 바이트 직접 편집">
+        <span>🔍 헥스 편집기 열기</span>
+      </button>
+      <a href="${att.data}" download="${displayName}" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-slate-700 flex items-center gap-1 active:scale-95 transition-all no-underline" title="기기에 파일로 다운로드">
+        <span>⬇️ 저장</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- 헥스 덤프 미리보기 -->
+  <div class="w-full bg-slate-950 p-3 overflow-x-auto select-none cursor-pointer hover:bg-slate-925 transition-colors hex-btn-edit" data-att-id="${att.id}" data-file-name="${displayName}" title="클릭하면 울트라에디트 헥스 편집기가 열립니다.">
+    <div class="space-y-0.5 min-w-[500px]">
+      ${previewLinesHtml}
+    </div>
+  </div>
+
+  <!-- 하단 안내 바 -->
+  <div class="px-3.5 py-1.5 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
+    <span>상위 64바이트 헥스 덤프 미리보기</span>
+    <span class="text-slate-500 hidden sm:inline">전체 주소 탐색 및 바이트 직접 수정은 [🔍 헥스 편집기 열기]를 클릭하세요.</span>
+  </div>
+</div>
+    `.trim();
+  }
+
   // 일반 파일 카드
   return `
-<div class="my-3 inline-flex items-center justify-between gap-4 p-3 rounded-xl border border-slate-800 bg-slate-900/80 hover:border-slate-700 transition-all max-w-md">
+<div class="my-3 inline-flex items-center justify-between gap-4 p-3 rounded-xl border border-slate-800 bg-slate-900/80 hover:border-slate-700 transition-all max-w-lg">
   <div class="flex items-center gap-2 truncate">
     <span class="text-lg">📎</span>
     <span class="text-xs font-medium text-slate-200 truncate">${displayName}</span>
   </div>
-  <a href="${att.data}" download="${displayName}" class="shrink-0 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-indigo-300 rounded-lg text-xs font-semibold no-underline">
-    다운로드
-  </a>
+  <div class="flex items-center gap-1.5 shrink-0">
+    <button type="button" class="hex-btn-edit px-2.5 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-semibold flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="울트라에디트 스타일 16진수(HEX) 뷰어 및 바이트 직접 편집">
+      <span>🔍 헥스 편집</span>
+    </button>
+    <a href="${att.data}" download="${displayName}" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-semibold no-underline border border-slate-700 transition-all">
+      다운로드
+    </a>
+  </div>
 </div>
   `.trim();
 }

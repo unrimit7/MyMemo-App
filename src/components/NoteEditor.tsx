@@ -19,6 +19,7 @@ import { parseExcelWorkbook, sheetRowsToMarkdownTable, invalidateExcelCache } fr
 import { DocxViewerModal } from './DocxViewerModal';
 import { DocxEditorModal } from './DocxEditorModal';
 import { renderDocxToContainer, extractDocxTextAndHtml, invalidateDocxCache } from '../utils/docxViewer';
+import { HexEditorModal } from './HexEditorModal';
 import type { AttachmentItem } from '../types';
 import { 
   Lock, 
@@ -188,6 +189,11 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   } | null>(null);
   const [activeDocxEditorModal, setActiveDocxEditorModal] = useState<{
     attId: string;
+    data: string;
+    title: string;
+  } | null>(null);
+  const [activeHexModal, setActiveHexModal] = useState<{
+    attId?: string;
     data: string;
     title: string;
   } | null>(null);
@@ -2407,6 +2413,23 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       return;
     }
 
+    // 7-10. 바이너리/모든 첨부파일 [🔍 헥스 편집기] 또는 바이너리 뷰어 클릭 시 울트라에디트 모달 열기
+    const hexBtn = target.closest<HTMLElement>('.hex-btn-edit') || target.closest<HTMLElement>('.binary-container');
+    if (hexBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = hexBtn.getAttribute('data-att-id');
+      const title = hexBtn.getAttribute('data-file-name') || '바이너리 파일';
+      if (attId && localAttachments[attId]) {
+        setActiveHexModal({
+          attId,
+          data: localAttachments[attId].data,
+          title,
+        });
+      }
+      return;
+    }
+
     // 8. 링크(<a>) 클릭 처리: PWA 및 모바일/PC 어디서나 확실하게 새 창(새 브라우저 탭)으로 열기
     const anchor = target.closest('a');
     if (anchor && anchor.href) {
@@ -3623,6 +3646,34 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               setTimeout(() => {
                 renderInlineDocx.current(attId, updatedDataUrl);
               }, 120);
+            }
+          }}
+        />
+      )}
+
+      {/* 바이너리/HEX 울트라에디트 모달 */}
+      {activeHexModal && (
+        <HexEditorModal
+          isOpen={true}
+          onClose={() => setActiveHexModal(null)}
+          data={activeHexModal.data}
+          title={activeHexModal.title}
+          attId={activeHexModal.attId}
+          onSave={async (updatedDataUrl) => {
+            const attId = activeHexModal.attId;
+            if (attId) {
+              invalidateAttachmentBlobUrl(attId);
+              const updatedAtts = {
+                ...localAttachmentsRef.current,
+                [attId]: {
+                  ...(localAttachmentsRef.current[attId] || {}),
+                  data: updatedDataUrl,
+                },
+              };
+              setLocalAttachments(updatedAtts);
+              localAttachmentsRef.current = updatedAtts;
+              onUpdateNote({ attachments: updatedAtts });
+              setActiveHexModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
             }
           }}
         />

@@ -214,7 +214,51 @@ export async function processFileForNote(file: File): Promise<ProcessedDroppedFi
     });
   }
 
-  // 7. 기타 파일 (링크 형태)
+  // 7. 바이너리(BIN, DAT, EXE, DLL, HEX, ISO 등) 파일
+  const lowerName = fileName.toLowerCase();
+  if (
+    lowerName.endsWith('.bin') ||
+    lowerName.endsWith('.dat') ||
+    lowerName.endsWith('.exe') ||
+    lowerName.endsWith('.dll') ||
+    lowerName.endsWith('.so') ||
+    lowerName.endsWith('.hex') ||
+    lowerName.endsWith('.iso') ||
+    lowerName.endsWith('.rom') ||
+    lowerName.endsWith('.o') ||
+    lowerName.endsWith('.obj')
+  ) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        const attId = `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        resolve({
+          title: `[바이너리] ${safeBaseTitle}`,
+          content: `# 💾 ${safeName}\n\n[💾 바이너리: ${safeName}](attachment:${attId})\n\n`,
+          attachments: {
+            [attId]: {
+              id: attId,
+              name: fileName,
+              type: mimeType || 'application/octet-stream',
+              data: dataUrl,
+            },
+          },
+          type: 'other',
+        });
+      };
+      reader.onerror = () => {
+        resolve({
+          title: `[바이너리] ${safeBaseTitle}`,
+          content: `바이너리 파일: ${fileName}`,
+          type: 'other',
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // 8. 기타 일반 파일 (링크 형태)
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (e) => {
