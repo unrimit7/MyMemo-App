@@ -8,6 +8,8 @@ import { exportNoteToPdf } from '../utils/exportPdf';
 import { getFolderHierarchyPath, updateTitleWithFolderPath } from '../utils/folderPath';
 import { PdfViewerModal } from './PdfViewerModal';
 import { loadPdfDocument, renderPdfPageToCanvas } from '../utils/pdfViewer';
+import { HwpViewerModal } from './HwpViewerModal';
+import { loadHwpDocument, renderHwpPageToSvg, extractHwpText } from '../utils/hwpViewer';
 import type { AttachmentItem } from '../types';
 import { 
   Lock, 
@@ -126,6 +128,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   });
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [isProcessingPdf, setIsProcessingPdf] = useState(false);
+  const [isProcessingHwp, setIsProcessingHwp] = useState(false);
   const [isDragOverEditor, setIsDragOverEditor] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<{ attId: string; src: string; alt: string } | null>(null);
@@ -134,7 +137,13 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     title: string;
     initialPage: number;
   } | null>(null);
+  const [activeHwpModal, setActiveHwpModal] = useState<{
+    data: string;
+    title: string;
+    initialPage: number;
+  } | null>(null);
   const pdfPagesRef = useRef<Map<string, number>>(new Map());
+  const hwpPagesRef = useRef<Map<string, number>>(new Map());
 
   // 편집창 & 미리보기 분할(Split) 비율 (기본 50%, 15%~85% 조절 가능, 로컬 스토리지 보존)
   const [splitRatio, setSplitRatio] = useState<number>(() => {
@@ -157,6 +166,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
+  const hwpInputRef = useRef<HTMLInputElement>(null);
   const updateTimerRef = useRef<any>(null);
   const currentNoteIdRef = useRef(note?.id);
   const lastSentContentRef = useRef<string | null>(null);
@@ -620,7 +630,49 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       });
   };
 
-  // 미리보기 화면이 갱신되거나 활성화될 때 모든 인라인 PDF 캔버스 자동 렌더링
+  // 인라인 HWP/HWPX 페이지 렌더링 핸들러
+  const renderInlineHwp = useRef<(attId: string) => void>(() => {});
+  renderInlineHwp.current = (attId: string) => {
+    const preview = previewContainerRef.current;
+    if (!preview) return;
+
+    const viewer = preview.querySelector<HTMLElement>(`.hwp-inline-viewer[data-att-id="${attId}"]`);
+    if (!viewer) return;
+
+    const att = localAttachments[attId];
+    if (!att || !att.data) return;
+
+    const svgContainer = viewer.querySelector<HTMLElement>(`#hwp-svg-container-${attId}`);
+    const loadingBox = viewer.querySelector<HTMLElement>(`#hwp-loading-${attId}`);
+    const pageIndicator = viewer.querySelector<HTMLElement>(`#hwp-page-indicator-${attId}`);
+    const prevBtn = viewer.querySelector<HTMLButtonElement>('.hwp-btn-prev');
+    const nextBtn = viewer.querySelector<HTMLButtonElement>('.hwp-btn-next');
+
+    const currentPage = hwpPagesRef.current.get(attId) || 1;
+
+    loadHwpDocument(att.data, attId)
+      .then((doc) => {
+        const total = doc.pageCount();
+        if (pageIndicator) pageIndicator.textContent = `${currentPage} / ${total}`;
+        if (prevBtn) prevBtn.disabled = currentPage <= 1;
+        if (nextBtn) nextBtn.disabled = currentPage >= total;
+
+        if (svgContainer) {
+          const pageSvg = renderHwpPageToSvg(doc, currentPage - 1);
+          svgContainer.innerHTML = pageSvg;
+          if (loadingBox) loadingBox.classList.add('hidden');
+          svgContainer.classList.remove('hidden');
+        }
+      })
+      .catch((err) => {
+        console.error('인라인 HWP 렌더링 실패:', err);
+        if (loadingBox) {
+          loadingBox.innerHTML = '<span class="text-rose-400 font-semibold">⚠️ 한글(HWP) 문서를 로드하지 못했습니다. 상단 저장 버튼을 이용해 주세요.</span>';
+        }
+      });
+  };
+
+  // 미리보기 화면이 갱신되거나 활성화될 때 모든 인라인 PDF & HWP 자동 렌더링
   useEffect(() => {
     if (viewMode !== 'preview' && viewMode !== 'split') return;
     const preview = previewContainerRef.current;
@@ -634,6 +686,17 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           pdfPagesRef.current.set(attId, 1);
         }
         renderInlinePdf.current(attId);
+      }
+    });
+
+    const hwpViewers = preview.querySelectorAll<HTMLElement>('.hwp-inline-viewer');
+    hwpViewers.forEach((v) => {
+      const attId = v.getAttribute('data-att-id');
+      if (attId) {
+        if (!hwpPagesRef.current.has(attId)) {
+          hwpPagesRef.current.set(attId, 1);
+        }
+        renderInlineHwp.current(attId);
       }
     });
   }, [renderedPreviewHtml, viewMode, localAttachments]);
@@ -1497,9 +1560,12 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
     setLocalAttachments(updatedAttachments);
 
-    const isPdf = mimeType === 'application/pdf' || attName.endsWith('.pdf');
+    const isPdf = mimeType === 'application/pdf' || attName.toLowerCase().endsWith('.pdf');
+    const isHwp = attName.toLowerCase().endsWith('.hwp') || attName.toLowerCase().endsWith('.hwpx') || mimeType.includes('hwp');
     const insertTag = isPdf
       ? `\n\n[📄 PDF: ${safeName}](attachment:${attId})\n\n`
+      : isHwp
+      ? `\n\n[📝 한글: ${safeName}](attachment:${attId})\n\n`
       : `\n\n![${safeName}](attachment:${attId})\n\n`;
 
     const textarea = textareaRef.current;
@@ -1630,6 +1696,42 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       alert('PDF 파일을 불러오지 못했습니다.');
       setIsProcessingPdf(false);
       if (pdfInputRef.current) pdfInputRef.current.value = '';
+    }
+  };
+
+  // 4. 한글(HWP/HWPX) 문서 전용 파일 선택 핸들러
+  const handleHwpFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 30 * 1024 * 1024) {
+      alert('30MB 이하의 한글(HWP) 파일만 첨부할 수 있습니다.');
+      if (hwpInputRef.current) hwpInputRef.current.value = '';
+      return;
+    }
+
+    setIsProcessingHwp(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        if (dataUrl) {
+          insertAttachmentAtCursor(file.name, dataUrl, 'application/x-hwp');
+        }
+        setIsProcessingHwp(false);
+        if (hwpInputRef.current) hwpInputRef.current.value = '';
+      };
+      reader.onerror = () => {
+        alert('한글(HWP) 파일을 읽는 중 오류가 발생했습니다.');
+        setIsProcessingHwp(false);
+        if (hwpInputRef.current) hwpInputRef.current.value = '';
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('HWP 업로드 실패:', err);
+      alert('한글 파일을 불러오지 못했습니다.');
+      setIsProcessingHwp(false);
+      if (hwpInputRef.current) hwpInputRef.current.value = '';
     }
   };
 
@@ -1766,7 +1868,82 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       return;
     }
 
-    // 5. 링크(<a>) 클릭 처리: PWA 및 모바일/PC 어디서나 확실하게 새 창(새 브라우저 탭)으로 열기
+    // 5. HWP 인라인 이전/다음 페이지 버튼 클릭
+    const prevHwpBtn = target.closest<HTMLButtonElement>('.hwp-btn-prev');
+    if (prevHwpBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = prevHwpBtn.getAttribute('data-att-id');
+      if (attId) {
+        const curr = hwpPagesRef.current.get(attId) || 1;
+        if (curr > 1) {
+          hwpPagesRef.current.set(attId, curr - 1);
+          renderInlineHwp.current(attId);
+        }
+      }
+      return;
+    }
+
+    const nextHwpBtn = target.closest<HTMLButtonElement>('.hwp-btn-next');
+    if (nextHwpBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = nextHwpBtn.getAttribute('data-att-id');
+      if (attId) {
+        const curr = hwpPagesRef.current.get(attId) || 1;
+        hwpPagesRef.current.set(attId, curr + 1);
+        renderInlineHwp.current(attId);
+      }
+      return;
+    }
+
+    // 6. HWP 뷰어 클릭 또는 [🔍 크게 보기] 클릭 시 전면 모달 열기
+    const fullscreenHwpBtn = target.closest<HTMLElement>('.hwp-btn-fullscreen') || target.closest<HTMLElement>('.hwp-svg-container');
+    if (fullscreenHwpBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = fullscreenHwpBtn.getAttribute('data-att-id');
+      const title = fullscreenHwpBtn.getAttribute('data-file-name') || '한글 문서';
+      if (attId && localAttachments[attId]) {
+        const curr = hwpPagesRef.current.get(attId) || 1;
+        setActiveHwpModal({
+          data: localAttachments[attId].data,
+          title,
+          initialPage: curr,
+        });
+      }
+      return;
+    }
+
+    // 7. HWP [📝 메모로 가져오기] 버튼 클릭 시 텍스트 추출 및 본문 반영
+    const importHwpBtn = target.closest<HTMLElement>('.hwp-btn-import');
+    if (importHwpBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = importHwpBtn.getAttribute('data-att-id');
+      if (attId && localAttachments[attId]) {
+        loadHwpDocument(localAttachments[attId].data, attId)
+          .then((doc) => {
+            const text = extractHwpText(doc);
+            if (!text.trim()) {
+              alert('추출할 수 있는 본문 텍스트가 없습니다.');
+              return;
+            }
+            const insertBlock = `\n\n### 📝 ${localAttachments[attId].name} 본문\n\n${text}\n\n`;
+            const newContent = `${localContent}${insertBlock}`;
+            setLocalContent(newContent);
+            debouncedSyncToParent({ content: newContent });
+            alert(`'${localAttachments[attId].name}' 문서의 본문 텍스트(${text.length}자)를 메모에 성공적으로 가져왔습니다!`);
+          })
+          .catch((err) => {
+            console.error('HWP 텍스트 추출 실패:', err);
+            alert('한글 문서 텍스트를 추출하지 못했습니다.');
+          });
+      }
+      return;
+    }
+
+    // 8. 링크(<a>) 클릭 처리: PWA 및 모바일/PC 어디서나 확실하게 새 창(새 브라우저 탭)으로 열기
     const anchor = target.closest('a');
     if (anchor && anchor.href) {
       if (anchor.hasAttribute('download')) {
@@ -1869,6 +2046,15 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         ref={pdfInputRef}
         onChange={handlePdfFileChange}
         accept="application/pdf,.pdf"
+        className="hidden"
+      />
+
+      {/* 숨겨진 한글(HWP/HWPX) 문서 선택 인풋 */}
+      <input
+        type="file"
+        ref={hwpInputRef}
+        onChange={handleHwpFileChange}
+        accept=".hwp,.hwpx,application/x-hwp,application/haansofthwp,application/vnd.hancom.hwp,application/vnd.hancom.hwpx"
         className="hidden"
       />
 
@@ -2330,6 +2516,23 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               <span className="hidden xs:inline">PDF</span>
             </button>
 
+            {/* 한글(HWP) 문서 첨부 버튼 */}
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => hwpInputRef.current?.click()}
+              disabled={isProcessingHwp}
+              className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-blue-300 text-blue-400 bg-blue-500/10 border border-blue-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
+              title="커서 위치에 한글(HWP, HWPX) 문서 파일 첨부"
+            >
+              {isProcessingHwp ? (
+                <Loader2 size={12} className="animate-spin text-blue-400" />
+              ) : (
+                <FileText size={12} className="text-blue-400" />
+              )}
+              <span className="hidden xs:inline">한글</span>
+            </button>
+
             {/* GitHub 동기화 버튼 (Ctrl + S) */}
             {onSync && (
               <button
@@ -2585,6 +2788,17 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           data={activePdfModal.data}
           title={activePdfModal.title}
           initialPage={activePdfModal.initialPage}
+        />
+      )}
+
+      {/* 한글(HWP/HWPX) 전면 뷰어 모달 (모바일/PC 어디서나 열람 & 텍스트 추출) */}
+      {activeHwpModal && (
+        <HwpViewerModal
+          isOpen={true}
+          onClose={() => setActiveHwpModal(null)}
+          data={activeHwpModal.data}
+          title={activeHwpModal.title}
+          initialPage={activeHwpModal.initialPage}
         />
       )}
 

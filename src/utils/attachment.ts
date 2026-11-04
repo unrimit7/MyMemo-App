@@ -44,14 +44,76 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
     att.name.toLowerCase().endsWith('.pdf') ||
     att.data.startsWith('data:application/pdf');
 
+  const isHwp =
+    att.name.toLowerCase().endsWith('.hwp') ||
+    att.name.toLowerCase().endsWith('.hwpx') ||
+    att.type === 'application/x-hwp' ||
+    att.type === 'application/haansofthwp' ||
+    att.type === 'application/vnd.hancom.hwp' ||
+    att.type === 'application/vnd.hancom.hwpx';
+
   // 사용자가 마크다운 [대괄호] 안에 수정한 표시 이름이 있으면 우선 사용
   const cleanLabel = (labelText || '')
-    .replace(/^[\s📄📎🖼️]*/, '')
-    .replace(/^(?:PDF\s*문서:\s*|파일:\s*)/i, '')
+    .replace(/^[\s📄📎🖼️📝]*/, '')
+    .replace(/^(?:PDF\s*문서:\s*|한글\s*문서:\s*|한글:\s*|파일:\s*)/i, '')
     .trim();
   const displayName = cleanLabel || att.name;
-  const downloadName = isPdf && !displayName.toLowerCase().endsWith('.pdf') ? `${displayName}.pdf` : displayName;
-  const targetUrl = isPdf ? getAttachmentBlobUrl(att) : att.data;
+  const downloadName = isPdf && !displayName.toLowerCase().endsWith('.pdf')
+    ? `${displayName}.pdf`
+    : isHwp && !displayName.toLowerCase().endsWith('.hwp') && !displayName.toLowerCase().endsWith('.hwpx')
+    ? `${displayName}.hwp`
+    : displayName;
+  const targetUrl = (isPdf || isHwp) ? getAttachmentBlobUrl(att) : att.data;
+
+  if (isHwp) {
+    return `
+<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl hwp-inline-viewer" data-att-id="${att.id}" data-file-name="${displayName}">
+  <!-- 상단 헤더: 문서명, 페이지 이동, 메모로 가져오기, 전면 뷰어, 다운로드 버튼 -->
+  <div class="px-3.5 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
+    <div class="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-100 min-w-0">
+      <span class="text-base md:text-lg">📝</span>
+      <span class="truncate" title="${displayName}">${displayName}</span>
+      <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 font-bold shrink-0">
+        HWP
+      </span>
+    </div>
+
+    <div class="flex items-center gap-1.5 shrink-0">
+      <!-- 페이지 이동 컨트롤 -->
+      <div class="flex items-center gap-1 bg-slate-950 border border-slate-800 rounded-lg px-2 py-0.5 text-xs text-slate-300">
+        <button type="button" class="hwp-btn-prev px-1.5 py-0.5 hover:text-white hover:bg-slate-800 rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent" data-att-id="${att.id}" title="이전 페이지">◀</button>
+        <span class="hwp-page-indicator font-semibold text-xs px-1" id="hwp-page-indicator-${att.id}">1 / ?</span>
+        <button type="button" class="hwp-btn-next px-1.5 py-0.5 hover:text-white hover:bg-slate-800 rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent" data-att-id="${att.id}" title="다음 페이지">▶</button>
+      </div>
+
+      <!-- 본문 메모로 가져오기 버튼 -->
+      <button type="button" class="hwp-btn-import px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white rounded-lg text-xs font-semibold border border-indigo-500/40 flex items-center gap-1 active:scale-95 transition-all" data-att-id="${att.id}" data-file-name="${displayName}" title="한글 문서 내용을 마크다운 본문으로 가져오기">
+        <span>📝 메모로 가져오기</span>
+      </button>
+
+      <!-- 전면 뷰어로 크게 보기 버튼 -->
+      <button type="button" class="hwp-btn-fullscreen px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-indigo-300 rounded-lg text-xs font-semibold border border-indigo-500/30 flex items-center gap-1 active:scale-95 transition-all" data-att-id="${att.id}" data-file-name="${displayName}" title="전면 뷰어로 크게 보기">
+        <span>🔍 크게 보기</span>
+      </button>
+
+      <!-- 다운로드 버튼 -->
+      <a href="${targetUrl}" download="${downloadName}" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-slate-700 flex items-center gap-1 active:scale-95 transition-all no-underline" title="기기에 파일로 다운로드">
+        <span>⬇️ 저장</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- 본문 인라인 HWP SVG 뷰어 (스마트폰 및 PC 브라우저에서 화면에 즉시 렌더링!) -->
+  <div class="w-full bg-slate-950 p-2 md:p-4 flex flex-col items-center justify-center overflow-x-auto min-h-[300px]">
+    <div class="hwp-loading-box flex items-center justify-center gap-2 py-10 text-xs text-slate-400" id="hwp-loading-${att.id}">
+      <span class="animate-spin inline-block w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full"></span>
+      <span>한글(HWP) 문서 페이지를 렌더링하는 중입니다...</span>
+    </div>
+    <div id="hwp-svg-container-${att.id}" class="hwp-svg-container rounded-lg shadow-xl bg-white p-2 md:p-4 text-slate-900 max-w-full cursor-zoom-in hidden" data-att-id="${att.id}" data-file-name="${displayName}" title="클릭하면 전면 뷰어로 크게 볼 수 있습니다."></div>
+  </div>
+</div>
+    `.trim();
+  }
 
   if (isPdf) {
     return `
@@ -214,8 +276,11 @@ export function cleanLegacyAttachments(
       }
 
       const safeName = name.replace(/`/g, "'").replace(/[\[\]]/g, '').trim();
-      if (mimeType === 'application/pdf') {
+      if (mimeType === 'application/pdf' || name.toLowerCase().endsWith('.pdf')) {
         return `\n\n[📄 PDF: ${safeName}](attachment:${existingId})\n\n`;
+      }
+      if (name.toLowerCase().endsWith('.hwp') || name.toLowerCase().endsWith('.hwpx') || mimeType.includes('hwp')) {
+        return `\n\n[📝 한글: ${safeName}](attachment:${existingId})\n\n`;
       }
       return `\n\n[📎 파일: ${safeName}](attachment:${existingId})\n\n`;
     }

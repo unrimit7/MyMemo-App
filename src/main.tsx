@@ -1,3 +1,20 @@
+// 모바일 브라우저(Samsung Internet, iOS Safari, 구버전 크롬) ES2024 호환성 폴리필
+if (typeof Promise !== 'undefined' && !(Promise as any).withResolvers) {
+  (Promise as any).withResolvers = function () {
+    let resolve: any, reject: any;
+    const promise = new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  };
+}
+if (typeof Response !== 'undefined' && !Response.prototype.bytes) {
+  Response.prototype.bytes = async function () {
+    return new Uint8Array(await this.arrayBuffer());
+  };
+}
+
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';

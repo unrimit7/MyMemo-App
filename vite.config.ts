@@ -3,13 +3,68 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+// 모바일 브라우저(Samsung Internet, iOS Safari 등) 웹 워커 내 ES2024 호환성 패치 플러그인
+function patchPdfWorkerPlugin() {
+  const polyfill = `
+if (typeof Promise !== 'undefined' && !Promise.withResolvers) {
+  Promise.withResolvers = function () {
+    let resolve, reject;
+    const promise = new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  };
+}
+if (typeof Response !== 'undefined' && !Response.prototype.bytes) {
+  Response.prototype.bytes = async function () {
+    return new Uint8Array(await this.arrayBuffer());
+  };
+}
+`;
+  return {
+    name: 'patch-pdf-worker',
+    generateBundle(_options: any, bundle: Record<string, any>) {
+      for (const fileName in bundle) {
+        if (fileName.includes('pdf.worker')) {
+          const item = bundle[fileName];
+          let content = '';
+          if (item.type === 'asset') {
+            content = typeof item.source === 'string' ? item.source : new TextDecoder().decode(item.source);
+          } else if (item.type === 'chunk') {
+            content = item.code;
+          }
+          if (content) {
+            let patched = polyfill + content;
+            patched = patched.replace(
+              /return\s+response\.bytes\(\);/g,
+              'return typeof response.bytes === "function" ? response.bytes() : response.arrayBuffer().then((b) => new Uint8Array(b));'
+            );
+            if (item.type === 'asset') {
+              item.source = typeof item.source === 'string' ? patched : new TextEncoder().encode(patched);
+            } else {
+              item.code = patched;
+            }
+            console.log(`[patch-pdf-worker] Successfully patched ${fileName}`);
+          }
+        }
+      }
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
+    patchPdfWorkerPlugin(),
     react(),
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      workbox: {
+        maximumFileSizeToCacheInBytes: 25 * 1024 * 1024, // 25MB 이하의 WASM 및 워커 파일 오프라인 캐싱 허용
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,wasm,mjs}']
+      },
       includeAssets: ['favicon.ico', 'favicon.svg', 'favicon-32x32.png', 'favicon-16x16.png', 'apple-touch-icon.png'],
       manifest: {
         name: 'MyMemo - GitHub Sync & Private Notes',

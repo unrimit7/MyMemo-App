@@ -104,6 +104,42 @@ export async function processFileForNote(file: File): Promise<ProcessedDroppedFi
     });
   }
 
+  // 4. 한글(HWP, HWPX) 파일
+  if (
+    fileName.toLowerCase().endsWith('.hwp') ||
+    fileName.toLowerCase().endsWith('.hwpx') ||
+    mimeType.includes('hwp')
+  ) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        const attId = `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        resolve({
+          title: `[한글] ${safeBaseTitle}`,
+          content: `# 📝 ${safeName}\n\n[📝 한글 문서: ${safeName}](attachment:${attId})\n\n`,
+          attachments: {
+            [attId]: {
+              id: attId,
+              name: fileName,
+              type: 'application/x-hwp',
+              data: dataUrl,
+            },
+          },
+          type: 'other',
+        });
+      };
+      reader.onerror = () => {
+        resolve({
+          title: `[한글] ${safeBaseTitle}`,
+          content: `한글 파일: ${fileName}`,
+          type: 'other',
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
   // 4. 기타 파일 (링크 형태)
   return new Promise((resolve) => {
     const reader = new FileReader();
