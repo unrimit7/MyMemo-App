@@ -109,18 +109,75 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
     att.data?.startsWith('data:application/vnd.openxmlformats') ||
     att.data?.startsWith('data:text/csv');
 
+  const isDocx =
+    att.name.toLowerCase().endsWith('.docx') ||
+    att.name.toLowerCase().endsWith('.doc') ||
+    att.type?.includes('wordprocessingml') ||
+    att.type === 'application/msword' ||
+    att.data?.startsWith('data:application/vnd.openxmlformats-officedocument.wordprocessingml');
+
   // 사용자가 마크다운 [대괄호] 안에 수정한 표시 이름이 있으면 우선 사용
   const cleanLabel = (labelText || '')
     .replace(/^[\s📄📎🖼️📝📊]*/, '')
-    .replace(/^(?:PDF\s*문서:\s*|한글\s*문서:\s*|한글:\s*|엑셀\s*문서:\s*|엑셀:\s*|파일:\s*)/i, '')
+    .replace(/^(?:PDF\s*문서:\s*|한글\s*문서:\s*|한글:\s*|엑셀\s*문서:\s*|엑셀:\s*|워드\s*문서:\s*|워드:\s*|DOCX:\s*|파일:\s*)/i, '')
     .trim();
   const displayName = cleanLabel || att.name;
   const downloadName = isPdf && !displayName.toLowerCase().endsWith('.pdf')
     ? `${displayName}.pdf`
     : isHwp && !displayName.toLowerCase().endsWith('.hwp') && !displayName.toLowerCase().endsWith('.hwpx')
     ? `${displayName}.hwp`
+    : isDocx && !displayName.toLowerCase().endsWith('.docx') && !displayName.toLowerCase().endsWith('.doc')
+    ? `${displayName}.docx`
     : displayName;
   const targetUrl = (isPdf || isHwp) ? getAttachmentBlobUrl(att) : att.data;
+
+  if (isDocx) {
+    return `
+<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl docx-inline-viewer" data-att-id="${att.id}" data-file-name="${displayName}">
+  <!-- 상단 헤더: 문서명, 직접 편집, 메모로 가져오기, 전면 뷰어, 다운로드 버튼 -->
+  <div class="px-3.5 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
+    <div class="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-100 min-w-0">
+      <span class="text-base md:text-lg">📄</span>
+      <span class="truncate" title="${displayName}">${displayName}</span>
+      <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 font-bold shrink-0 uppercase">
+        DOCX
+      </span>
+    </div>
+
+    <div class="flex items-center gap-1.5 shrink-0">
+      <!-- 워드 직접 편집 버튼 -->
+      <button type="button" class="docx-btn-edit px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 rounded-lg text-xs font-semibold border border-blue-500/30 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="웹에서 워드 문서 직접 편집">
+        <span>✏️ 직접 편집</span>
+      </button>
+
+      <!-- 본문 메모로 가져오기 버튼 -->
+      <button type="button" class="docx-btn-import px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white rounded-lg text-xs font-semibold border border-indigo-500/40 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="워드 문서 내용을 마크다운으로 메모 본문에 가져오기">
+        <span>📝 메모로 가져오기</span>
+      </button>
+
+      <!-- 전면 뷰어로 크게 보기 버튼 -->
+      <button type="button" class="docx-btn-fullscreen px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-indigo-300 rounded-lg text-xs font-semibold border border-indigo-500/30 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="전면 뷰어로 크게 보기">
+        <span>🔍 크게 보기</span>
+      </button>
+
+      <!-- 다운로드 버튼 -->
+      <a href="${att.data}" download="${downloadName}" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-slate-700 flex items-center gap-1 active:scale-95 transition-all no-underline" title="기기에 파일로 다운로드">
+        <span>⬇️ 저장</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- 본문 인라인 워드 뷰어 컨테이너 -->
+  <div class="w-full bg-slate-950 p-2 md:p-4 flex flex-col items-center justify-center overflow-x-auto min-h-[300px] max-h-[520px]">
+    <div class="docx-loading-box flex items-center justify-center gap-2 py-10 text-xs text-slate-400" id="docx-loading-${att.id}">
+      <span class="animate-spin inline-block w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full"></span>
+      <span>워드(DOCX) 문서를 렌더링하는 중입니다...</span>
+    </div>
+    <div id="docx-container-${att.id}" class="docx-container rounded-sm shadow-xl bg-white p-4 md:p-8 text-slate-900 max-w-[800px] w-full font-serif cursor-zoom-in hidden" data-att-id="${att.id}" data-file-name="${displayName}" title="클릭하면 전면 뷰어로 크게 볼 수 있습니다."></div>
+  </div>
+</div>
+    `.trim();
+  }
 
   if (isExcel) {
     const isCsv = att.name.toLowerCase().endsWith('.csv') || att.type === 'text/csv';
@@ -462,6 +519,14 @@ export function cleanLegacyAttachments(
         mimeType === 'text/csv'
       ) {
         return `\n\n[📊 엑셀: ${safeName}](attachment:${existingId})\n\n`;
+      }
+      if (
+        name.toLowerCase().endsWith('.docx') ||
+        name.toLowerCase().endsWith('.doc') ||
+        mimeType.includes('wordprocessingml') ||
+        mimeType === 'application/msword'
+      ) {
+        return `\n\n[📄 워드: ${safeName}](attachment:${existingId})\n\n`;
       }
       return `\n\n[📎 파일: ${safeName}](attachment:${existingId})\n\n`;
     }

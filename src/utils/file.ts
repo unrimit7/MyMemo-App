@@ -177,7 +177,44 @@ export async function processFileForNote(file: File): Promise<ProcessedDroppedFi
     });
   }
 
-  // 6. 기타 파일 (링크 형태)
+  // 6. 워드(DOCX, DOC) 문서 파일
+  if (
+    fileName.toLowerCase().endsWith('.docx') ||
+    fileName.toLowerCase().endsWith('.doc') ||
+    mimeType.includes('wordprocessingml') ||
+    mimeType === 'application/msword'
+  ) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        const attId = `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        resolve({
+          title: `[워드] ${safeBaseTitle}`,
+          content: `# 📄 ${safeName}\n\n[📄 워드: ${safeName}](attachment:${attId})\n\n`,
+          attachments: {
+            [attId]: {
+              id: attId,
+              name: fileName,
+              type: mimeType || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              data: dataUrl,
+            },
+          },
+          type: 'other',
+        });
+      };
+      reader.onerror = () => {
+        resolve({
+          title: `[워드] ${safeBaseTitle}`,
+          content: `워드 파일: ${fileName}`,
+          type: 'other',
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // 7. 기타 파일 (링크 형태)
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (e) => {

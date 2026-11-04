@@ -16,6 +16,9 @@ import { loadHwpDocument, renderHwpPageToSvg, extractHwpText, invalidateHwpCache
 import { ExcelViewerModal } from './ExcelViewerModal';
 import { ExcelEditorModal } from './ExcelEditorModal';
 import { parseExcelWorkbook, sheetRowsToMarkdownTable, invalidateExcelCache } from '../utils/excelViewer';
+import { DocxViewerModal } from './DocxViewerModal';
+import { DocxEditorModal } from './DocxEditorModal';
+import { renderDocxToContainer, extractDocxTextAndHtml, invalidateDocxCache } from '../utils/docxViewer';
 import type { AttachmentItem } from '../types';
 import { 
   Lock, 
@@ -137,6 +140,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const [isProcessingPdf, setIsProcessingPdf] = useState(false);
   const [isProcessingHwp, setIsProcessingHwp] = useState(false);
   const [isProcessingExcel, setIsProcessingExcel] = useState(false);
+  const [isProcessingDocx, setIsProcessingDocx] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isDragOverEditor, setIsDragOverEditor] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
@@ -177,6 +181,16 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     data: string;
     title: string;
   } | null>(null);
+  const [activeDocxModal, setActiveDocxModal] = useState<{
+    attId?: string;
+    data: string;
+    title: string;
+  } | null>(null);
+  const [activeDocxEditorModal, setActiveDocxEditorModal] = useState<{
+    attId: string;
+    data: string;
+    title: string;
+  } | null>(null);
   const pdfPagesRef = useRef<Map<string, number>>(new Map());
   const hwpPagesRef = useRef<Map<string, number>>(new Map());
 
@@ -205,6 +219,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const hwpInputRef = useRef<HTMLInputElement>(null);
   const excelInputRef = useRef<HTMLInputElement>(null);
+  const docxInputRef = useRef<HTMLInputElement>(null);
   const updateTimerRef = useRef<any>(null);
   const currentNoteIdRef = useRef(note?.id);
   const lastSentContentRef = useRef<string | null>(null);
@@ -726,7 +741,38 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       });
   };
 
-  // 미리보기 화면이 갱신되거나 활성화될 때 모든 인라인 PDF & HWP 자동 렌더링
+  // 인라인 Word(DOCX) 페이지 렌더링 핸들러
+  const renderInlineDocx = useRef<(attId: string, customData?: string) => void>(() => {});
+  renderInlineDocx.current = (attId: string, customData?: string) => {
+    const preview = previewContainerRef.current;
+    if (!preview) return;
+
+    const viewer = preview.querySelector<HTMLElement>(`.docx-inline-viewer[data-att-id="${attId}"]`);
+    if (!viewer) return;
+
+    const att = localAttachments[attId];
+    const dataToUse = customData || att?.data;
+    if (!dataToUse) return;
+
+    const docxContainer = viewer.querySelector<HTMLElement>(`#docx-container-${attId}`);
+    const loadingBox = viewer.querySelector<HTMLElement>(`#docx-loading-${attId}`);
+
+    if (docxContainer) {
+      renderDocxToContainer(dataToUse, docxContainer)
+        .then(() => {
+          if (loadingBox) loadingBox.classList.add('hidden');
+          docxContainer.classList.remove('hidden');
+        })
+        .catch((err) => {
+          console.error('인라인 워드 렌더링 실패:', err);
+          if (loadingBox) {
+            loadingBox.innerHTML = '<span class="text-rose-400 font-semibold text-xs">⚠️ 워드(DOCX) 문서를 로드하지 못했습니다. 상단 저장 버튼을 이용해 주세요.</span>';
+          }
+        });
+    }
+  };
+
+  // 미리보기 화면이 갱신되거나 활성화될 때 모든 인라인 PDF & HWP & DOCX 자동 렌더링
   useEffect(() => {
     if (viewMode !== 'preview' && viewMode !== 'split') return;
     const preview = previewContainerRef.current;
@@ -751,6 +797,14 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           hwpPagesRef.current.set(attId, 1);
         }
         renderInlineHwp.current(attId);
+      }
+    });
+
+    const docxViewers = preview.querySelectorAll<HTMLElement>('.docx-inline-viewer');
+    docxViewers.forEach((v) => {
+      const attId = v.getAttribute('data-att-id');
+      if (attId) {
+        renderInlineDocx.current(attId);
       }
     });
   }, [renderedPreviewHtml, viewMode, localAttachments]);
@@ -1622,12 +1676,19 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       attName.toLowerCase().endsWith('.csv') ||
       mimeType.includes('spreadsheet') ||
       mimeType === 'text/csv';
+    const isDocx =
+      attName.toLowerCase().endsWith('.docx') ||
+      attName.toLowerCase().endsWith('.doc') ||
+      mimeType.includes('wordprocessingml') ||
+      mimeType === 'application/msword';
     const insertTag = isPdf
       ? `\n\n[📄 PDF: ${safeName}](attachment:${attId})\n\n`
       : isHwp
       ? `\n\n[📝 한글: ${safeName}](attachment:${attId})\n\n`
       : isExcel
       ? `\n\n[📊 엑셀: ${safeName}](attachment:${attId})\n\n`
+      : isDocx
+      ? `\n\n[📄 워드: ${safeName}](attachment:${attId})\n\n`
       : `\n\n![${safeName}](attachment:${attId})\n\n`;
 
     const textarea = textareaRef.current;
@@ -1835,6 +1896,43 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       alert('엑셀 파일을 불러오지 못했습니다.');
       setIsProcessingExcel(false);
       if (excelInputRef.current) excelInputRef.current.value = '';
+    }
+  };
+
+  // 4-3. 워드(DOCX, DOC) 문서 전용 파일 선택 핸들러
+  const handleDocxFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 30 * 1024 * 1024) {
+      alert('30MB 이하의 워드 파일만 첨부할 수 있습니다.');
+      if (docxInputRef.current) docxInputRef.current.value = '';
+      return;
+    }
+
+    setIsProcessingDocx(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        if (dataUrl) {
+          const mime = file.type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+          insertAttachmentAtCursor(file.name, dataUrl, mime);
+        }
+        setIsProcessingDocx(false);
+        if (docxInputRef.current) docxInputRef.current.value = '';
+      };
+      reader.onerror = () => {
+        alert('워드 파일을 읽는 중 오류가 발생했습니다.');
+        setIsProcessingDocx(false);
+        if (docxInputRef.current) docxInputRef.current.value = '';
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('워드 업로드 실패:', err);
+      alert('워드 파일을 불러오지 못했습니다.');
+      setIsProcessingDocx(false);
+      if (docxInputRef.current) docxInputRef.current.value = '';
     }
   };
 
@@ -2245,6 +2343,68 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       return;
     }
 
+    // 7-7. 워드 [✏️ 직접 편집] 버튼 클릭 시 웹 에디터 모달 열기
+    const editDocxBtn = target.closest<HTMLElement>('.docx-btn-edit');
+    if (editDocxBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = editDocxBtn.getAttribute('data-att-id');
+      const title = editDocxBtn.getAttribute('data-file-name') || '워드 문서';
+      if (attId && localAttachments[attId]) {
+        setActiveDocxEditorModal({
+          attId,
+          data: localAttachments[attId].data,
+          title,
+        });
+      }
+      return;
+    }
+
+    // 7-8. 워드 [🔍 크게 보기] 또는 워드 용지 클릭 시 전면 뷰어 모달 열기
+    const fullscreenDocxBtn = target.closest<HTMLElement>('.docx-btn-fullscreen') || target.closest<HTMLElement>('.docx-container');
+    if (fullscreenDocxBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = fullscreenDocxBtn.getAttribute('data-att-id');
+      const title = fullscreenDocxBtn.getAttribute('data-file-name') || '워드 문서';
+      if (attId && localAttachments[attId]) {
+        setActiveDocxModal({
+          attId,
+          data: localAttachments[attId].data,
+          title,
+        });
+      }
+      return;
+    }
+
+    // 7-9. 워드 [📝 메모로 가져오기] 클릭 시 마크다운으로 본문 반영
+    const importDocxBtn = target.closest<HTMLElement>('.docx-btn-import');
+    if (importDocxBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = importDocxBtn.getAttribute('data-att-id');
+      if (attId && localAttachments[attId]) {
+        extractDocxTextAndHtml(localAttachments[attId].data)
+          .then(({ markdown, text }) => {
+            const contentToImport = markdown || text;
+            if (!contentToImport.trim()) {
+              alert('추출할 수 있는 문서 내용이 없습니다.');
+              return;
+            }
+            const insertBlock = `\n\n### 📄 ${localAttachments[attId].name} 내용\n\n${contentToImport}\n\n`;
+            const newContent = `${localContent}${insertBlock}`;
+            setLocalContent(newContent);
+            debouncedSyncToParent({ content: newContent });
+            alert(`'${localAttachments[attId].name}' 문서 내용(${contentToImport.length}자)을 메모에 성공적으로 가져왔습니다!`);
+          })
+          .catch((err) => {
+            console.error('워드 본문 추출 실패:', err);
+            alert('워드 문서 내용을 추출하지 못했습니다.');
+          });
+      }
+      return;
+    }
+
     // 8. 링크(<a>) 클릭 처리: PWA 및 모바일/PC 어디서나 확실하게 새 창(새 브라우저 탭)으로 열기
     const anchor = target.closest('a');
     if (anchor && anchor.href) {
@@ -2366,6 +2526,15 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         ref={excelInputRef}
         onChange={handleExcelFileChange}
         accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+        className="hidden"
+      />
+
+      {/* 숨겨진 워드(DOCX, DOC) 문서 선택 인풋 */}
+      <input
+        type="file"
+        ref={docxInputRef}
+        onChange={handleDocxFileChange}
+        accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword"
         className="hidden"
       />
 
@@ -2875,6 +3044,23 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               <span className="hidden xs:inline">엑셀</span>
             </button>
 
+            {/* 워드(DOCX) 문서 첨부 버튼 */}
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => docxInputRef.current?.click()}
+              disabled={isProcessingDocx}
+              className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-blue-300 text-blue-400 bg-blue-500/10 border border-blue-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
+              title="커서 위치에 워드(DOCX, DOC) 문서 파일 첨부"
+            >
+              {isProcessingDocx ? (
+                <Loader2 size={12} className="animate-spin text-blue-400" />
+              ) : (
+                <FileText size={12} className="text-blue-400" />
+              )}
+              <span className="hidden xs:inline">워드</span>
+            </button>
+
             {/* GitHub 동기화 버튼 (Ctrl + S) */}
             {onSync && (
               <button
@@ -3366,6 +3552,75 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
               // 3. 편집 모달 내부 데이터 동기화
               setActiveExcelEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
+            }
+          }}
+        />
+      )}
+
+      {/* 워드(DOCX) 전면 뷰어 모달 */}
+      {activeDocxModal && (
+        <DocxViewerModal
+          isOpen={true}
+          onClose={() => setActiveDocxModal(null)}
+          data={activeDocxModal.data}
+          title={activeDocxModal.title}
+          attId={activeDocxModal.attId}
+          onOpenEditor={() => {
+            const attId = activeDocxModal.attId || Object.keys(localAttachments).find(
+              (id) => localAttachments[id].data === activeDocxModal.data
+            ) || '';
+            setActiveDocxEditorModal({
+              attId,
+              data: activeDocxModal.data,
+              title: activeDocxModal.title,
+            });
+            setActiveDocxModal(null);
+          }}
+          onImportText={(text) => {
+            const insertBlock = `\n\n### 📄 ${activeDocxModal.title} 내용\n\n${text}\n\n`;
+            const newContent = `${localContent}${insertBlock}`;
+            setLocalContent(newContent);
+            debouncedSyncToParent({ content: newContent });
+            alert(`'${activeDocxModal.title}' 문서 내용(${text.length}자)을 메모에 성공적으로 가져왔습니다!`);
+          }}
+        />
+      )}
+
+      {/* 워드(DOCX) 웹 직접 편집기 모달 */}
+      {activeDocxEditorModal && (
+        <DocxEditorModal
+          isOpen={true}
+          onClose={() => setActiveDocxEditorModal(null)}
+          data={activeDocxEditorModal.data}
+          title={activeDocxEditorModal.title}
+          attId={activeDocxEditorModal.attId}
+          onSave={async (updatedDataUrl) => {
+            const attId = activeDocxEditorModal.attId;
+            if (attId) {
+              // 1. 워드 캐시 및 Blob URL 캐시 무효화
+              invalidateDocxCache(attId);
+              invalidateAttachmentBlobUrl(attId);
+
+              // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장
+              const updatedAtts = {
+                ...localAttachmentsRef.current,
+                [attId]: {
+                  ...(localAttachmentsRef.current[attId] || {}),
+                  data: updatedDataUrl,
+                },
+              };
+              setLocalAttachments(updatedAtts);
+              localAttachmentsRef.current = updatedAtts;
+              onUpdateNote({ attachments: updatedAtts });
+
+              // 3. 편집 모달 내부 데이터 동기화
+              setActiveDocxEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
+
+              // 4. 인라인 뷰어 재렌더링
+              renderInlineDocx.current(attId, updatedDataUrl);
+              setTimeout(() => {
+                renderInlineDocx.current(attId, updatedDataUrl);
+              }, 120);
             }
           }}
         />
