@@ -36,7 +36,9 @@ interface TextAnnotation {
   text: string;
   fontSize: number;
   color: string;
-  hasBackground: boolean;
+  hasBox: boolean;
+  boxBorderColor: string;
+  boxBgColor: string;
 }
 
 interface StampAnnotation {
@@ -90,6 +92,8 @@ function uint8ArrayToDataUrl(bytes: Uint8Array, mimeType: string = 'application/
 
 const PEN_COLORS = ['#dc2626', '#2563eb', '#16a34a', '#000000', '#9333ea'];
 const HIGHLIGHTER_COLORS = ['#fde047', '#86efac', '#f472b6', '#67e8f9'];
+const TEXT_COLORS = ['#000000', '#dc2626', '#2563eb', '#16a34a', '#9333ea'];
+const BORDER_COLORS = ['#000000', '#dc2626', '#2563eb', '#16a34a', '#9333ea', '#64748b'];
 
 export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
   isOpen,
@@ -115,10 +119,17 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
   const [highlighterColor, setHighlighterColor] = useState<string>('#fde047');
   const [highlighterWidth, setHighlighterWidth] = useState<number>(20);
   
-  // 텍스트 툴 설정
+  // 텍스트 & 사각형 테두리 설정
   const [textFontSize, setTextFontSize] = useState<number>(16);
-  const [textColor, setTextColor] = useState<string>('#dc2626');
-  const [textHasBg, setTextHasBg] = useState<boolean>(true);
+  const [textColor, setTextColor] = useState<string>('#000000');
+  const [textHasBox, setTextHasBox] = useState<boolean>(true);
+  const [textBoxBorderColor, setTextBoxBorderColor] = useState<string>('#000000');
+  const [textBoxBgColor, setTextBoxBgColor] = useState<string>('#ffffff');
+
+  // 텍스트 입력 팝업 모달 상태
+  const [showTextModal, setShowTextModal] = useState<boolean>(false);
+  const [pendingTextPos, setPendingTextPos] = useState<{ x: number; y: number } | null>(null);
+  const [inputModalText, setInputModalText] = useState<string>('');
 
   // 서명 모달 상태
   const [showSignPad, setShowSignPad] = useState<boolean>(false);
@@ -236,7 +247,7 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
       }
     });
 
-    // 3. 텍스트 주석
+    // 3. 텍스트 주석 (사각형 테두리 및 배경 채우기 포함)
     pageData.texts.forEach((textItem) => {
       ctx.save();
       const scaledSize = Math.max(10, textItem.fontSize * (w / 800));
@@ -247,18 +258,32 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
       const lines = textItem.text.split('\n');
       const lineHeight = scaledSize * 1.3;
 
-      if (textItem.hasBackground) {
-        let maxLineWidth = 0;
-        lines.forEach((l) => {
-          maxLineWidth = Math.max(maxLineWidth, ctx.measureText(l).width);
-        });
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-        ctx.strokeStyle = textItem.color;
-        ctx.lineWidth = 1;
-        ctx.fillRect(x - 4, y - scaledSize, maxLineWidth + 8, lines.length * lineHeight + 4);
-        ctx.strokeRect(x - 4, y - scaledSize, maxLineWidth + 8, lines.length * lineHeight + 4);
+      let maxLineWidth = 0;
+      lines.forEach((l) => {
+        maxLineWidth = Math.max(maxLineWidth, ctx.measureText(l).width);
+      });
+
+      const padX = Math.max(5, scaledSize * 0.4);
+      const padY = Math.max(4, scaledSize * 0.3);
+      const boxX = x - padX;
+      const boxY = y - scaledSize - padY;
+      const boxW = maxLineWidth + padX * 2;
+      const boxH = lines.length * lineHeight + padY * 2;
+
+      // 3-1. 배경 채우기 (투명이 아닌 경우)
+      if (textItem.boxBgColor && textItem.boxBgColor !== 'transparent') {
+        ctx.fillStyle = textItem.boxBgColor;
+        ctx.fillRect(boxX, boxY, boxW, boxH);
       }
 
+      // 3-2. 사각형 테두리 그리기
+      if (textItem.hasBox) {
+        ctx.strokeStyle = textItem.boxBorderColor || textItem.color || '#000000';
+        ctx.lineWidth = Math.max(1.5, 2 * (w / 800));
+        ctx.strokeRect(boxX, boxY, boxW, boxH);
+      }
+
+      // 3-3. 텍스트 글자 그리기
       ctx.fillStyle = textItem.color;
       lines.forEach((line, idx) => {
         ctx.fillText(line, x, y + idx * lineHeight);
@@ -285,31 +310,9 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     const normY = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
 
     if (activeTool === 'text') {
-      // 텍스트 박스 신규 추가
-      const newId = `text_${Date.now()}`;
-      const defaultText = window.prompt('PDF에 삽입할 텍스트를 입력하세요:', '') || '';
-      if (!defaultText.trim()) return;
-
-      const newText: TextAnnotation = {
-        id: newId,
-        x: normX,
-        y: normY,
-        text: defaultText,
-        fontSize: textFontSize,
-        color: textColor,
-        hasBackground: textHasBg,
-      };
-
-      setAnnotations((prev) => {
-        const curr = prev[currentPage] || { strokes: [], texts: [], stamps: [] };
-        return {
-          ...prev,
-          [currentPage]: {
-            ...curr,
-            texts: [...curr.texts, newText],
-          },
-        };
-      });
+      // 텍스트 박스 신규 추가 모달 열기
+      setPendingTextPos({ x: normX, y: normY });
+      setShowTextModal(true);
       return;
     }
 
@@ -421,6 +424,39 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
       ...prev,
       [currentPage]: { strokes: [], texts: [], stamps: [] },
     }));
+  };
+
+  // 모달을 통한 텍스트 및 사각형 박스 삽입 확인
+  const handleConfirmInsertText = () => {
+    if (!inputModalText.trim()) return;
+
+    const pos = pendingTextPos || { x: 0.5, y: 0.3 };
+    const newId = `text_${Date.now()}`;
+    const newText: TextAnnotation = {
+      id: newId,
+      x: pos.x,
+      y: pos.y,
+      text: inputModalText,
+      fontSize: textFontSize,
+      color: textColor,
+      hasBox: textHasBox,
+      boxBorderColor: textBoxBorderColor,
+      boxBgColor: textBoxBgColor,
+    };
+
+    setAnnotations((prev) => {
+      const curr = prev[currentPage] || { strokes: [], texts: [], stamps: [] };
+      return {
+        ...prev,
+        [currentPage]: {
+          ...curr,
+          texts: [...curr.texts, newText],
+        },
+      };
+    });
+
+    setShowTextModal(false);
+    setPendingTextPos(null);
   };
 
   // 서명 패드 드로잉 로직
@@ -605,7 +641,7 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
         });
       }
 
-      // 3. 텍스트 렌더링
+      // 3. 텍스트 렌더링 (사각형 테두리 및 배경 포함)
       pageData.texts.forEach((textItem) => {
         ctx.save();
         ctx.font = `bold ${textItem.fontSize}px Pretendard, -apple-system, BlinkMacSystemFont, sans-serif`;
@@ -614,16 +650,29 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
         const lines = textItem.text.split('\n');
         const lineHeight = textItem.fontSize * 1.3;
 
-        if (textItem.hasBackground) {
-          let maxLineWidth = 0;
-          lines.forEach((l) => {
-            maxLineWidth = Math.max(maxLineWidth, ctx.measureText(l).width);
-          });
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-          ctx.strokeStyle = textItem.color;
-          ctx.lineWidth = 1;
-          ctx.fillRect(x - 4, y - textItem.fontSize, maxLineWidth + 8, lines.length * lineHeight + 4);
-          ctx.strokeRect(x - 4, y - textItem.fontSize, maxLineWidth + 8, lines.length * lineHeight + 4);
+        let maxLineWidth = 0;
+        lines.forEach((l) => {
+          maxLineWidth = Math.max(maxLineWidth, ctx.measureText(l).width);
+        });
+
+        const padX = Math.max(5, textItem.fontSize * 0.4);
+        const padY = Math.max(4, textItem.fontSize * 0.3);
+        const boxX = x - padX;
+        const boxY = y - textItem.fontSize - padY;
+        const boxW = maxLineWidth + padX * 2;
+        const boxH = lines.length * lineHeight + padY * 2;
+
+        // 배경 채우기
+        if (textItem.boxBgColor && textItem.boxBgColor !== 'transparent') {
+          ctx.fillStyle = textItem.boxBgColor;
+          ctx.fillRect(boxX, boxY, boxW, boxH);
+        }
+
+        // 사각형 테두리 그리기
+        if (textItem.hasBox) {
+          ctx.strokeStyle = textItem.boxBorderColor || textItem.color || '#000000';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(boxX, boxY, boxW, boxH);
         }
 
         ctx.fillStyle = textItem.color;
@@ -885,9 +934,9 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
           )}
 
           {activeTool === 'text' && (
-            <div className="flex items-center gap-2">
-              <span className="text-slate-400 text-[11px]">글자 크기:</span>
-              {[14, 18, 24].map((s) => (
+            <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+              <span className="text-slate-400 text-[11px]">크기:</span>
+              {[12, 16, 20, 28].map((s) => (
                 <button
                   key={s}
                   type="button"
@@ -897,25 +946,78 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
                   {s}pt
                 </button>
               ))}
-              <span className="text-slate-400 text-[11px] ml-1">색상:</span>
-              {PEN_COLORS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setTextColor(c)}
-                  style={{ backgroundColor: c }}
-                  className={`w-4 h-4 rounded-full border ${textColor === c ? 'border-white scale-125' : 'border-transparent opacity-70'}`}
-                />
-              ))}
-              <label className="flex items-center gap-1 ml-2 text-[11px] text-slate-300 cursor-pointer">
+
+              <span className="text-slate-400 text-[11px] ml-1">글자색:</span>
+              <div className="flex items-center gap-1">
+                {TEXT_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setTextColor(c)}
+                    style={{ backgroundColor: c }}
+                    className={`w-3.5 h-3.5 rounded-full border ${textColor === c ? 'border-white scale-125' : 'border-slate-700 opacity-70'}`}
+                  />
+                ))}
+              </div>
+
+              <div className="h-3 w-px bg-slate-800 mx-0.5 hidden sm:block" />
+
+              {/* 사각형 테두리 토글 */}
+              <label className="flex items-center gap-1 text-[11px] font-semibold text-slate-200 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={textHasBg}
-                  onChange={(e) => setTextHasBg(e.target.checked)}
-                  className="rounded text-indigo-600"
+                  checked={textHasBox}
+                  onChange={(e) => setTextHasBox(e.target.checked)}
+                  className="rounded text-indigo-600 cursor-pointer"
                 />
-                흰색 배경
+                <span>🔲 테두리</span>
               </label>
+
+              {textHasBox && (
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-400 text-[11px]">선색:</span>
+                  {BORDER_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setTextBoxBorderColor(c)}
+                      style={{ backgroundColor: c }}
+                      className={`w-3.5 h-3.5 rounded-full border ${textBoxBorderColor === c ? 'border-white scale-125' : 'border-slate-700 opacity-70'}`}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* 배경 채우기 */}
+              <span className="text-slate-400 text-[11px] ml-1">배경:</span>
+              <div className="flex items-center gap-0.5">
+                {[
+                  { id: 'transparent', label: '투명' },
+                  { id: '#ffffff', label: '흰색' },
+                  { id: '#fef9c3', label: '연노랑' },
+                ].map((bg) => (
+                  <button
+                    key={bg.id}
+                    type="button"
+                    onClick={() => setTextBoxBgColor(bg.id)}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${textBoxBgColor === bg.id ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
+                  >
+                    {bg.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* 글자 직접 입력 팝업 열기 */}
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingTextPos({ x: 0.5, y: 0.25 });
+                  setShowTextModal(true);
+                }}
+                className="ml-1 px-2 py-0.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[11px] font-bold transition-all shadow"
+              >
+                + 글자/박스 작성
+              </button>
             </div>
           )}
 
@@ -1012,6 +1114,184 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 텍스트 및 사각형 박스 삽입 모달 */}
+      {showTextModal && (
+        <div 
+          className="fixed inset-0 z-60 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4 animate-in fade-in"
+          onClick={() => setShowTextModal(false)}
+        >
+          <div 
+            className="bg-slate-900 border border-slate-800 rounded-2xl p-5 w-full max-w-md shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+              <span className="font-bold text-sm text-slate-200">📝 PDF 텍스트 및 사각형 박스 삽입</span>
+              <button
+                type="button"
+                onClick={() => setShowTextModal(false)}
+                className="p-1 hover:bg-slate-800 rounded text-slate-400"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* 글자 내용 입력 */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-slate-300">삽입할 글자 내용:</label>
+              <textarea
+                value={inputModalText}
+                onChange={(e) => setInputModalText(e.target.value)}
+                placeholder="글자를 입력하세요 (엔터로 줄바꿈 가능)"
+                rows={2}
+                autoFocus
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 resize-none font-medium"
+              />
+            </div>
+
+            {/* 글자 크기 & 색상 */}
+            <div className="grid grid-cols-2 gap-3 bg-slate-950/60 p-3 rounded-xl border border-slate-800/80">
+              <div className="space-y-1">
+                <span className="text-[11px] text-slate-400 font-semibold block">글자 크기</span>
+                <div className="flex items-center gap-1">
+                  {[12, 16, 20, 28].map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setTextFontSize(s)}
+                      className={`px-2 py-0.5 rounded text-xs font-bold ${
+                        textFontSize === s ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {s}pt
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[11px] text-slate-400 font-semibold block">글자 색상</span>
+                <div className="flex items-center gap-1.5 pt-0.5">
+                  {TEXT_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setTextColor(c)}
+                      style={{ backgroundColor: c }}
+                      className={`w-5 h-5 rounded-full border ${
+                        textColor === c ? 'border-white scale-125 shadow-sm' : 'border-slate-700 opacity-70'
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* 사각형 테두리 박스 설정 */}
+            <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800/80 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 text-xs font-bold text-slate-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={textHasBox}
+                    onChange={(e) => setTextHasBox(e.target.checked)}
+                    className="w-4 h-4 rounded text-indigo-600 focus:ring-0 cursor-pointer"
+                  />
+                  <span>🔲 사각형 테두리 그리기</span>
+                </label>
+                {textHasBox && (
+                  <span className="text-[11px] text-indigo-400 font-semibold">테두리 활성</span>
+                )}
+              </div>
+
+              {textHasBox && (
+                <div className="flex items-center justify-between pt-1 border-t border-slate-800/60">
+                  <span className="text-[11px] text-slate-400">테두리 선 색상:</span>
+                  <div className="flex items-center gap-1.5">
+                    {BORDER_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setTextBoxBorderColor(c)}
+                        style={{ backgroundColor: c }}
+                        className={`w-5 h-5 rounded-full border ${
+                          textBoxBorderColor === c ? 'border-white scale-125 shadow-sm' : 'border-slate-700 opacity-70'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 배경 채우기 */}
+              <div className="flex items-center justify-between pt-1 border-t border-slate-800/60 text-xs">
+                <span className="text-[11px] text-slate-400">배경 채우기:</span>
+                <div className="flex items-center gap-1">
+                  {[
+                    { id: 'transparent', label: '투명' },
+                    { id: '#ffffff', label: '흰색' },
+                    { id: '#fef9c3', label: '연노랑' },
+                  ].map((bg) => (
+                    <button
+                      key={bg.id}
+                      type="button"
+                      onClick={() => setTextBoxBgColor(bg.id)}
+                      className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                        textBoxBgColor === bg.id ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'
+                      }`}
+                    >
+                      {bg.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* 실시간 미리보기 */}
+            <div className="space-y-1">
+              <span className="text-[11px] text-slate-400 font-semibold block">실제 삽입 모양 미리보기:</span>
+              <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-center min-h-[55px]">
+                <div
+                  style={{
+                    border: textHasBox ? `2px solid ${textBoxBorderColor}` : '1px dashed #64748b',
+                    backgroundColor: textBoxBgColor === 'transparent' ? 'transparent' : textBoxBgColor,
+                    color: textColor,
+                    fontSize: `${textFontSize}px`,
+                    fontWeight: 'bold',
+                    padding: '4px 10px',
+                    borderRadius: '2px',
+                    display: 'inline-block',
+                    maxWidth: '100%',
+                    wordBreak: 'break-word',
+                    whiteSpace: 'pre-wrap',
+                  }}
+                >
+                  {inputModalText || '텍스트 미리보기'}
+                </div>
+              </div>
+            </div>
+
+            {/* 버튼 */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowTextModal(false)}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmInsertText}
+                disabled={!inputModalText.trim()}
+                className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all shadow disabled:opacity-40"
+              >
+                PDF에 삽입하기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 서명 / 도장 입력 팝업 모달 */}
       {showSignPad && (
