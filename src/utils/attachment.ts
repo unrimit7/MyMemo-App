@@ -168,12 +168,12 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
   </div>
 
   <!-- 본문 인라인 워드 뷰어 컨테이너 -->
-  <div class="w-full bg-slate-950 p-2 md:p-4 flex flex-col items-center justify-center overflow-x-auto min-h-[300px] max-h-[520px]">
+  <div class="w-full bg-slate-950 p-2 md:p-4 overflow-y-auto overflow-x-auto max-h-[640px] flex flex-col items-center docx-scroll-container">
     <div class="docx-loading-box flex items-center justify-center gap-2 py-10 text-xs text-slate-400" id="docx-loading-${att.id}">
       <span class="animate-spin inline-block w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full"></span>
       <span>워드(DOCX) 문서를 렌더링하는 중입니다...</span>
     </div>
-    <div id="docx-container-${att.id}" class="docx-container rounded-sm shadow-xl bg-white p-4 md:p-8 text-slate-900 max-w-[800px] w-full font-serif cursor-zoom-in hidden" data-att-id="${att.id}" data-file-name="${displayName}" title="클릭하면 전면 뷰어로 크게 볼 수 있습니다."></div>
+    <div id="docx-container-${att.id}" class="docx-container w-full max-w-[850px] cursor-zoom-in hidden" data-att-id="${att.id}" data-file-name="${displayName}" title="클릭하면 전면 뷰어로 크게 볼 수 있습니다."></div>
   </div>
 </div>
     `.trim();

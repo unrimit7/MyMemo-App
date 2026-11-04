@@ -762,6 +762,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         .then(() => {
           if (loadingBox) loadingBox.classList.add('hidden');
           docxContainer.classList.remove('hidden');
+          const scrollBox = viewer.querySelector<HTMLElement>('.docx-scroll-container');
+          if (scrollBox) scrollBox.scrollTop = 0;
         })
         .catch((err) => {
           console.error('인라인 워드 렌더링 실패:', err);

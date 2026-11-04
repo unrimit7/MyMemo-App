@@ -154,11 +154,11 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-2 md:p-4 select-none animate-fadeIn">
-      {/* 팝업 컨테이너 */}
+    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center p-2 md:p-4 select-none animate-fadeIn">
+      {/* 팝업 컨테이너 (완전 불투명) */}
       <div className="w-full max-w-6xl h-[95vh] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
         {/* 상단 1단: 제목 & 저장 / 다운로드 / 닫기 헤더 */}
-        <div className="px-4 py-2.5 bg-slate-900/95 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="p-1.5 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
               <FileText size={18} />
@@ -381,15 +381,15 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
 
               {/* 오른쪽: 워드 용지(A4) 스타일 실시간 레이아웃 미리보기 */}
               {(viewMode === 'preview' || viewMode === 'split') && (
-                <div className={`h-full overflow-auto p-4 flex flex-col items-center bg-slate-950/80 ${viewMode === 'split' ? 'w-full md:w-1/2' : 'w-full'}`}>
-                  <div className="w-full max-w-[700px] bg-white text-slate-900 shadow-2xl rounded-sm min-h-full p-8 md:p-12 font-serif text-sm leading-relaxed select-text">
+                <div className={`h-full overflow-y-auto overflow-x-auto p-4 md:p-8 bg-slate-950 ${viewMode === 'split' ? 'w-full md:w-1/2' : 'w-full'}`}>
+                  <div className="w-full max-w-[760px] mx-auto bg-white text-slate-900 shadow-2xl rounded-sm p-8 md:p-12 font-serif text-sm leading-relaxed select-text min-h-fit mb-12">
                     {docTitle && (
-                      <h1 className="text-2xl font-bold text-center border-b border-slate-200 pb-4 mb-6">
+                      <h1 className="text-2xl font-bold text-center border-b border-slate-200 pb-4 mb-6 text-slate-900">
                         {docTitle}
                       </h1>
                     )}
                     <div
-                      className="prose prose-slate max-w-none prose-headings:font-serif prose-p:my-2 prose-table:my-4"
+                      className="prose prose-slate max-w-none text-slate-900 prose-headings:font-serif prose-headings:text-slate-900 prose-p:my-2 [&_table]:w-full [&_table]:border-collapse [&_table]:my-4 [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-2.5 [&_th]:text-xs [&_th]:font-bold [&_th]:text-slate-800 [&_td]:border [&_td]:border-slate-300 [&_td]:p-2 [&_td]:text-xs [&_td]:text-slate-800"
                       dangerouslySetInnerHTML={{ __html: marked.parse(content) as string }}
                     />
                   </div>

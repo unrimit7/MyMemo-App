@@ -117,7 +117,7 @@ export const DocxViewerModal: React.FC<DocxViewerModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-2 md:p-4 select-none animate-fadeIn">
+    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center p-2 md:p-4 select-none animate-fadeIn">
       {/* 팝업 컨테이너 */}
       <div className="w-full max-w-6xl h-[95vh] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
         {/* 상단 툴바 헤더 */}
@@ -253,7 +253,7 @@ export const DocxViewerModal: React.FC<DocxViewerModalProps> = ({
           >
             <div
               ref={containerRef}
-              className="docx-render-wrapper bg-white text-slate-900 shadow-2xl rounded-sm min-h-[600px] w-full max-w-[850px] p-6 md:p-12 overflow-x-auto select-text font-serif leading-relaxed"
+              className="docx-render-wrapper w-full max-w-[850px] select-text flex flex-col items-center"
             ></div>
           </div>
         </div>
