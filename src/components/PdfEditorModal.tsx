@@ -15,11 +15,16 @@ import {
   ZoomOut, 
   Loader2, 
   CheckCircle,
-  Move
+  Move,
+  Crop,
+  Pipette,
+  Palette,
+  Copy
 } from 'lucide-react';
 import { PDFDocument } from 'pdf-lib';
 import { loadPdfDocument, renderPdfPageToCanvas, invalidatePdfCache } from '../utils/pdfViewer';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { ColorEditModal } from './ColorEditModal';
 
 interface Stroke {
   id: string;
@@ -121,8 +126,19 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // 툴 선택 ('pan' | 'pen' | 'highlighter' | 'text' | 'stamp')
-  const [activeTool, setActiveTool] = useState<'pan' | 'pen' | 'highlighter' | 'text' | 'stamp'>('pen');
+  // 툴 선택 ('pan' | 'select' | 'eyedropper' | 'pen' | 'highlighter' | 'text' | 'stamp')
+  const [activeTool, setActiveTool] = useState<'pan' | 'select' | 'eyedropper' | 'pen' | 'highlighter' | 'text' | 'stamp'>('pen');
+  const previousToolRef = useRef<'pan' | 'select' | 'eyedropper' | 'pen' | 'highlighter' | 'text' | 'stamp'>('pen');
+  const [eyedropperToast, setEyedropperToast] = useState<string | null>(null);
+
+  // 그림판 스타일 색 편집 모달 상태
+  const [showColorEditModal, setShowColorEditModal] = useState<boolean>(false);
+  const [colorEditTarget, setColorEditTarget] = useState<'pen' | 'highlighter' | 'text' | 'boxBorder'>('pen');
+
+  // 사각형 영역 선택 상태 (0~1 정규화 좌표)
+  const [selectionRect, setSelectionRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const selectionStartPosRef = useRef<{ x: number; y: number } | null>(null);
+
   const [penColor, setPenColor] = useState<string>('#dc2626');
   const [penWidth, setPenWidth] = useState<number>(3);
   const [highlighterColor, setHighlighterColor] = useState<string>('#fde047');
@@ -375,11 +391,226 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
       });
       ctx.restore();
     });
-  }, [annotations, currentPage]);
+
+    // 4. 사각형 영역 선택 (Selection Marquee) 그리기
+    if (selectionRect && selectionRect.w > 0 && selectionRect.h > 0) {
+      ctx.save();
+      ctx.setLineDash([6, 4]);
+      ctx.strokeStyle = '#2563eb';
+      ctx.lineWidth = 2;
+      ctx.fillStyle = 'rgba(37, 99, 235, 0.15)';
+      const sx = selectionRect.x * w;
+      const sy = selectionRect.y * h;
+      const sw = selectionRect.w * w;
+      const sh = selectionRect.h * h;
+      ctx.fillRect(sx, sy, sw, sh);
+      ctx.strokeRect(sx, sy, sw, sh);
+
+      // 네 모서리 조절 핸들
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#2563eb';
+      ctx.lineWidth = 1.5;
+      const hSize = 6;
+      [
+        [sx, sy],
+        [sx + sw, sy],
+        [sx, sy + sh],
+        [sx + sw, sy + sh],
+      ].forEach(([hx, hy]) => {
+        ctx.fillRect(hx - hSize / 2, hy - hSize / 2, hSize, hSize);
+        ctx.strokeRect(hx - hSize / 2, hy - hSize / 2, hSize, hSize);
+      });
+      ctx.restore();
+    }
+  }, [annotations, currentPage, selectionRect]);
 
   useEffect(() => {
     redrawOverlay();
   }, [redrawOverlay]);
+
+  // 단색(흰색) 패치 이미지 Data URL 생성
+  const createWhitePatchDataUrl = (width: number, height: number, color: string = '#ffffff'): string => {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(10, Math.round(width));
+    canvas.height = Math.max(10, Math.round(height));
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = color;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    return canvas.toDataURL('image/png');
+  };
+
+  // 선택된 사각형 영역의 베이스 PDF 및 주석 이미지를 캡처
+  const captureSelectionPatch = (rect: { x: number; y: number; w: number; h: number }): string | null => {
+    const baseCanvas = baseCanvasRef.current;
+    const overlayCanvas = overlayCanvasRef.current;
+    if (!baseCanvas) return null;
+
+    const pixelX = Math.round(rect.x * baseCanvas.width);
+    const pixelY = Math.round(rect.y * baseCanvas.height);
+    const pixelW = Math.round(rect.w * baseCanvas.width);
+    const pixelH = Math.round(rect.h * baseCanvas.height);
+
+    if (pixelW <= 2 || pixelH <= 2) return null;
+
+    const patchCanvas = document.createElement('canvas');
+    patchCanvas.width = pixelW;
+    patchCanvas.height = pixelH;
+    const patchCtx = patchCanvas.getContext('2d');
+    if (!patchCtx) return null;
+
+    // 1. 베이스 PDF 내용 그리기
+    patchCtx.drawImage(baseCanvas, pixelX, pixelY, pixelW, pixelH, 0, 0, pixelW, pixelH);
+
+    // 2. 오버레이 주석 내용 합성 (단, 사각형 선택 박스는 제외하고 주석만)
+    if (overlayCanvas) {
+      patchCtx.drawImage(overlayCanvas, pixelX, pixelY, pixelW, pixelH, 0, 0, pixelW, pixelH);
+    }
+
+    return patchCanvas.toDataURL('image/png');
+  };
+
+  // 캔버스 특정 지점 색상 스포이트 추출
+  const sampleColorFromCanvas = (clientX: number, clientY: number): string | null => {
+    const baseCanvas = baseCanvasRef.current;
+    const overlayCanvas = overlayCanvasRef.current;
+    if (!baseCanvas) return null;
+
+    const rect = baseCanvas.getBoundingClientRect();
+    const normX = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const normY = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+
+    const pixelX = Math.floor(normX * baseCanvas.width);
+    const pixelY = Math.floor(normY * baseCanvas.height);
+
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = 1;
+    tempCanvas.height = 1;
+    const tempCtx = tempCanvas.getContext('2d');
+    if (!tempCtx) return null;
+
+    tempCtx.drawImage(baseCanvas, pixelX, pixelY, 1, 1, 0, 0, 1, 1);
+    if (overlayCanvas) {
+      tempCtx.drawImage(overlayCanvas, pixelX, pixelY, 1, 1, 0, 0, 1, 1);
+    }
+
+    const p = tempCtx.getImageData(0, 0, 1, 1).data;
+    const toHex = (v: number) => v.toString(16).padStart(2, '0');
+    return `#${toHex(p[0])}${toHex(p[1])}${toHex(p[2])}`;
+  };
+
+  // 1. 선택 영역 이동 (원위치는 흰색으로 덮고 새 스탬프로 이동)
+  const handleMoveSelection = () => {
+    if (!selectionRect) return;
+    const rect = selectionRect;
+    const patchDataUrl = captureSelectionPatch(rect);
+    if (!patchDataUrl) return;
+
+    const whiteDataUrl = createWhitePatchDataUrl(rect.w * 800, rect.h * 1000);
+    const whiteId = `erase_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const liftedId = `lifted_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    const whiteStamp: StampAnnotation = {
+      id: whiteId,
+      x: rect.x,
+      y: rect.y,
+      width: rect.w,
+      height: rect.h,
+      dataUrl: whiteDataUrl,
+    };
+
+    const liftedStamp: StampAnnotation = {
+      id: liftedId,
+      x: rect.x,
+      y: rect.y,
+      width: rect.w,
+      height: rect.h,
+      dataUrl: patchDataUrl,
+    };
+
+    setAnnotations((prev) => {
+      const curr = prev[currentPage] || { strokes: [], texts: [], stamps: [], history: [] };
+      return {
+        ...prev,
+        [currentPage]: {
+          ...curr,
+          stamps: [...curr.stamps, whiteStamp, liftedStamp],
+          history: [
+            ...(curr.history || []),
+            { type: 'stamp', id: whiteId },
+            { type: 'stamp', id: liftedId },
+          ],
+        },
+      };
+    });
+
+    setSelectionRect(null);
+  };
+
+  // 2. 선택 영역 지우기 (화이트 삭제)
+  const handleEraseSelection = () => {
+    if (!selectionRect) return;
+    const rect = selectionRect;
+    const whiteDataUrl = createWhitePatchDataUrl(rect.w * 800, rect.h * 1000);
+    const eraseId = `erase_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    const eraseStamp: StampAnnotation = {
+      id: eraseId,
+      x: rect.x,
+      y: rect.y,
+      width: rect.w,
+      height: rect.h,
+      dataUrl: whiteDataUrl,
+    };
+
+    setAnnotations((prev) => {
+      const curr = prev[currentPage] || { strokes: [], texts: [], stamps: [], history: [] };
+      return {
+        ...prev,
+        [currentPage]: {
+          ...curr,
+          stamps: [...curr.stamps, eraseStamp],
+          history: [...(curr.history || []), { type: 'stamp', id: eraseId }],
+        },
+      };
+    });
+
+    setSelectionRect(null);
+  };
+
+  // 3. 선택 영역 복제
+  const handleDuplicateSelection = () => {
+    if (!selectionRect) return;
+    const rect = selectionRect;
+    const patchDataUrl = captureSelectionPatch(rect);
+    if (!patchDataUrl) return;
+
+    const dupId = `dup_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const dupStamp: StampAnnotation = {
+      id: dupId,
+      x: Math.min(0.8, rect.x + 0.03),
+      y: Math.min(0.8, rect.y + 0.03),
+      width: rect.w,
+      height: rect.h,
+      dataUrl: patchDataUrl,
+    };
+
+    setAnnotations((prev) => {
+      const curr = prev[currentPage] || { strokes: [], texts: [], stamps: [], history: [] };
+      return {
+        ...prev,
+        [currentPage]: {
+          ...curr,
+          stamps: [...curr.stamps, dupStamp],
+          history: [...(curr.history || []), { type: 'stamp', id: dupId }],
+        },
+      };
+    });
+
+    setSelectionRect(null);
+  };
 
   // 마우스/터치 드로잉 및 아이템 드래그 이벤트
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -391,6 +622,92 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
 
     const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+
+    // 0-A. 스포이트 도구: 클릭한 지점의 색상 추출
+    if (activeTool === 'eyedropper') {
+      const pickedColor = sampleColorFromCanvas(e.clientX, e.clientY);
+      if (pickedColor) {
+        if (previousToolRef.current === 'highlighter') {
+          setHighlighterColor(pickedColor);
+        } else if (previousToolRef.current === 'text') {
+          setTextColor(pickedColor);
+        } else {
+          setPenColor(pickedColor);
+        }
+        setEyedropperToast(`스포이트 색상 추출 완료: ${pickedColor}`);
+        setTimeout(() => setEyedropperToast(null), 2500);
+      }
+      setActiveTool(previousToolRef.current || 'pen');
+      return;
+    }
+
+    // 0-B. 사각형 영역 선택 도구
+    if (activeTool === 'select') {
+      // 이미 선택된 사각형이 있고, 그 내부를 클릭했다면 -> 즉시 오려내어 이동(Lift & Drag)
+      if (selectionRect && selectionRect.w > 0.01 && selectionRect.h > 0.01) {
+        const inX = normX >= selectionRect.x && normX <= selectionRect.x + selectionRect.w;
+        const inY = normY >= selectionRect.y && normY <= selectionRect.y + selectionRect.h;
+        if (inX && inY) {
+          const patchDataUrl = captureSelectionPatch(selectionRect);
+          if (patchDataUrl) {
+            const r = selectionRect;
+            const whiteDataUrl = createWhitePatchDataUrl(r.w * 800, r.h * 1000);
+            const whiteId = `erase_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+            const liftedId = `lifted_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+            const whiteStamp: StampAnnotation = {
+              id: whiteId,
+              x: r.x,
+              y: r.y,
+              width: r.w,
+              height: r.h,
+              dataUrl: whiteDataUrl,
+            };
+
+            const liftedStamp: StampAnnotation = {
+              id: liftedId,
+              x: r.x,
+              y: r.y,
+              width: r.w,
+              height: r.h,
+              dataUrl: patchDataUrl,
+            };
+
+            setAnnotations((prev) => {
+              const curr = prev[currentPage] || { strokes: [], texts: [], stamps: [], history: [] };
+              return {
+                ...prev,
+                [currentPage]: {
+                  ...curr,
+                  stamps: [...curr.stamps, whiteStamp, liftedStamp],
+                  history: [
+                    ...(curr.history || []),
+                    { type: 'stamp', id: whiteId },
+                    { type: 'stamp', id: liftedId },
+                  ],
+                },
+              };
+            });
+
+            overlay.setPointerCapture(e.pointerId);
+            draggingItemRef.current = {
+              type: 'stamp',
+              id: liftedId,
+              offsetX: normX - r.x,
+              offsetY: normY - r.y,
+            };
+            setSelectionRect(null);
+            return;
+          }
+        }
+      }
+
+      // 새 사각형 영역 드래그 선택 시작
+      overlay.setPointerCapture(e.pointerId);
+      selectionStartPosRef.current = { x: normX, y: normY };
+      setSelectionRect({ x: normX, y: normY, w: 0, h: 0 });
+      return;
+    }
 
     const pageData = annotations[currentPage];
 
@@ -475,7 +792,19 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
 
-    // A. 도장 또는 텍스트 아이템 드래그 이동 처리
+    // A. 사각형 영역 선택 드래그 중인 경우
+    if (activeTool === 'select' && selectionStartPosRef.current) {
+      const start = selectionStartPosRef.current;
+      setSelectionRect({
+        x: Math.min(start.x, normX),
+        y: Math.min(start.y, normY),
+        w: Math.abs(normX - start.x),
+        h: Math.abs(normY - start.y),
+      });
+      return;
+    }
+
+    // B. 도장 또는 텍스트 아이템 드래그 이동 처리
     if (draggingItemRef.current) {
       const drag = draggingItemRef.current;
       setAnnotations((prev) => {
@@ -520,7 +849,7 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
       return;
     }
 
-    // B. 실시간 펜/형광펜 스트로크 드로잉 처리
+    // C. 실시간 펜/형광펜 스트로크 드로잉 처리
     if (!currentStrokeRef.current || (activeTool !== 'pen' && activeTool !== 'highlighter')) return;
 
     currentStrokeRef.current.points.push({ x: normX, y: normY });
@@ -548,6 +877,19 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    // A. 사각형 영역 선택 완료 처리
+    if (activeTool === 'select' && selectionStartPosRef.current) {
+      selectionStartPosRef.current = null;
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {}
+
+      if (selectionRect && (selectionRect.w < 0.008 || selectionRect.h < 0.008)) {
+        setSelectionRect(null);
+      }
+      return;
+    }
+
     if (draggingItemRef.current) {
       draggingItemRef.current = null;
       try {
@@ -1029,6 +1371,19 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
             <span className="hidden md:inline">화면 이동</span>
           </button>
 
+          {/* 사각형 영역 선택 툴 */}
+          <button
+            type="button"
+            onClick={() => setActiveTool('select')}
+            className={`p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all ${
+              activeTool === 'select' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+            title="사각형 영역 선택 (드래그하여 영역 지정 후 이동/지우기/복제)"
+          >
+            <Crop size={14} />
+            <span className="hidden md:inline">영역 선택</span>
+          </button>
+
           {/* 펜 드로잉 툴 */}
           <button
             type="button"
@@ -1079,6 +1434,22 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
           >
             <Stamp size={14} className={activeTool === 'stamp' ? 'text-white' : 'text-rose-400'} />
             <span className="hidden md:inline">서명/도장</span>
+          </button>
+
+          {/* 스포이트 툴 */}
+          <button
+            type="button"
+            onClick={() => {
+              previousToolRef.current = activeTool === 'eyedropper' ? 'pen' : activeTool;
+              setActiveTool('eyedropper');
+            }}
+            className={`p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all ${
+              activeTool === 'eyedropper' ? 'bg-amber-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+            title="스포이트 (PDF 화면의 특정 지점을 클릭하여 해당 색상 추출)"
+          >
+            <Pipette size={14} />
+            <span className="hidden md:inline">스포이트</span>
           </button>
 
           <div className="h-4 w-px bg-slate-800 mx-1" />
@@ -1141,19 +1512,114 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
       <div className="flex items-center justify-between px-3 py-1.5 bg-slate-900/60 border-b border-slate-800/80 gap-2 text-xs overflow-x-auto shrink-0">
         {/* 색상 및 도구별 상세 옵션 */}
         <div className="flex items-center gap-2 shrink-0">
+          {activeTool === 'select' && (
+            <div className="flex items-center gap-2">
+              {selectionRect && selectionRect.w > 0.01 && selectionRect.h > 0.01 ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-blue-400 font-bold text-[11px] bg-blue-950/60 px-2 py-0.5 rounded border border-blue-500/30">
+                    📐 영역 선택됨 ({Math.round(selectionRect.w * 100)}% × {Math.round(selectionRect.h * 100)}%)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleMoveSelection}
+                    className="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[11px] font-bold flex items-center gap-1 shadow-xs transition-all"
+                    title="선택 영역을 오려내어 이동 (원래 위치는 화이트 처리)"
+                  >
+                    <Move size={12} />
+                    <span>영역 이동</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleEraseSelection}
+                    className="px-2 py-0.5 bg-rose-600 hover:bg-rose-500 text-white rounded text-[11px] font-bold flex items-center gap-1 shadow-xs transition-all"
+                    title="선택 영역을 화이트로 지우기"
+                  >
+                    <Trash2 size={12} />
+                    <span>영역 지우기</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDuplicateSelection}
+                    className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-[11px] font-bold flex items-center gap-1 border border-slate-700 transition-all"
+                    title="선택 영역 복제"
+                  >
+                    <Copy size={12} />
+                    <span>복제</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectionRect(null)}
+                    className="p-1 text-slate-400 hover:text-white"
+                    title="선택 취소"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ) : (
+                <span className="text-indigo-300 text-[11px] font-medium flex items-center gap-1">
+                  <span>🖱️ 마우스로 사각형 영역을 드래그하여 선택하세요 (선택 후 이동, 지우기, 복제 가능)</span>
+                </span>
+              )}
+            </div>
+          )}
+
+          {activeTool === 'eyedropper' && (
+            <div className="flex items-center gap-2">
+              <span className="text-amber-400 font-bold text-[11px] flex items-center gap-1 bg-amber-950/50 px-2.5 py-0.5 rounded-full border border-amber-500/30 animate-pulse">
+                <Pipette size={12} />
+                <span>PDF 문서에서 추출할 색상의 위치를 클릭하세요.</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setActiveTool(previousToolRef.current || 'pen')}
+                className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[10px]"
+              >
+                취소
+              </button>
+            </div>
+          )}
+
           {activeTool === 'pen' && (
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap">
               <span className="text-slate-400 text-[11px]">펜 색상:</span>
-              {PEN_COLORS.map((c) => (
+              <div className="flex items-center gap-1">
+                {PEN_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setPenColor(c)}
+                    style={{ backgroundColor: c }}
+                    className={`w-4 h-4 rounded-full border ${penColor === c ? 'border-white scale-125 shadow-sm' : 'border-transparent opacity-70'}`}
+                  />
+                ))}
+                {/* 그림판 스타일 색 편집 버튼 */}
                 <button
-                  key={c}
                   type="button"
-                  onClick={() => setPenColor(c)}
-                  style={{ backgroundColor: c }}
-                  className={`w-4 h-4 rounded-full border ${penColor === c ? 'border-white scale-125 shadow-sm' : 'border-transparent opacity-70'}`}
-                />
-              ))}
-              <span className="text-slate-400 text-[11px] ml-2">두께:</span>
+                  onClick={() => {
+                    setColorEditTarget('pen');
+                    setShowColorEditModal(true);
+                  }}
+                  className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded text-[10px] font-bold flex items-center gap-1 border border-slate-700 ml-0.5 transition-colors"
+                  title="그림판 스타일 색 편집 (RGB/스펙트럼/사용자 지정 색)"
+                >
+                  <Palette size={11} className="text-indigo-400" />
+                  <span>색 편집...</span>
+                </button>
+                {/* 스포이트 버튼 */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    previousToolRef.current = 'pen';
+                    setActiveTool('eyedropper');
+                  }}
+                  className="p-1 hover:bg-slate-800 text-slate-400 hover:text-amber-400 rounded transition-colors"
+                  title="화면에서 색상 추출 (스포이트)"
+                >
+                  <Pipette size={13} />
+                </button>
+              </div>
+
+              <span className="text-slate-400 text-[11px] ml-1">두께:</span>
               {[2, 4, 7].map((w) => (
                 <button
                   key={w}
@@ -1164,22 +1630,63 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
                   {w}px
                 </button>
               ))}
+              {/* 두께 직접 입력 상자 */}
+              <div className="flex items-center gap-0.5 bg-slate-950 px-1 py-0.5 rounded border border-slate-800 ml-0.5">
+                <input
+                  type="number"
+                  min={1}
+                  max={60}
+                  value={penWidth}
+                  onChange={(e) => setPenWidth(Math.max(1, Math.min(60, Number(e.target.value) || 1)))}
+                  className="w-10 bg-slate-900 border border-slate-700 text-center text-xs font-bold text-white rounded px-0.5 py-0.5 focus:outline-none focus:border-indigo-500"
+                  title="두께 직접 입력 (1~60px)"
+                />
+                <span className="text-[10px] text-slate-400 pr-0.5">px</span>
+              </div>
             </div>
           )}
 
           {activeTool === 'highlighter' && (
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap">
               <span className="text-slate-400 text-[11px]">형광 색상:</span>
-              {HIGHLIGHTER_COLORS.map((c) => (
+              <div className="flex items-center gap-1">
+                {HIGHLIGHTER_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setHighlighterColor(c)}
+                    style={{ backgroundColor: c }}
+                    className={`w-4 h-4 rounded-full border ${highlighterColor === c ? 'border-white scale-125 shadow-sm' : 'border-transparent opacity-70'}`}
+                  />
+                ))}
+                {/* 그림판 스타일 색 편집 버튼 */}
                 <button
-                  key={c}
                   type="button"
-                  onClick={() => setHighlighterColor(c)}
-                  style={{ backgroundColor: c }}
-                  className={`w-4 h-4 rounded-full border ${highlighterColor === c ? 'border-white scale-125 shadow-sm' : 'border-transparent opacity-70'}`}
-                />
-              ))}
-              <span className="text-slate-400 text-[11px] ml-2">굵기:</span>
+                  onClick={() => {
+                    setColorEditTarget('highlighter');
+                    setShowColorEditModal(true);
+                  }}
+                  className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded text-[10px] font-bold flex items-center gap-1 border border-slate-700 ml-0.5 transition-colors"
+                  title="그림판 스타일 색 편집"
+                >
+                  <Palette size={11} className="text-indigo-400" />
+                  <span>색 편집...</span>
+                </button>
+                {/* 스포이트 버튼 */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    previousToolRef.current = 'highlighter';
+                    setActiveTool('eyedropper');
+                  }}
+                  className="p-1 hover:bg-slate-800 text-slate-400 hover:text-amber-400 rounded transition-colors"
+                  title="화면에서 색상 추출 (스포이트)"
+                >
+                  <Pipette size={13} />
+                </button>
+              </div>
+
+              <span className="text-slate-400 text-[11px] ml-1">굵기:</span>
               {[15, 24, 32].map((w) => (
                 <button
                   key={w}
@@ -1190,6 +1697,19 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
                   {w}px
                 </button>
               ))}
+              {/* 형광펜 굵기 직접 입력 상자 */}
+              <div className="flex items-center gap-0.5 bg-slate-950 px-1 py-0.5 rounded border border-slate-800 ml-0.5">
+                <input
+                  type="number"
+                  min={4}
+                  max={80}
+                  value={highlighterWidth}
+                  onChange={(e) => setHighlighterWidth(Math.max(4, Math.min(80, Number(e.target.value) || 4)))}
+                  className="w-10 bg-slate-900 border border-slate-700 text-center text-xs font-bold text-white rounded px-0.5 py-0.5 focus:outline-none focus:border-indigo-500"
+                  title="형광펜 굵기 직접 입력 (4~80px)"
+                />
+                <span className="text-[10px] text-slate-400 pr-0.5">px</span>
+              </div>
             </div>
           )}
 
@@ -1218,6 +1738,29 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
                     className={`w-3.5 h-3.5 rounded-full border ${textColor === c ? 'border-white scale-125' : 'border-slate-700 opacity-70'}`}
                   />
                 ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setColorEditTarget('text');
+                    setShowColorEditModal(true);
+                  }}
+                  className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded text-[10px] font-bold flex items-center gap-0.5 border border-slate-700 ml-0.5"
+                  title="글자색 그림판 스타일 색 편집"
+                >
+                  <Palette size={11} className="text-indigo-400" />
+                  <span>색 편집...</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    previousToolRef.current = 'text';
+                    setActiveTool('eyedropper');
+                  }}
+                  className="p-1 hover:bg-slate-800 text-slate-400 hover:text-amber-400 rounded"
+                  title="화면에서 색상 추출 (스포이트)"
+                >
+                  <Pipette size={12} />
+                </button>
               </div>
 
               <div className="h-3 w-px bg-slate-800 mx-0.5 hidden sm:block" />
@@ -1406,9 +1949,65 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
               onPointerUp={handlePointerUp}
               onPointerCancel={handlePointerUp}
               className={`absolute inset-0 rounded-xl ${
-                activeTool === 'pan' ? 'pointer-events-none' : 'touch-none cursor-crosshair'
+                activeTool === 'pan'
+                  ? 'pointer-events-none'
+                  : activeTool === 'eyedropper'
+                  ? 'touch-none cursor-crosshair'
+                  : activeTool === 'select'
+                  ? 'touch-none cursor-crosshair'
+                  : 'touch-none cursor-crosshair'
               }`}
             />
+
+            {/* 사각형 영역 선택 플로팅 액션 바 (선택 박스 주변에 표시) */}
+            {selectionRect && selectionRect.w > 0.01 && selectionRect.h > 0.01 && (
+              <div
+                className="absolute z-30 flex items-center gap-1 bg-slate-900/95 border border-indigo-500/80 px-2.5 py-1.5 rounded-xl shadow-2xl backdrop-blur-xs text-xs font-bold text-white pointer-events-auto -translate-x-1/2"
+                style={{
+                  left: `${(selectionRect.x + selectionRect.w / 2) * 100}%`,
+                  top:
+                    selectionRect.y > 0.1
+                      ? `${selectionRect.y * 100 - 5.5}%`
+                      : `${(selectionRect.y + selectionRect.h) * 100 + 1.5}%`,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={handleMoveSelection}
+                  className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 rounded-lg flex items-center gap-1 shadow-xs transition-colors"
+                  title="이 영역을 오려내어 이동 (원래 자리는 화이트 처리)"
+                >
+                  <Move size={12} />
+                  <span>이동</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleEraseSelection}
+                  className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 rounded-lg flex items-center gap-1 shadow-xs transition-colors"
+                  title="이 영역을 화이트로 깨끗하게 지우기"
+                >
+                  <Trash2 size={12} />
+                  <span>지우기</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDuplicateSelection}
+                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-lg flex items-center gap-1 border border-slate-700 shadow-xs transition-colors"
+                  title="이 영역 복제"
+                >
+                  <Copy size={12} />
+                  <span>복제</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectionRect(null)}
+                  className="p-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors"
+                  title="선택 취소"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1736,6 +2335,37 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* 스포이트 색상 추출 알림 토스트 */}
+      {eyedropperToast && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-60 bg-amber-600 text-white px-4 py-2 rounded-xl shadow-2xl text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top-2 border border-amber-400">
+          <Pipette size={14} />
+          <span>{eyedropperToast}</span>
+        </div>
+      )}
+
+      {/* 그림판 스타일 색 편집 모달 */}
+      {showColorEditModal && (
+        <ColorEditModal
+          isOpen={showColorEditModal}
+          initialColor={
+            colorEditTarget === 'pen'
+              ? penColor
+              : colorEditTarget === 'highlighter'
+              ? highlighterColor
+              : colorEditTarget === 'text'
+              ? textColor
+              : textBoxBorderColor
+          }
+          onSelectColor={(hex) => {
+            if (colorEditTarget === 'pen') setPenColor(hex);
+            else if (colorEditTarget === 'highlighter') setHighlighterColor(hex);
+            else if (colorEditTarget === 'text') setTextColor(hex);
+            else if (colorEditTarget === 'boxBorder') setTextBoxBorderColor(hex);
+          }}
+          onClose={() => setShowColorEditModal(false)}
+        />
       )}
     </div>
   );
