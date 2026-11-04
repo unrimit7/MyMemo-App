@@ -191,3 +191,54 @@ export function inspectByteValues(buffer: Uint8Array, offset: number): Inspector
     binary,
   };
 }
+
+// 바이너리 바이트를 지정한 인코딩(UTF-8, EUC-KR, Latin-1/Binary)의 텍스트로 디코딩
+export function decodeBytesToString(
+  bytes: Uint8Array,
+  encoding: 'utf-8' | 'euc-kr' | 'latin1' = 'utf-8'
+): string {
+  try {
+    if (encoding === 'latin1') {
+      let res = '';
+      const len = bytes.length;
+      for (let i = 0; i < len; i++) {
+        res += String.fromCharCode(bytes[i]);
+      }
+      return res;
+    }
+    const decoder = new TextDecoder(encoding, { fatal: false });
+    return decoder.decode(bytes);
+  } catch (err) {
+    console.warn(`TextDecoder with encoding ${encoding} failed, fallback to utf-8:`, err);
+    try {
+      return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+    } catch {
+      let res = '';
+      for (let i = 0; i < bytes.length; i++) {
+        res += String.fromCharCode(bytes[i]);
+      }
+      return res;
+    }
+  }
+}
+
+// 텍스트 문자열을 지정한 인코딩의 Uint8Array 바이트로 인코딩
+export function encodeStringToBytes(
+  text: string,
+  encoding: 'utf-8' | 'euc-kr' | 'latin1' = 'utf-8'
+): Uint8Array {
+  try {
+    if (encoding === 'latin1') {
+      const bytes = new Uint8Array(text.length);
+      for (let i = 0; i < text.length; i++) {
+        bytes[i] = text.charCodeAt(i) & 0xff;
+      }
+      return bytes;
+    }
+    // 브라우저 TextEncoder는 표준 UTF-8 인코딩을 수행
+    return new TextEncoder().encode(text);
+  } catch (err) {
+    console.error('encodeStringToBytes error:', err);
+    return new TextEncoder().encode(text);
+  }
+}
