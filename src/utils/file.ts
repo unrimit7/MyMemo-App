@@ -18,11 +18,10 @@ export async function processFileForNote(file: File): Promise<ProcessedDroppedFi
 
   // 1. 텍스트 또는 마크다운 파일
   if (
-    mimeType.startsWith('text/') ||
+    (mimeType.startsWith('text/') && mimeType !== 'text/csv') ||
     fileName.endsWith('.txt') ||
     fileName.endsWith('.md') ||
-    fileName.endsWith('.json') ||
-    fileName.endsWith('.csv')
+    fileName.endsWith('.json')
   ) {
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -140,7 +139,45 @@ export async function processFileForNote(file: File): Promise<ProcessedDroppedFi
     });
   }
 
-  // 4. 기타 파일 (링크 형태)
+  // 5. 엑셀(XLSX, XLS) 및 CSV 스프레드시트 파일
+  if (
+    fileName.toLowerCase().endsWith('.xlsx') ||
+    fileName.toLowerCase().endsWith('.xls') ||
+    fileName.toLowerCase().endsWith('.csv') ||
+    mimeType.includes('spreadsheet') ||
+    mimeType === 'text/csv'
+  ) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        const attId = `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        resolve({
+          title: `[엑셀] ${safeBaseTitle}`,
+          content: `# 📊 ${safeName}\n\n[📊 엑셀: ${safeName}](attachment:${attId})\n\n`,
+          attachments: {
+            [attId]: {
+              id: attId,
+              name: fileName,
+              type: mimeType || (fileName.toLowerCase().endsWith('.csv') ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+              data: dataUrl,
+            },
+          },
+          type: 'other',
+        });
+      };
+      reader.onerror = () => {
+        resolve({
+          title: `[엑셀] ${safeBaseTitle}`,
+          content: `엑셀 파일: ${fileName}`,
+          type: 'other',
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // 6. 기타 파일 (링크 형태)
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (e) => {

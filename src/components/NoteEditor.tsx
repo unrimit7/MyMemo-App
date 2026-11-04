@@ -13,6 +13,9 @@ import { loadPdfDocument, renderPdfPageToCanvas, extractPdfText, invalidatePdfCa
 import { HwpViewerModal } from './HwpViewerModal';
 import { HwpEditorModal } from './HwpEditorModal';
 import { loadHwpDocument, renderHwpPageToSvg, extractHwpText, invalidateHwpCache } from '../utils/hwpViewer';
+import { ExcelViewerModal } from './ExcelViewerModal';
+import { ExcelEditorModal } from './ExcelEditorModal';
+import { parseExcelWorkbook, sheetRowsToMarkdownTable, invalidateExcelCache } from '../utils/excelViewer';
 import type { AttachmentItem } from '../types';
 import { 
   Lock, 
@@ -52,6 +55,7 @@ import {
   Undo2,
   Redo2,
   FileText,
+  FileSpreadsheet,
   Palette,
   Download
 } from 'lucide-react';
@@ -132,6 +136,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [isProcessingPdf, setIsProcessingPdf] = useState(false);
   const [isProcessingHwp, setIsProcessingHwp] = useState(false);
+  const [isProcessingExcel, setIsProcessingExcel] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isDragOverEditor, setIsDragOverEditor] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
@@ -158,6 +163,16 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     title: string;
   } | null>(null);
   const [activeImageEditorModal, setActiveImageEditorModal] = useState<{
+    attId: string;
+    data: string;
+    title: string;
+  } | null>(null);
+  const [activeExcelModal, setActiveExcelModal] = useState<{
+    attId?: string;
+    data: string;
+    title: string;
+  } | null>(null);
+  const [activeExcelEditorModal, setActiveExcelEditorModal] = useState<{
     attId: string;
     data: string;
     title: string;
@@ -189,6 +204,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const hwpInputRef = useRef<HTMLInputElement>(null);
+  const excelInputRef = useRef<HTMLInputElement>(null);
   const updateTimerRef = useRef<any>(null);
   const currentNoteIdRef = useRef(note?.id);
   const lastSentContentRef = useRef<string | null>(null);
@@ -1600,10 +1616,18 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
     const isPdf = mimeType === 'application/pdf' || attName.toLowerCase().endsWith('.pdf');
     const isHwp = attName.toLowerCase().endsWith('.hwp') || attName.toLowerCase().endsWith('.hwpx') || mimeType.includes('hwp');
+    const isExcel =
+      attName.toLowerCase().endsWith('.xlsx') ||
+      attName.toLowerCase().endsWith('.xls') ||
+      attName.toLowerCase().endsWith('.csv') ||
+      mimeType.includes('spreadsheet') ||
+      mimeType === 'text/csv';
     const insertTag = isPdf
       ? `\n\n[📄 PDF: ${safeName}](attachment:${attId})\n\n`
       : isHwp
       ? `\n\n[📝 한글: ${safeName}](attachment:${attId})\n\n`
+      : isExcel
+      ? `\n\n[📊 엑셀: ${safeName}](attachment:${attId})\n\n`
       : `\n\n![${safeName}](attachment:${attId})\n\n`;
 
     const textarea = textareaRef.current;
@@ -1770,6 +1794,47 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       alert('한글 파일을 불러오지 못했습니다.');
       setIsProcessingHwp(false);
       if (hwpInputRef.current) hwpInputRef.current.value = '';
+    }
+  };
+
+  // 4-2. 엑셀/CSV(XLSX, XLS, CSV) 문서 전용 파일 선택 핸들러
+  const handleExcelFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 30 * 1024 * 1024) {
+      alert('30MB 이하의 스프레드시트 파일만 첨부할 수 있습니다.');
+      if (excelInputRef.current) excelInputRef.current.value = '';
+      return;
+    }
+
+    setIsProcessingExcel(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        if (dataUrl) {
+          const mime =
+            file.type ||
+            (file.name.toLowerCase().endsWith('.csv')
+              ? 'text/csv'
+              : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+          insertAttachmentAtCursor(file.name, dataUrl, mime);
+        }
+        setIsProcessingExcel(false);
+        if (excelInputRef.current) excelInputRef.current.value = '';
+      };
+      reader.onerror = () => {
+        alert('스프레드시트 파일을 읽는 중 오류가 발생했습니다.');
+        setIsProcessingExcel(false);
+        if (excelInputRef.current) excelInputRef.current.value = '';
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('엑셀 업로드 실패:', err);
+      alert('엑셀 파일을 불러오지 못했습니다.');
+      setIsProcessingExcel(false);
+      if (excelInputRef.current) excelInputRef.current.value = '';
     }
   };
 
@@ -2065,6 +2130,121 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       return;
     }
 
+    // 7-3. 엑셀 [✏️ 직접 편집] 버튼 클릭 시 웹 스프레드시트 편집기 모달 열기
+    const editExcelBtn = target.closest<HTMLElement>('.excel-btn-edit');
+    if (editExcelBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = editExcelBtn.getAttribute('data-att-id');
+      const title = editExcelBtn.getAttribute('data-file-name') || '엑셀 문서';
+      if (attId && localAttachments[attId]) {
+        setActiveExcelEditorModal({
+          attId,
+          data: localAttachments[attId].data,
+          title,
+        });
+      }
+      return;
+    }
+
+    // 7-4. 엑셀 [🔍 크게 보기] 클릭 시 전면 뷰어 모달 열기
+    const fullscreenExcelBtn = target.closest<HTMLElement>('.excel-btn-fullscreen');
+    if (fullscreenExcelBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = fullscreenExcelBtn.getAttribute('data-att-id');
+      const title = fullscreenExcelBtn.getAttribute('data-file-name') || '엑셀 문서';
+      if (attId && localAttachments[attId]) {
+        setActiveExcelModal({
+          attId,
+          data: localAttachments[attId].data,
+          title,
+        });
+      }
+      return;
+    }
+
+    // 7-5. 엑셀 [📝 표 가져오기] 클릭 시 마크다운 표로 본문에 가져오기
+    const importExcelBtn = target.closest<HTMLElement>('.excel-btn-import');
+    if (importExcelBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = importExcelBtn.getAttribute('data-att-id');
+      if (attId && localAttachments[attId]) {
+        const parsed = parseExcelWorkbook(localAttachments[attId].data, attId);
+        const firstSheet = parsed.sheetNames[0] || 'Sheet1';
+        const rows = parsed.sheets[firstSheet] || [];
+        const mdTable = sheetRowsToMarkdownTable(rows);
+        if (!mdTable.trim()) {
+          alert('가져올 수 있는 표 데이터가 없습니다.');
+          return;
+        }
+        const insertBlock = `\n\n### 📊 ${localAttachments[attId].name} (${firstSheet})\n\n${mdTable}\n\n`;
+        const newContent = `${localContent}${insertBlock}`;
+        setLocalContent(newContent);
+        debouncedSyncToParent({ content: newContent });
+        alert(`'${localAttachments[attId].name}' 표 데이터(${rows.length}행)를 마크다운 표로 메모에 성공적으로 가져왔습니다!`);
+      }
+      return;
+    }
+
+    // 7-6. 엑셀 인라인 시트 탭 전환 클릭
+    const sheetPill = target.closest<HTMLElement>('.excel-sheet-pill');
+    if (sheetPill) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = sheetPill.getAttribute('data-att-id');
+      const sheetName = sheetPill.getAttribute('data-sheet-name');
+      const preview = previewContainerRef.current;
+      if (attId && sheetName && preview && localAttachments[attId]) {
+        const viewer = preview.querySelector<HTMLElement>(`.excel-inline-viewer[data-att-id="${attId}"]`);
+        if (viewer) {
+          const parsed = parseExcelWorkbook(localAttachments[attId].data, attId);
+          const rows = parsed.sheets[sheetName] || [];
+          const tableEl = viewer.querySelector<HTMLTableElement>(`#excel-table-${attId}`);
+          if (tableEl) {
+            let maxCols = 0;
+            rows.forEach((r) => { maxCols = Math.max(maxCols, r.length); });
+            const colCount = Math.max(maxCols, 1);
+            const previewRows = rows.slice(0, 12);
+
+            const thead = tableEl.querySelector('thead');
+            if (thead) {
+              const colHeaders = Array.from({ length: colCount }).map((_, cIdx) => {
+                let lbl = '';
+                let num = cIdx;
+                while (num >= 0) {
+                  lbl = String.fromCharCode((num % 26) + 65) + lbl;
+                  num = Math.floor(num / 26) - 1;
+                }
+                return `<th class="px-2.5 py-1.5 text-[11px] font-mono font-semibold text-slate-400 border-r border-slate-800/80 min-w-[75px]">${lbl}</th>`;
+              }).join('');
+              thead.innerHTML = `<tr><th class="w-10 px-2 py-1.5 text-center text-[10px] font-bold text-slate-500 bg-slate-950 border-r border-slate-800 sticky left-0 z-20">#</th>${colHeaders}</tr>`;
+            }
+
+            const tbody = tableEl.querySelector('tbody');
+            if (tbody) {
+              tbody.innerHTML = previewRows.map((row, rIdx) => `
+                <tr class="hover:bg-indigo-950/20 transition-colors">
+                  <td class="px-2 py-1 text-center text-[10px] font-mono font-bold text-slate-500 bg-slate-950/90 border-r border-slate-800 sticky left-0 z-10">${rIdx + 1}</td>
+                  ${Array.from({ length: colCount }).map((_, cIdx) => `<td class="px-2.5 py-1 text-xs text-slate-200 border-r border-slate-800/50 break-words whitespace-pre-wrap max-w-xs">${row[cIdx] !== undefined && row[cIdx] !== null ? String(row[cIdx]) : ''}</td>`).join('')}
+                </tr>
+              `).join('');
+            }
+
+            viewer.querySelectorAll('.excel-sheet-pill').forEach((pill) => {
+              if (pill.getAttribute('data-sheet-name') === sheetName) {
+                pill.className = 'excel-sheet-pill px-2 py-0.5 text-[11px] font-semibold rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 cursor-pointer';
+              } else {
+                pill.className = 'excel-sheet-pill px-2 py-0.5 text-[11px] font-semibold rounded bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/60 cursor-pointer';
+              }
+            });
+          }
+        }
+      }
+      return;
+    }
+
     // 8. 링크(<a>) 클릭 처리: PWA 및 모바일/PC 어디서나 확실하게 새 창(새 브라우저 탭)으로 열기
     const anchor = target.closest('a');
     if (anchor && anchor.href) {
@@ -2177,6 +2357,15 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         ref={hwpInputRef}
         onChange={handleHwpFileChange}
         accept=".hwp,.hwpx,application/x-hwp,application/haansofthwp,application/vnd.hancom.hwp,application/vnd.hancom.hwpx"
+        className="hidden"
+      />
+
+      {/* 숨겨진 엑셀/CSV(XLSX, XLS, CSV) 문서 선택 인풋 */}
+      <input
+        type="file"
+        ref={excelInputRef}
+        onChange={handleExcelFileChange}
+        accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
         className="hidden"
       />
 
@@ -2669,6 +2858,23 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               <span className="hidden xs:inline">한글</span>
             </button>
 
+            {/* 엑셀/CSV 문서 첨부 버튼 */}
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => excelInputRef.current?.click()}
+              disabled={isProcessingExcel}
+              className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-emerald-300 text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
+              title="커서 위치에 엑셀/CSV(XLSX, XLS, CSV) 문서 파일 첨부"
+            >
+              {isProcessingExcel ? (
+                <Loader2 size={12} className="animate-spin text-emerald-400" />
+              ) : (
+                <FileSpreadsheet size={12} className="text-emerald-400" />
+              )}
+              <span className="hidden xs:inline">엑셀</span>
+            </button>
+
             {/* GitHub 동기화 버튼 (Ctrl + S) */}
             {onSync && (
               <button
@@ -3097,6 +3303,69 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
               // 3. 편집 모달 내부 데이터 동기화
               setActiveImageEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
+            }
+          }}
+        />
+      )}
+
+      {/* 엑셀/CSV 스프레드시트 전면 뷰어 모달 */}
+      {activeExcelModal && (
+        <ExcelViewerModal
+          isOpen={true}
+          onClose={() => setActiveExcelModal(null)}
+          data={activeExcelModal.data}
+          title={activeExcelModal.title}
+          attId={activeExcelModal.attId}
+          onOpenEditor={() => {
+            const attId = activeExcelModal.attId || Object.keys(localAttachments).find(
+              (id) => localAttachments[id].data === activeExcelModal.data
+            ) || '';
+            setActiveExcelEditorModal({
+              attId,
+              data: activeExcelModal.data,
+              title: activeExcelModal.title,
+            });
+            setActiveExcelModal(null);
+          }}
+          onImportTable={(mdTable) => {
+            const insertBlock = `\n\n### 📊 ${activeExcelModal.title} 표\n\n${mdTable}\n\n`;
+            const newContent = `${localContent}${insertBlock}`;
+            setLocalContent(newContent);
+            debouncedSyncToParent({ content: newContent });
+            alert(`'${activeExcelModal.title}' 표 데이터를 마크다운 표로 메모에 성공적으로 가져왔습니다!`);
+          }}
+        />
+      )}
+
+      {/* 엑셀/CSV 웹 직접 편집기 모달 */}
+      {activeExcelEditorModal && (
+        <ExcelEditorModal
+          isOpen={true}
+          onClose={() => setActiveExcelEditorModal(null)}
+          data={activeExcelEditorModal.data}
+          title={activeExcelEditorModal.title}
+          attId={activeExcelEditorModal.attId}
+          onSave={async (updatedDataUrl) => {
+            const attId = activeExcelEditorModal.attId;
+            if (attId) {
+              // 1. 엑셀 캐시 및 Blob URL 캐시 무효화
+              invalidateExcelCache(attId);
+              invalidateAttachmentBlobUrl(attId);
+
+              // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장
+              const updatedAtts = {
+                ...localAttachmentsRef.current,
+                [attId]: {
+                  ...(localAttachmentsRef.current[attId] || {}),
+                  data: updatedDataUrl,
+                },
+              };
+              setLocalAttachments(updatedAtts);
+              localAttachmentsRef.current = updatedAtts;
+              onUpdateNote({ attachments: updatedAtts });
+
+              // 3. 편집 모달 내부 데이터 동기화
+              setActiveExcelEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
             }
           }}
         />

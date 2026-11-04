@@ -1,4 +1,15 @@
 import type { AttachmentItem } from '../types';
+import { parseExcelWorkbook } from './excelViewer';
+
+function getColumnLabel(index: number): string {
+  let label = '';
+  let num = index;
+  while (num >= 0) {
+    label = String.fromCharCode((num % 26) + 65) + label;
+    num = Math.floor(num / 26) - 1;
+  }
+  return label;
+}
 
 // Blob URL 캐시 (대용량 Base64 문자열 반복 파싱 부하 및 메모리 낭비 방지)
 interface BlobCacheEntry {
@@ -89,10 +100,19 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
     att.type === 'application/vnd.hancom.hwp' ||
     att.type === 'application/vnd.hancom.hwpx';
 
+  const isExcel =
+    att.name.toLowerCase().endsWith('.xlsx') ||
+    att.name.toLowerCase().endsWith('.xls') ||
+    att.name.toLowerCase().endsWith('.csv') ||
+    att.type?.includes('spreadsheet') ||
+    att.type === 'text/csv' ||
+    att.data?.startsWith('data:application/vnd.openxmlformats') ||
+    att.data?.startsWith('data:text/csv');
+
   // 사용자가 마크다운 [대괄호] 안에 수정한 표시 이름이 있으면 우선 사용
   const cleanLabel = (labelText || '')
-    .replace(/^[\s📄📎🖼️📝]*/, '')
-    .replace(/^(?:PDF\s*문서:\s*|한글\s*문서:\s*|한글:\s*|파일:\s*)/i, '')
+    .replace(/^[\s📄📎🖼️📝📊]*/, '')
+    .replace(/^(?:PDF\s*문서:\s*|한글\s*문서:\s*|한글:\s*|엑셀\s*문서:\s*|엑셀:\s*|파일:\s*)/i, '')
     .trim();
   const displayName = cleanLabel || att.name;
   const downloadName = isPdf && !displayName.toLowerCase().endsWith('.pdf')
@@ -101,6 +121,106 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
     ? `${displayName}.hwp`
     : displayName;
   const targetUrl = (isPdf || isHwp) ? getAttachmentBlobUrl(att) : att.data;
+
+  if (isExcel) {
+    const isCsv = att.name.toLowerCase().endsWith('.csv') || att.type === 'text/csv';
+    const parsed = parseExcelWorkbook(att.data, att.id);
+    const sheetNames = parsed.sheetNames || ['Sheet1'];
+    const firstSheet = sheetNames[0] || 'Sheet1';
+    const rows = parsed.sheets[firstSheet] || [];
+    const totalRows = rows.length;
+    let maxCols = 0;
+    rows.forEach((r) => {
+      maxCols = Math.max(maxCols, r.length);
+    });
+    const colCount = Math.max(maxCols, 1);
+    const previewRows = rows.slice(0, 12);
+
+    const sheetTabsHtml = sheetNames.length > 1
+      ? `<div class="flex items-center gap-1 overflow-x-auto max-w-xs py-0.5">
+          ${sheetNames.map((sName, sIdx) => `
+            <button type="button" class="excel-sheet-pill px-2 py-0.5 text-[11px] font-semibold rounded ${sIdx === 0 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/60'}" data-att-id="${att.id}" data-sheet-name="${sName}">${sName}</button>
+          `).join('')}
+        </div>`
+      : '';
+
+    const tableHeaderHtml = `
+      <thead class="bg-slate-900 sticky top-0 z-10 border-b border-slate-800">
+        <tr>
+          <th class="w-10 px-2 py-1.5 text-center text-[10px] font-bold text-slate-500 bg-slate-950 border-r border-slate-800 sticky left-0 z-20">#</th>
+          ${Array.from({ length: colCount }).map((_, cIdx) => `
+            <th class="px-2.5 py-1.5 text-[11px] font-mono font-semibold text-slate-400 border-r border-slate-800/80 min-w-[75px]">${getColumnLabel(cIdx)}</th>
+          `).join('')}
+        </tr>
+      </thead>
+    `;
+
+    const tableBodyHtml = previewRows.map((row, rIdx) => `
+      <tr class="hover:bg-indigo-950/20 transition-colors">
+        <td class="px-2 py-1 text-center text-[10px] font-mono font-bold text-slate-500 bg-slate-950/90 border-r border-slate-800 sticky left-0 z-10">${rIdx + 1}</td>
+        ${Array.from({ length: colCount }).map((_, cIdx) => {
+          const val = row[cIdx] !== undefined && row[cIdx] !== null ? String(row[cIdx]) : '';
+          return `<td class="px-2.5 py-1 text-xs text-slate-200 border-r border-slate-800/50 break-words whitespace-pre-wrap max-w-xs">${val}</td>`;
+        }).join('')}
+      </tr>
+    `).join('');
+
+    return `
+<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl excel-inline-viewer" data-att-id="${att.id}" data-file-name="${displayName}">
+  <!-- 상단 헤더: 문서명, 시트 탭, 직접 편집, 메모로 가져오기, 전면 뷰어, 다운로드 버튼 -->
+  <div class="px-3.5 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
+    <div class="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-100 min-w-0">
+      <span class="text-base md:text-lg">📊</span>
+      <span class="truncate" title="${displayName}">${displayName}</span>
+      <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-bold shrink-0 uppercase">
+        ${isCsv ? 'CSV' : 'XLSX'}
+      </span>
+      ${sheetTabsHtml}
+    </div>
+
+    <div class="flex items-center gap-1.5 shrink-0">
+      <!-- 스프레드시트 직접 편집 버튼 -->
+      <button type="button" class="excel-btn-edit px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 rounded-lg text-xs font-semibold border border-emerald-500/30 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="웹에서 표 데이터 직접 편집 및 행/열 추가·삭제">
+        <span>✏️ 직접 편집</span>
+      </button>
+
+      <!-- 본문 메모로 가져오기 버튼 -->
+      <button type="button" class="excel-btn-import px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white rounded-lg text-xs font-semibold border border-indigo-500/40 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="표 데이터를 마크다운 표로 메모 본문에 가져오기">
+        <span>📝 표 가져오기</span>
+      </button>
+
+      <!-- 전면 뷰어로 크게 보기 버튼 -->
+      <button type="button" class="excel-btn-fullscreen px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-indigo-300 rounded-lg text-xs font-semibold border border-indigo-500/30 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="전체 행/열 전면 뷰어로 크게 보기">
+        <span>🔍 크게 보기</span>
+      </button>
+
+      <!-- 다운로드 버튼 -->
+      <a href="${att.data}" download="${displayName}" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-slate-700 flex items-center gap-1 active:scale-95 transition-all no-underline" title="기기에 파일로 다운로드">
+        <span>⬇️ 저장</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- 인라인 표 그리드 뷰어 -->
+  <div class="w-full bg-slate-950 p-2 md:p-3 overflow-x-auto max-h-[420px]">
+    <div class="inline-block min-w-full align-middle border border-slate-800 rounded-xl overflow-hidden bg-slate-900/60 shadow-inner">
+      <table class="min-w-full border-collapse text-left" id="excel-table-${att.id}">
+        ${tableHeaderHtml}
+        <tbody class="divide-y divide-slate-800/60 font-sans">
+          ${tableBodyHtml}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 하단 행 카운트 안내 바 -->
+  <div class="px-3.5 py-1.5 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
+    <span>전체 ${totalRows}개 행 • ${colCount}개 열 ${totalRows > 12 ? `(상위 12개 행 미리보기)` : ''}</span>
+    <span class="text-slate-500 hidden sm:inline">전체 확인 및 셀 수정은 [🔍 크게 보기] 또는 [✏️ 직접 편집]을 클릭하세요.</span>
+  </div>
+</div>
+    `.trim();
+  }
 
   if (isHwp) {
     return `
@@ -333,6 +453,15 @@ export function cleanLegacyAttachments(
       }
       if (name.toLowerCase().endsWith('.hwp') || name.toLowerCase().endsWith('.hwpx') || mimeType.includes('hwp')) {
         return `\n\n[📝 한글: ${safeName}](attachment:${existingId})\n\n`;
+      }
+      if (
+        name.toLowerCase().endsWith('.xlsx') ||
+        name.toLowerCase().endsWith('.xls') ||
+        name.toLowerCase().endsWith('.csv') ||
+        mimeType.includes('spreadsheet') ||
+        mimeType === 'text/csv'
+      ) {
+        return `\n\n[📊 엑셀: ${safeName}](attachment:${existingId})\n\n`;
       }
       return `\n\n[📎 파일: ${safeName}](attachment:${existingId})\n\n`;
     }
