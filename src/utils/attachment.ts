@@ -1,14 +1,51 @@
 import type { AttachmentItem } from '../types';
 
 // Blob URL 캐시 (대용량 Base64 문자열 반복 파싱 부하 및 메모리 낭비 방지)
-const blobUrlCache = new Map<string, string>();
+interface BlobCacheEntry {
+  url: string;
+  signature: string;
+}
+const blobUrlCache = new Map<string, BlobCacheEntry>();
+
+export function invalidateAttachmentBlobUrl(attId?: string): void {
+  if (attId) {
+    const entry = blobUrlCache.get(attId);
+    if (entry) {
+      try {
+        URL.revokeObjectURL(entry.url);
+      } catch {
+        // ignore
+      }
+      blobUrlCache.delete(attId);
+    }
+  } else {
+    blobUrlCache.forEach((entry) => {
+      try {
+        URL.revokeObjectURL(entry.url);
+      } catch {
+        // ignore
+      }
+    });
+    blobUrlCache.clear();
+  }
+}
 
 export function getAttachmentBlobUrl(att: AttachmentItem): string {
   if (!att.data) return '';
   if (att.data.startsWith('blob:') || att.data.startsWith('http')) return att.data;
   
-  if (blobUrlCache.has(att.id)) {
-    return blobUrlCache.get(att.id)!;
+  const currentSig = `${att.data.length}_${att.data.slice(-32)}`;
+  const cached = blobUrlCache.get(att.id);
+  if (cached && cached.signature === currentSig) {
+    return cached.url;
+  }
+  if (cached) {
+    try {
+      URL.revokeObjectURL(cached.url);
+    } catch {
+      // ignore
+    }
+    blobUrlCache.delete(att.id);
   }
 
   try {
@@ -25,7 +62,7 @@ export function getAttachmentBlobUrl(att: AttachmentItem): string {
     }
     const blob = new Blob([array], { type: mime });
     const url = URL.createObjectURL(blob);
-    blobUrlCache.set(att.id, url);
+    blobUrlCache.set(att.id, { url, signature: currentSig });
     return url;
   } catch {
     return att.data;

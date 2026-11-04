@@ -50,8 +50,38 @@ export async function initHwpWasm(): Promise<void> {
 
 const hwpDocCache = new Map<string, HwpDocument>();
 
+/**
+ * 특정 첨부파일 ID 또는 전체 HWP 캐시를 무효화(삭제)합니다.
+ */
+export function invalidateHwpCache(cacheKey?: string): void {
+  if (cacheKey) {
+    for (const key of Array.from(hwpDocCache.keys())) {
+      if (key === cacheKey || key.startsWith(`${cacheKey}_`)) {
+        try {
+          hwpDocCache.get(key)?.free?.();
+        } catch {
+          // ignore
+        }
+        hwpDocCache.delete(key);
+      }
+    }
+  } else {
+    hwpDocCache.forEach((doc) => {
+      try {
+        doc.free?.();
+      } catch {
+        // ignore
+      }
+    });
+    hwpDocCache.clear();
+  }
+}
+
 export async function loadHwpDocument(dataOrUrl: string, cacheKey?: string): Promise<HwpDocument> {
-  const key = cacheKey || dataOrUrl.slice(0, 80);
+  // 데이터 내용의 길이와 서명을 포함시켜 내용이 수정되면 자동으로 새 캐시 키가 생성되도록 보장
+  const dataSignature = `${dataOrUrl.length}_${dataOrUrl.slice(-32)}`;
+  const key = cacheKey ? `${cacheKey}_${dataSignature}` : dataOrUrl.slice(0, 80);
+
   if (hwpDocCache.has(key)) {
     return hwpDocCache.get(key)!;
   }

@@ -23,14 +23,17 @@ function dataUrlToUint8Array(dataOrUrl: string): Uint8Array {
   return bytes;
 }
 
-// Uint8Array 바이트를 Base64 Data URL로 안전하게 청크 변환
-function uint8ArrayToDataUrl(bytes: Uint8Array, mimeType: string = 'application/x-hwp'): string {
-  const chunkSize = 0x8000; // 32KB
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)));
-  }
-  return `data:${mimeType};base64,${btoa(binary)}`;
+// Uint8Array 바이트를 Base64 Data URL로 안전하게 비동기 변환 (메모리 낭비 및 콜스택 초과 방지)
+function uint8ArrayToDataUrl(bytes: Uint8Array, mimeType: string = 'application/x-hwp'): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const blob = new Blob([bytes as any], { type: mimeType });
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      resolve(reader.result as string);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
@@ -143,10 +146,16 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
     try {
       const editor = editorRef.current;
       const bytes = isHwpx ? await editor.exportHwpx() : await editor.exportHwp();
-      const updatedDataUrl = uint8ArrayToDataUrl(bytes, mimeType);
+      const updatedDataUrl = await uint8ArrayToDataUrl(bytes, mimeType);
 
       if (onSave) {
         await onSave(updatedDataUrl);
+      }
+
+      try {
+        await editor.notifySaved(title);
+      } catch {
+        // notifySaved가 지원되지 않는 구버전 스튜디오의 경우 무시
       }
 
       setHasChanges(false);

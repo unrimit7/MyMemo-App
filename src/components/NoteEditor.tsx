@@ -3,14 +3,14 @@ import type { Note, Project } from '../types';
 import { marked } from 'marked';
 import { compressImageToDataUrl } from '../utils/image';
 import { processFileForNote } from '../utils/file';
-import { cleanLegacyAttachments, renderAttachmentsInHtml } from '../utils/attachment';
+import { cleanLegacyAttachments, renderAttachmentsInHtml, invalidateAttachmentBlobUrl } from '../utils/attachment';
 import { exportNoteToPdf } from '../utils/exportPdf';
 import { getFolderHierarchyPath, updateTitleWithFolderPath } from '../utils/folderPath';
 import { PdfViewerModal } from './PdfViewerModal';
 import { loadPdfDocument, renderPdfPageToCanvas, extractPdfText } from '../utils/pdfViewer';
 import { HwpViewerModal } from './HwpViewerModal';
 import { HwpEditorModal } from './HwpEditorModal';
-import { loadHwpDocument, renderHwpPageToSvg, extractHwpText } from '../utils/hwpViewer';
+import { loadHwpDocument, renderHwpPageToSvg, extractHwpText, invalidateHwpCache } from '../utils/hwpViewer';
 import type { AttachmentItem } from '../types';
 import { 
   Lock, 
@@ -652,8 +652,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   };
 
   // 인라인 HWP/HWPX 페이지 렌더링 핸들러
-  const renderInlineHwp = useRef<(attId: string) => void>(() => {});
-  renderInlineHwp.current = (attId: string) => {
+  const renderInlineHwp = useRef<(attId: string, customData?: string) => void>(() => {});
+  renderInlineHwp.current = (attId: string, customData?: string) => {
     const preview = previewContainerRef.current;
     if (!preview) return;
 
@@ -661,7 +661,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     if (!viewer) return;
 
     const att = localAttachments[attId];
-    if (!att || !att.data) return;
+    const dataToUse = customData || att?.data;
+    if (!dataToUse) return;
 
     const svgContainer = viewer.querySelector<HTMLElement>(`#hwp-svg-container-${attId}`);
     const loadingBox = viewer.querySelector<HTMLElement>(`#hwp-loading-${attId}`);
@@ -671,7 +672,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
     const currentPage = hwpPagesRef.current.get(attId) || 1;
 
-    loadHwpDocument(att.data, attId)
+    loadHwpDocument(dataToUse, attId)
       .then((doc) => {
         const total = doc.pageCount();
         if (pageIndicator) pageIndicator.textContent = `${currentPage} / ${total}`;
@@ -2903,20 +2904,32 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           attId={activeHwpEditorModal.attId}
           onSave={async (updatedDataUrl) => {
             const attId = activeHwpEditorModal.attId;
-            if (attId && localAttachments[attId]) {
+            if (attId) {
+              // 1. 기존 HWP 캐시 및 Blob URL 캐시 즉시 무효화 (새 파일 재로드 보장)
+              invalidateHwpCache(attId);
+              invalidateAttachmentBlobUrl(attId);
+
+              // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장
               const updatedAtts = {
                 ...localAttachments,
                 [attId]: {
-                  ...localAttachments[attId],
+                  ...(localAttachments[attId] || {}),
                   data: updatedDataUrl,
                 },
               };
               setLocalAttachments(updatedAtts);
               onUpdateNote({ attachments: updatedAtts });
-              // 인라인 뷰어 재렌더링 트리거
+
+              // 3. 편집 모달의 내부 데이터 상태도 최신으로 동기화
+              setActiveHwpEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
+
+              // 4. 인라인 뷰어에 새 데이터 URL을 즉시 전달하여 재로드 & 재렌더링
+              renderInlineHwp.current(attId, updatedDataUrl);
+
+              // 5. 마크다운 HTML 재계산 및 DOM 갱신 후 한 번 더 보장 렌더링
               setTimeout(() => {
-                renderInlineHwp.current(attId);
-              }, 150);
+                renderInlineHwp.current(attId, updatedDataUrl);
+              }, 120);
             }
           }}
         />
