@@ -18,7 +18,7 @@ import {
   Move
 } from 'lucide-react';
 import { PDFDocument } from 'pdf-lib';
-import { loadPdfDocument, renderPdfPageToCanvas } from '../utils/pdfViewer';
+import { loadPdfDocument, renderPdfPageToCanvas, invalidatePdfCache } from '../utils/pdfViewer';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 interface Stroke {
@@ -100,9 +100,11 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
   onClose,
   data,
   title,
+  attId,
   initialPage = 1,
   onSave,
 }) => {
+  const [currentPdfData, setCurrentPdfData] = useState<string>(data);
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(initialPage);
   const [totalPages, setTotalPages] = useState<number>(1);
@@ -131,8 +133,9 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
   const [pendingTextPos, setPendingTextPos] = useState<{ x: number; y: number } | null>(null);
   const [inputModalText, setInputModalText] = useState<string>('');
 
-  // 서명 모달 상태
+  // 서명/도장 모달 및 클릭 위치 상태
   const [showSignPad, setShowSignPad] = useState<boolean>(false);
+  const [pendingStampPos, setPendingStampPos] = useState<{ x: number; y: number } | null>(null);
 
   // 페이지별 주석 데이터 (1-based page index)
   const [annotations, setAnnotations] = useState<Record<number, PageAnnotations>>({});
@@ -145,9 +148,26 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
   // 진행 중인 드로잉 스트로크
   const currentStrokeRef = useRef<Stroke | null>(null);
 
-  // PDF 문서 로딩
+  // 드래그 중인 도장/텍스트 아이템 추적
+  const draggingItemRef = useRef<{
+    type: 'stamp' | 'text';
+    id: string;
+    offsetX: number;
+    offsetY: number;
+  } | null>(null);
+
+  // [이동] 도구: 화면 팬(Pan Hand Tool) 마우스 드래그 추적
+  const [isPanDragging, setIsPanDragging] = useState<boolean>(false);
+  const panDragStartRef = useRef<{ x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
+
+  // props data 변경 시 로컬 데이터 동기화
   useEffect(() => {
-    if (!isOpen || !data) return;
+    setCurrentPdfData(data);
+  }, [data]);
+
+  // PDF 문서 로딩 (항상 최신 dataSignature 및 attId 반영)
+  useEffect(() => {
+    if (!isOpen || !currentPdfData) return;
 
     let isMounted = true;
     setIsLoading(true);
@@ -156,7 +176,7 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     setZoom(1.0);
     setAnnotations({});
 
-    loadPdfDocument(data)
+    loadPdfDocument(currentPdfData, attId)
       .then((doc) => {
         if (!isMounted) return;
         setPdfDoc(doc);
@@ -173,7 +193,7 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, data, initialPage]);
+  }, [isOpen, currentPdfData, initialPage, attId]);
 
   // 베이스 PDF 캔버스 렌더링
   useEffect(() => {
@@ -199,6 +219,48 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
         console.error('PDF 페이지 렌더링 오류:', err);
       });
   }, [isOpen, pdfDoc, currentPage, zoom]);
+
+  // [이동] 도구: 마우스 드래그로 화면 스크롤 팬(Pan) 이동
+  const handleContainerMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return; // 좌클릭만
+    if (activeTool !== 'pan') return;
+    const container = containerRef.current;
+    if (!container) return;
+
+    e.preventDefault();
+    panDragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      scrollLeft: container.scrollLeft,
+      scrollTop: container.scrollTop,
+    };
+    setIsPanDragging(true);
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!panDragStartRef.current || !containerRef.current) return;
+      const dx = e.clientX - panDragStartRef.current.x;
+      const dy = e.clientY - panDragStartRef.current.y;
+      containerRef.current.scrollLeft = panDragStartRef.current.scrollLeft - dx;
+      containerRef.current.scrollTop = panDragStartRef.current.scrollTop - dy;
+    };
+
+    const handleMouseUp = () => {
+      panDragStartRef.current = null;
+      setIsPanDragging(false);
+    };
+
+    if (isPanDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isPanDragging]);
 
   // 오버레이 캔버스 재렌더링
   const redrawOverlay = useCallback(() => {
@@ -234,17 +296,30 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
       ctx.restore();
     });
 
-    // 2. 도장/서명 이미지
+    // 2. 도장/서명 이미지 (위치 지정 및 드래그 대상)
     pageData.stamps.forEach((stamp) => {
       const img = new Image();
       img.src = stamp.dataUrl;
+      const sx = stamp.x * w;
+      const sy = stamp.y * h;
+      const sw = stamp.width * w;
+      const sh = stamp.height * h;
+
       if (img.complete) {
-        ctx.drawImage(img, stamp.x * w, stamp.y * h, stamp.width * w, stamp.height * h);
+        ctx.drawImage(img, sx, sy, sw, sh);
       } else {
         img.onload = () => {
-          ctx.drawImage(img, stamp.x * w, stamp.y * h, stamp.width * w, stamp.height * h);
+          ctx.drawImage(img, sx, sy, sw, sh);
         };
       }
+
+      // 호버/선택 힌트 얇은 외곽선
+      ctx.save();
+      ctx.strokeStyle = 'rgba(99, 102, 241, 0.4)';
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(sx - 2, sy - 2, sw + 4, sh + 4);
+      ctx.restore();
     });
 
     // 3. 텍스트 주석 (사각형 테두리 및 배경 채우기 포함)
@@ -296,26 +371,78 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     redrawOverlay();
   }, [redrawOverlay]);
 
-  // 마우스/터치 드로잉 이벤트
+  // 마우스/터치 드로잉 및 아이템 드래그 이벤트
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (activeTool === 'pan') return;
 
     const overlay = overlayCanvasRef.current;
     if (!overlay) return;
     const rect = overlay.getBoundingClientRect();
-    const clientX = e.clientX;
-    const clientY = e.clientY;
 
-    const normX = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    const normY = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+    const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
 
+    const pageData = annotations[currentPage];
+
+    // 1. 기존 도장/서명 위를 클릭했는지 확인 -> 마우스 드래그로 위치 이동 시작
+    if (pageData && pageData.stamps.length > 0) {
+      const clickedStamp = [...pageData.stamps].reverse().find((s) => {
+        return normX >= s.x && normX <= s.x + s.width && normY >= s.y && normY <= s.y + s.height;
+      });
+      if (clickedStamp) {
+        overlay.setPointerCapture(e.pointerId);
+        draggingItemRef.current = {
+          type: 'stamp',
+          id: clickedStamp.id,
+          offsetX: normX - clickedStamp.x,
+          offsetY: normY - clickedStamp.y,
+        };
+        return;
+      }
+    }
+
+    // 2. 기존 텍스트 박스 위를 클릭했는지 확인 -> 마우스 드래그로 위치 이동 시작
+    if (pageData && pageData.texts.length > 0) {
+      const w = overlay.width;
+      const clickedText = [...pageData.texts].reverse().find((t) => {
+        const scaledSize = Math.max(10, t.fontSize * (w / 800));
+        const lineHeight = scaledSize * 1.3;
+        const lines = t.text.split('\n');
+        const padX = Math.max(5, scaledSize * 0.4) / w;
+        const padY = Math.max(4, scaledSize * 0.3) / overlay.height;
+        const boxX = t.x - padX;
+        const boxY = t.y - (scaledSize / overlay.height) - padY;
+        const boxW = (t.fontSize * 0.7 * t.text.length + 30) / w;
+        const boxH = (lines.length * lineHeight) / overlay.height + padY * 2;
+        return normX >= boxX && normX <= boxX + boxW && normY >= boxY && normY <= boxY + boxH;
+      });
+      if (clickedText) {
+        overlay.setPointerCapture(e.pointerId);
+        draggingItemRef.current = {
+          type: 'text',
+          id: clickedText.id,
+          offsetX: normX - clickedText.x,
+          offsetY: normY - clickedText.y,
+        };
+        return;
+      }
+    }
+
+    // 3. 서명/도장 도구일 때 빈 공간 클릭 시: 클릭한 위치에 도장 생성 모달 열기
+    if (activeTool === 'stamp') {
+      setPendingStampPos({ x: normX, y: normY });
+      setShowSignPad(true);
+      return;
+    }
+
+    // 4. 텍스트 도구일 때 빈 공간 클릭 시: 클릭한 위치에 텍스트 생성 모달 열기
     if (activeTool === 'text') {
-      // 텍스트 박스 신규 추가 모달 열기
       setPendingTextPos({ x: normX, y: normY });
       setShowTextModal(true);
       return;
     }
 
+    // 5. 펜 또는 형광펜 드로잉 시작
     if (activeTool === 'pen' || activeTool === 'highlighter') {
       overlay.setPointerCapture(e.pointerId);
       const isHighlighter = activeTool === 'highlighter';
@@ -330,8 +457,6 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!currentStrokeRef.current || (activeTool !== 'pen' && activeTool !== 'highlighter')) return;
-
     const overlay = overlayCanvasRef.current;
     if (!overlay) return;
     const rect = overlay.getBoundingClientRect();
@@ -339,9 +464,56 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
 
+    // A. 도장 또는 텍스트 아이템 드래그 이동 처리
+    if (draggingItemRef.current) {
+      const drag = draggingItemRef.current;
+      setAnnotations((prev) => {
+        const curr = prev[currentPage];
+        if (!curr) return prev;
+
+        if (drag.type === 'stamp') {
+          return {
+            ...prev,
+            [currentPage]: {
+              ...curr,
+              stamps: curr.stamps.map((s) =>
+                s.id === drag.id
+                  ? {
+                      ...s,
+                      x: Math.max(0, Math.min(1 - s.width, normX - drag.offsetX)),
+                      y: Math.max(0, Math.min(1 - s.height, normY - drag.offsetY)),
+                    }
+                  : s
+              ),
+            },
+          };
+        } else if (drag.type === 'text') {
+          return {
+            ...prev,
+            [currentPage]: {
+              ...curr,
+              texts: curr.texts.map((t) =>
+                t.id === drag.id
+                  ? {
+                      ...t,
+                      x: Math.max(0, Math.min(0.9, normX - drag.offsetX)),
+                      y: Math.max(0.04, Math.min(0.96, normY - drag.offsetY)),
+                    }
+                  : t
+              ),
+            },
+          };
+        }
+        return prev;
+      });
+      return;
+    }
+
+    // B. 실시간 펜/형광펜 스트로크 드로잉 처리
+    if (!currentStrokeRef.current || (activeTool !== 'pen' && activeTool !== 'highlighter')) return;
+
     currentStrokeRef.current.points.push({ x: normX, y: normY });
 
-    // 실시간 드로잉 미리보기
     const ctx = overlay.getContext('2d');
     if (!ctx) return;
     const stroke = currentStrokeRef.current;
@@ -365,6 +537,14 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (draggingItemRef.current) {
+      draggingItemRef.current = null;
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {}
+      return;
+    }
+
     if (!currentStrokeRef.current) return;
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
@@ -501,16 +681,17 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
   };
 
-  // 완성된 서명/도장을 현재 페이지 중앙에 삽입
+  // 완성된 손글씨 서명을 지정된 위치(클릭한 위치)에 삽입
   const handleInsertSignature = () => {
     const canvas = signCanvasRef.current;
     if (!canvas) return;
     const signDataUrl = canvas.toDataURL('image/png');
 
+    const pos = pendingStampPos || { x: 0.5, y: 0.5 };
     const newStamp: StampAnnotation = {
       id: `stamp_${Date.now()}`,
-      x: 0.7, // 우측 하단 기본 서명란 위치
-      y: 0.8,
+      x: Math.max(0, Math.min(0.8, pos.x - 0.1)),
+      y: Math.max(0, Math.min(0.88, pos.y - 0.05)),
       width: 0.2, // 페이지 너비의 20%
       height: 0.1, // 페이지 높이의 10%
       dataUrl: signDataUrl,
@@ -528,10 +709,11 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     });
 
     setShowSignPad(false);
+    setPendingStampPos(null);
   };
 
-  // 사전 프리셋 도장(확인/서명) 즉시 삽입
-  const handleInsertPresetStamp = (text: string, color: string = '#dc2626') => {
+  // 사전 프리셋 도장(확인/서명) 지정된 위치(클릭한 위치)에 삽입
+  const handleInsertPresetStamp = (presetText: string, color: string = '#dc2626') => {
     const offCanvas = document.createElement('canvas');
     offCanvas.width = 160;
     offCanvas.height = 160;
@@ -550,13 +732,14 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     ctx.font = 'bold 36px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(text, 80, 80);
+    ctx.fillText(presetText, 80, 80);
 
     const stampDataUrl = offCanvas.toDataURL('image/png');
+    const pos = pendingStampPos || { x: 0.5, y: 0.5 };
     const newStamp: StampAnnotation = {
       id: `stamp_${Date.now()}`,
-      x: 0.75,
-      y: 0.82,
+      x: Math.max(0, Math.min(0.85, pos.x - 0.075)),
+      y: Math.max(0, Math.min(0.88, pos.y - 0.05)),
       width: 0.15,
       height: 0.1,
       dataUrl: stampDataUrl,
@@ -574,13 +757,14 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     });
 
     setShowSignPad(false);
+    setPendingStampPos(null);
   };
 
   // 주석이 포함된 수정 PDF 바이너리 생성 (pdf-lib 활용)
   const generateAnnotatedPdfBytes = async (): Promise<Uint8Array> => {
-    const originalBytes = dataUrlToUint8Array(data);
-    const pdfDoc = await PDFDocument.load(originalBytes);
-    const numPages = pdfDoc.getPageCount();
+    const originalBytes = dataUrlToUint8Array(currentPdfData);
+    const pdfDocument = await PDFDocument.load(originalBytes);
+    const numPages = pdfDocument.getPageCount();
 
     for (let p = 1; p <= numPages; p++) {
       const pageData = annotations[p];
@@ -588,7 +772,7 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
         continue;
       }
 
-      const pdfPage = pdfDoc.getPage(p - 1);
+      const pdfPage = pdfDocument.getPage(p - 1);
       const pageWidth = pdfPage.getWidth();
       const pageHeight = pdfPage.getHeight();
 
@@ -684,7 +868,7 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
 
       // PNG 이미지로 인코딩 후 PDF 페이지에 합성
       const overlayPngUrl = offCanvas.toDataURL('image/png');
-      const pngImage = await pdfDoc.embedPng(overlayPngUrl);
+      const pngImage = await pdfDocument.embedPng(overlayPngUrl);
       pdfPage.drawImage(pngImage, {
         x: 0,
         y: 0,
@@ -693,7 +877,7 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
       });
     }
 
-    return await pdfDoc.save();
+    return await pdfDocument.save();
   };
 
   // 주석 저장 및 메모 반영
@@ -706,9 +890,23 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
       const modifiedBytes = await generateAnnotatedPdfBytes();
       const updatedDataUrl = await uint8ArrayToDataUrl(modifiedBytes);
 
+      // 1. 기존 캐시 무효화
+      invalidatePdfCache(attId);
+
+      // 2. 상위 메모 상태에 저장 및 본문 뷰어 동기화
       if (onSave) {
         await onSave(updatedDataUrl);
       }
+
+      // 3. 방금 저장된 수정본 PDF를 현재 에디터의 기본 문서로 승격
+      setCurrentPdfData(updatedDataUrl);
+      // 저장된 주석들은 이제 PDF 본문에 합성되었으므로 오버레이 목록 초기화
+      setAnnotations({});
+
+      // 4. 에디터 뷰어 재로드
+      const newDoc = await loadPdfDocument(updatedDataUrl, attId);
+      setPdfDoc(newDoc);
+      setTotalPages(newDoc.numPages);
 
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
@@ -758,17 +956,17 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
 
         {/* 중앙: 주석 도구 팔레트 */}
         <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 shrink-0">
-          {/* 손/선택 툴 */}
+          {/* 손/이동 툴 */}
           <button
             type="button"
             onClick={() => setActiveTool('pan')}
             className={`p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all ${
-              activeTool === 'pan' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              activeTool === 'pan' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-slate-800'
             }`}
-            title="화면 이동 / 보기 전용 (선택)"
+            title="화면 이동 / 보기 (마우스로 잡고 드래그하여 화면 이동)"
           >
             <Move size={14} />
-            <span className="hidden md:inline">이동</span>
+            <span className="hidden md:inline">화면 이동</span>
           </button>
 
           {/* 펜 드로잉 툴 */}
@@ -804,20 +1002,22 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
             className={`p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all ${
               activeTool === 'text' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
             }`}
-            title="텍스트 박스 추가 (클릭하여 글자 삽입)"
+            title="텍스트 박스 추가 (원하는 위치 클릭하여 글자 및 사각형 박스 삽입)"
           >
             <Type size={14} />
-            <span className="hidden md:inline">글자</span>
+            <span className="hidden md:inline">글자/박스</span>
           </button>
 
           {/* 서명 / 도장 툴 */}
           <button
             type="button"
-            onClick={() => setShowSignPad(true)}
-            className="p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 text-slate-300 hover:text-white hover:bg-slate-800 transition-all border border-slate-700/50"
-            title="서명 또는 도장 만들기"
+            onClick={() => setActiveTool('stamp')}
+            className={`p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all ${
+              activeTool === 'stamp' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'
+            }`}
+            title="서명/도장 툴 (원하는 위치 클릭하여 서명/도장 날인)"
           >
-            <Stamp size={14} className="text-rose-400" />
+            <Stamp size={14} className={activeTool === 'stamp' ? 'text-white' : 'text-rose-400'} />
             <span className="hidden md:inline">서명/도장</span>
           </button>
 
@@ -879,8 +1079,8 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
 
       {/* 보조 옵션 툴바 (색상 팔레트 및 페이지 이동 컨트롤) */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-slate-900/60 border-b border-slate-800/80 gap-2 text-xs overflow-x-auto shrink-0">
-        {/* 색상 및 두께 선택 */}
-        <div className="flex items-center gap-2">
+        {/* 색상 및 도구별 상세 옵션 */}
+        <div className="flex items-center gap-2 shrink-0">
           {activeTool === 'pen' && (
             <div className="flex items-center gap-1.5">
               <span className="text-slate-400 text-[11px]">펜 색상:</span>
@@ -1016,18 +1216,36 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
                 }}
                 className="ml-1 px-2 py-0.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[11px] font-bold transition-all shadow"
               >
-                + 글자/박스 작성
+                + 글자 작성
+              </button>
+            </div>
+          )}
+
+          {activeTool === 'stamp' && (
+            <div className="flex items-center gap-2">
+              <span className="text-emerald-400 text-[11px] font-semibold">📍 서명이나 도장을 찍을 PDF 위치를 클릭하세요 (삽입 후 드래그로 자유롭게 이동 가능)</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingStampPos({ x: 0.5, y: 0.5 });
+                  setShowSignPad(true);
+                }}
+                className="px-2 py-0.5 bg-rose-600/30 hover:bg-rose-600 text-rose-200 hover:text-white rounded text-[11px] font-bold border border-rose-500/30"
+              >
+                + 서명/도장 만들기
               </button>
             </div>
           )}
 
           {activeTool === 'pan' && (
-            <span className="text-slate-400 text-[11px]">💡 화면을 터치하거나 마우스로 자유롭게 이동하세요.</span>
+            <span className="text-indigo-300 text-[11px] font-medium flex items-center gap-1">
+              <span>🖐️ 마우스로 문서를 클릭하고 드래그하여 화면을 자유롭게 이동하세요.</span>
+            </span>
           )}
         </div>
 
         {/* 페이지 네비게이션 & 줌 */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded-lg border border-slate-800">
             <button
               type="button"
@@ -1038,7 +1256,7 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
             >
               <ChevronLeft size={14} />
             </button>
-            <span className="font-bold text-slate-200 px-1">
+            <span className="font-bold text-slate-200 px-1 text-xs">
               {currentPage} / {totalPages}
             </span>
             <button
@@ -1074,11 +1292,16 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
         </div>
       </div>
 
-      {/* 메인 뷰어 및 주석 캔버스 영역 */}
+      {/* 메인 뷰어 및 주석 캔버스 영역 (화면 팬 드래그 & 아이템 이동 지원) */}
       <div 
         ref={containerRef}
-        className={`flex-1 overflow-auto bg-slate-950 p-2 sm:p-4 relative ${
-          activeTool === 'pan' ? 'cursor-grab touch-pan-x touch-pan-y' : 'cursor-crosshair'
+        onMouseDown={handleContainerMouseDown}
+        className={`flex-1 overflow-auto bg-slate-950 p-2 sm:p-4 relative select-none ${
+          isPanDragging
+            ? 'cursor-grabbing'
+            : activeTool === 'pan'
+            ? 'cursor-grab touch-pan-x touch-pan-y'
+            : ''
         }`}
       >
         <div className="w-max min-w-full min-h-full flex flex-col items-center justify-start py-4 sm:py-8 px-2">
@@ -1099,17 +1322,16 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
             {/* 1. 베이스 PDF 렌더링 캔버스 */}
             <canvas ref={baseCanvasRef} className="rounded-xl block" style={{ maxWidth: 'none' }} />
 
-            {/* 2. 주석 상호작용 오버레이 캔버스 */}
+            {/* 2. 주석 상호작용 오버레이 캔버스 (도장/글자 드래그 이동 및 드로잉) */}
             <canvas
               ref={overlayCanvasRef}
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
               onPointerCancel={handlePointerUp}
-              className="absolute inset-0 rounded-xl touch-none"
-              style={{
-                pointerEvents: activeTool === 'pan' ? 'none' : 'auto',
-              }}
+              className={`absolute inset-0 rounded-xl ${
+                activeTool === 'pan' ? 'pointer-events-none' : 'touch-none cursor-crosshair'
+              }`}
             />
           </div>
         </div>
@@ -1297,7 +1519,10 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
       {showSignPad && (
         <div 
           className="fixed inset-0 z-60 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4 animate-in fade-in"
-          onClick={() => setShowSignPad(false)}
+          onClick={() => {
+            setShowSignPad(false);
+            setPendingStampPos(null);
+          }}
         >
           <div 
             className="bg-slate-900 border border-slate-800 rounded-2xl p-5 w-full max-w-sm shadow-2xl space-y-4"
@@ -1307,7 +1532,10 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
               <span className="font-bold text-sm text-slate-200">✍️ 서명 또는 도장 만들기</span>
               <button
                 type="button"
-                onClick={() => setShowSignPad(false)}
+                onClick={() => {
+                  setShowSignPad(false);
+                  setPendingStampPos(null);
+                }}
                 className="p-1 hover:bg-slate-800 rounded text-slate-400"
               >
                 <X size={16} />
@@ -1339,27 +1567,27 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
                   onClick={handleInsertSignature}
                   className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all shadow"
                 >
-                  작성한 서명 삽입
+                  선택한 위치에 서명 삽입
                 </button>
               </div>
             </div>
 
             <div className="border-t border-slate-800 pt-3 space-y-2">
-              <span className="text-xs text-slate-400 block">또는 인장/도장 원클릭 삽입:</span>
+              <span className="text-xs text-slate-400 block">또는 인장/도장 원클릭 날인:</span>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => handleInsertPresetStamp('서명')}
                   className="py-2 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-xl text-xs font-bold transition-all"
                 >
-                  🔴 [서명] 인장 도장
+                  🔴 [서명] 인장 날인
                 </button>
                 <button
                   type="button"
                   onClick={() => handleInsertPresetStamp('확인')}
                   className="py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40 rounded-xl text-xs font-bold transition-all"
                 >
-                  🔵 [확인] 인장 도장
+                  🔵 [확인] 인장 날인
                 </button>
               </div>
             </div>

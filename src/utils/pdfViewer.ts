@@ -104,7 +104,7 @@ function getAssetBaseUrl(): string {
 export async function loadPdfDocument(dataOrUrl: string, cacheKey?: string): Promise<PDFDocumentProxy> {
   // 데이터 내용의 길이와 서명을 포함시켜 내용이 수정되면 자동으로 새 캐시 키가 생성되도록 보장
   const dataSignature = `${dataOrUrl.length}_${dataOrUrl.slice(-32)}`;
-  const key = cacheKey ? `${cacheKey}_${dataSignature}` : dataOrUrl.slice(0, 80);
+  const key = cacheKey ? `${cacheKey}_${dataSignature}` : `${dataSignature}_${dataOrUrl.slice(0, 40)}`;
   if (pdfDocCache.has(key)) {
     return pdfDocCache.get(key)!;
   }

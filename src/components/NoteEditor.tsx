@@ -176,6 +176,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const [localTitle, setLocalTitle] = useState(note?.title || '');
   const [localContent, setLocalContent] = useState(note?.content || '');
   const [localAttachments, setLocalAttachments] = useState<Record<string, AttachmentItem>>(note?.attachments || {});
+  const localAttachmentsRef = useRef(localAttachments);
+  localAttachmentsRef.current = localAttachments;
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1887,10 +1889,11 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       e.stopPropagation();
       const attId = fullscreenPdfBtn.getAttribute('data-att-id');
       const title = fullscreenPdfBtn.getAttribute('data-file-name') || 'PDF 문서';
-      if (attId && localAttachments[attId]) {
-        const curr = pdfPagesRef.current.get(attId) || 1;
+      const att = attId ? localAttachmentsRef.current[attId] : null;
+      if (att && att.data) {
+        const curr = pdfPagesRef.current.get(attId!) || 1;
         setActivePdfModal({
-          data: localAttachments[attId].data,
+          data: att.data,
           title,
           initialPage: curr,
         });
@@ -1905,11 +1908,12 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       e.stopPropagation();
       const attId = editPdfBtn.getAttribute('data-att-id');
       const title = editPdfBtn.getAttribute('data-file-name') || 'PDF 문서';
-      if (attId && localAttachments[attId]) {
+      const att = attId ? localAttachmentsRef.current[attId] : null;
+      if (attId && att && att.data) {
         const curr = pdfPagesRef.current.get(attId) || 1;
         setActivePdfEditorModal({
           attId,
-          data: localAttachments[attId].data,
+          data: att.data,
           title,
           initialPage: curr,
         });
@@ -2929,13 +2933,14 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
               // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장
               const updatedAtts = {
-                ...localAttachments,
+                ...localAttachmentsRef.current,
                 [attId]: {
-                  ...(localAttachments[attId] || {}),
+                  ...(localAttachmentsRef.current[attId] || {}),
                   data: updatedDataUrl,
                 },
               };
               setLocalAttachments(updatedAtts);
+              localAttachmentsRef.current = updatedAtts;
               onUpdateNote({ attachments: updatedAtts });
 
               // 3. 편집 모달의 내부 데이터 상태도 최신으로 동기화
@@ -2992,13 +2997,14 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
               // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장
               const updatedAtts = {
-                ...localAttachments,
+                ...localAttachmentsRef.current,
                 [attId]: {
-                  ...(localAttachments[attId] || {}),
+                  ...(localAttachmentsRef.current[attId] || {}),
                   data: updatedDataUrl,
                 },
               };
               setLocalAttachments(updatedAtts);
+              localAttachmentsRef.current = updatedAtts;
               onUpdateNote({ attachments: updatedAtts });
 
               // 3. 편집 모달의 내부 데이터 상태도 최신으로 동기화
