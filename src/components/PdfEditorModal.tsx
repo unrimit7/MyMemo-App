@@ -22,6 +22,7 @@ import { loadPdfDocument, renderPdfPageToCanvas, invalidatePdfCache } from '../u
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 interface Stroke {
+  id: string;
   type: 'pen' | 'highlighter';
   color: string;
   width: number;
@@ -50,10 +51,16 @@ interface StampAnnotation {
   dataUrl: string;
 }
 
+interface HistoryAction {
+  type: 'stroke' | 'text' | 'stamp';
+  id: string;
+}
+
 interface PageAnnotations {
   strokes: Stroke[];
   texts: TextAnnotation[];
   stamps: StampAnnotation[];
+  history: HistoryAction[];
 }
 
 interface PdfEditorModalProps {
@@ -337,6 +344,9 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
       lines.forEach((l) => {
         maxLineWidth = Math.max(maxLineWidth, ctx.measureText(l).width);
       });
+      if (maxLineWidth === 0) {
+        maxLineWidth = scaledSize * 3;
+      }
 
       const padX = Math.max(5, scaledSize * 0.4);
       const padY = Math.max(4, scaledSize * 0.3);
@@ -447,6 +457,7 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
       overlay.setPointerCapture(e.pointerId);
       const isHighlighter = activeTool === 'highlighter';
       currentStrokeRef.current = {
+        id: `stroke_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         type: isHighlighter ? 'highlighter' : 'pen',
         color: isHighlighter ? highlighterColor : penColor,
         width: isHighlighter ? highlighterWidth : penWidth,
@@ -557,28 +568,65 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
 
     if (finishedStroke.points.length > 1) {
       setAnnotations((prev) => {
-        const curr = prev[currentPage] || { strokes: [], texts: [], stamps: [] };
+        const curr = prev[currentPage] || { strokes: [], texts: [], stamps: [], history: [] };
         return {
           ...prev,
           [currentPage]: {
             ...curr,
             strokes: [...curr.strokes, finishedStroke],
+            history: [...(curr.history || []), { type: 'stroke', id: finishedStroke.id }],
           },
         };
       });
     }
   };
 
-  // 마지막 주석 1개 실행 취소 (Undo)
+  // 마지막 주석 1개 실행 취소 (Undo) - 정확한 역순(LIFO)으로 마지막 작업부터 취소
   const handleUndo = () => {
     setAnnotations((prev) => {
       const curr = prev[currentPage];
       if (!curr) return prev;
 
-      if (curr.stamps.length > 0) {
+      // 1. unified history 스택이 있으면 가장 최근(마지막) 추가된 액션부터 취소
+      if (curr.history && curr.history.length > 0) {
+        const lastAction = curr.history[curr.history.length - 1];
+        const newHistory = curr.history.slice(0, -1);
+
+        if (lastAction.type === 'stroke') {
+          return {
+            ...prev,
+            [currentPage]: {
+              ...curr,
+              strokes: curr.strokes.filter((s) => s.id !== lastAction.id),
+              history: newHistory,
+            },
+          };
+        } else if (lastAction.type === 'text') {
+          return {
+            ...prev,
+            [currentPage]: {
+              ...curr,
+              texts: curr.texts.filter((t) => t.id !== lastAction.id),
+              history: newHistory,
+            },
+          };
+        } else if (lastAction.type === 'stamp') {
+          return {
+            ...prev,
+            [currentPage]: {
+              ...curr,
+              stamps: curr.stamps.filter((s) => s.id !== lastAction.id),
+              history: newHistory,
+            },
+          };
+        }
+      }
+
+      // 2. 만약 history가 비어있는 경우 fallback (이전 호환성)
+      if (curr.strokes.length > 0) {
         return {
           ...prev,
-          [currentPage]: { ...curr, stamps: curr.stamps.slice(0, -1) },
+          [currentPage]: { ...curr, strokes: curr.strokes.slice(0, -1) },
         };
       }
       if (curr.texts.length > 0) {
@@ -587,10 +635,10 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
           [currentPage]: { ...curr, texts: curr.texts.slice(0, -1) },
         };
       }
-      if (curr.strokes.length > 0) {
+      if (curr.stamps.length > 0) {
         return {
           ...prev,
-          [currentPage]: { ...curr, strokes: curr.strokes.slice(0, -1) },
+          [currentPage]: { ...curr, stamps: curr.stamps.slice(0, -1) },
         };
       }
       return prev;
@@ -602,21 +650,24 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     if (!window.confirm('현재 페이지의 모든 주석을 지우시겠습니까?')) return;
     setAnnotations((prev) => ({
       ...prev,
-      [currentPage]: { strokes: [], texts: [], stamps: [] },
+      [currentPage]: { strokes: [], texts: [], stamps: [], history: [] },
     }));
   };
 
   // 모달을 통한 텍스트 및 사각형 박스 삽입 확인
   const handleConfirmInsertText = () => {
-    if (!inputModalText.trim()) return;
+    const trimmed = inputModalText.trim();
+    // 투명 배경인데 글자가 비어있으면 삽입 취소. 단, 흰색/유색 배경(화이트 패치)인 경우 빈칸('  ')으로 수정테이프처럼 삽입 허용
+    if (!trimmed && textBoxBgColor === 'transparent') return;
 
+    const finalText = trimmed || '   ';
     const pos = pendingTextPos || { x: 0.5, y: 0.3 };
-    const newId = `text_${Date.now()}`;
+    const newId = `text_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const newText: TextAnnotation = {
       id: newId,
       x: pos.x,
       y: pos.y,
-      text: inputModalText,
+      text: finalText,
       fontSize: textFontSize,
       color: textColor,
       hasBox: textHasBox,
@@ -625,16 +676,18 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     };
 
     setAnnotations((prev) => {
-      const curr = prev[currentPage] || { strokes: [], texts: [], stamps: [] };
+      const curr = prev[currentPage] || { strokes: [], texts: [], stamps: [], history: [] };
       return {
         ...prev,
         [currentPage]: {
           ...curr,
           texts: [...curr.texts, newText],
+          history: [...(curr.history || []), { type: 'text', id: newId }],
         },
       };
     });
 
+    setInputModalText('');
     setShowTextModal(false);
     setPendingTextPos(null);
   };
@@ -688,8 +741,9 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     const signDataUrl = canvas.toDataURL('image/png');
 
     const pos = pendingStampPos || { x: 0.5, y: 0.5 };
+    const stampId = `stamp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const newStamp: StampAnnotation = {
-      id: `stamp_${Date.now()}`,
+      id: stampId,
       x: Math.max(0, Math.min(0.8, pos.x - 0.1)),
       y: Math.max(0, Math.min(0.88, pos.y - 0.05)),
       width: 0.2, // 페이지 너비의 20%
@@ -698,12 +752,13 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     };
 
     setAnnotations((prev) => {
-      const curr = prev[currentPage] || { strokes: [], texts: [], stamps: [] };
+      const curr = prev[currentPage] || { strokes: [], texts: [], stamps: [], history: [] };
       return {
         ...prev,
         [currentPage]: {
           ...curr,
           stamps: [...curr.stamps, newStamp],
+          history: [...(curr.history || []), { type: 'stamp', id: stampId }],
         },
       };
     });
@@ -736,8 +791,9 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
 
     const stampDataUrl = offCanvas.toDataURL('image/png');
     const pos = pendingStampPos || { x: 0.5, y: 0.5 };
+    const stampId = `stamp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const newStamp: StampAnnotation = {
-      id: `stamp_${Date.now()}`,
+      id: stampId,
       x: Math.max(0, Math.min(0.85, pos.x - 0.075)),
       y: Math.max(0, Math.min(0.88, pos.y - 0.05)),
       width: 0.15,
@@ -746,12 +802,13 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     };
 
     setAnnotations((prev) => {
-      const curr = prev[currentPage] || { strokes: [], texts: [], stamps: [] };
+      const curr = prev[currentPage] || { strokes: [], texts: [], stamps: [], history: [] };
       return {
         ...prev,
         [currentPage]: {
           ...curr,
           stamps: [...curr.stamps, newStamp],
+          history: [...(curr.history || []), { type: 'stamp', id: stampId }],
         },
       };
     });
@@ -838,6 +895,9 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
         lines.forEach((l) => {
           maxLineWidth = Math.max(maxLineWidth, ctx.measureText(l).width);
         });
+        if (maxLineWidth === 0) {
+          maxLineWidth = textItem.fontSize * 3;
+        }
 
         const padX = Math.max(5, textItem.fontSize * 0.4);
         const padY = Math.max(4, textItem.fontSize * 0.3);
@@ -1207,6 +1267,22 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
                 ))}
               </div>
 
+              {/* 화이트 덮어쓰기 프리셋 (기존 글자 수정용) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setTextHasBox(false);
+                  setTextBoxBgColor('#ffffff');
+                  setTextColor('#000000');
+                  setPendingTextPos({ x: 0.5, y: 0.25 });
+                  setShowTextModal(true);
+                }}
+                className="ml-1 px-2 py-0.5 bg-amber-600/30 hover:bg-amber-600 text-amber-200 hover:text-white rounded text-[11px] font-bold border border-amber-500/30 flex items-center gap-1 transition-all"
+                title="기존 글자 위에 흰색 배경을 덮어 가린 뒤 새 글자를 입력합니다"
+              >
+                <span>🧼 화이트 덮어쓰기(수정)</span>
+              </button>
+
               {/* 글자 직접 입력 팝업 열기 */}
               <button
                 type="button"
@@ -1358,13 +1434,80 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
               </button>
             </div>
 
+            {/* 빠른 프리셋 모드 선택 */}
+            <div className="space-y-1">
+              <span className="text-[11px] text-slate-400 font-semibold block">빠른 설정 모드:</span>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTextHasBox(false);
+                    setTextBoxBgColor('transparent');
+                  }}
+                  className={`p-2 rounded-xl border text-left flex flex-col gap-0.5 transition-all ${
+                    !textHasBox && textBoxBgColor === 'transparent'
+                      ? 'bg-indigo-600/20 border-indigo-500 text-indigo-200'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                  }`}
+                >
+                  <span className="font-bold text-slate-200">📝 일반 글자</span>
+                  <span className="text-[10px] text-slate-400">배경 투명 일반 텍스트</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTextHasBox(true);
+                    setTextBoxBorderColor('#000000');
+                  }}
+                  className={`p-2 rounded-xl border text-left flex flex-col gap-0.5 transition-all ${
+                    textHasBox
+                      ? 'bg-indigo-600/20 border-indigo-500 text-indigo-200'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                  }`}
+                >
+                  <span className="font-bold text-slate-200">🔲 테두리 상자</span>
+                  <span className="text-[10px] text-slate-400">사각형 박스 안 글자</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTextHasBox(false);
+                    setTextBoxBgColor('#ffffff');
+                    setTextColor('#000000');
+                  }}
+                  className={`p-2 rounded-xl border text-left flex flex-col gap-0.5 transition-all col-span-2 ${
+                    !textHasBox && textBoxBgColor === '#ffffff'
+                      ? 'bg-amber-600/20 border-amber-500 text-amber-200'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-amber-300">🧼 화이트 덮어쓰기 (기존 글자 수정)</span>
+                    <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-bold">오타 수정 추천</span>
+                  </div>
+                  <span className="text-[10px] text-slate-300">기존 글자 위에 흰색 배경을 덮어 가린 뒤 새 글자로 대체합니다.</span>
+                </button>
+              </div>
+            </div>
+
             {/* 글자 내용 입력 */}
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-300">삽입할 글자 내용:</label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-300">삽입할 글자 내용:</label>
+                {textBoxBgColor !== 'transparent' && !inputModalText.trim() && (
+                  <span className="text-[10px] text-emerald-400 font-medium">※ 빈칸으로 삽입 시 수정테이프(화이트)로 동작</span>
+                )}
+              </div>
               <textarea
                 value={inputModalText}
                 onChange={(e) => setInputModalText(e.target.value)}
-                placeholder="글자를 입력하세요 (엔터로 줄바꿈 가능)"
+                placeholder={
+                  textBoxBgColor === '#ffffff'
+                    ? "수정할 새 글자를 입력하세요 (빈칸 시 흰색 가림막/수정테이프)"
+                    : "글자를 입력하세요 (엔터로 줄바꿈 가능)"
+                }
                 rows={2}
                 autoFocus
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 resize-none font-medium"
@@ -1505,10 +1648,10 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
               <button
                 type="button"
                 onClick={handleConfirmInsertText}
-                disabled={!inputModalText.trim()}
+                disabled={!inputModalText.trim() && textBoxBgColor === 'transparent'}
                 className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all shadow disabled:opacity-40"
               >
-                PDF에 삽입하기
+                {textBoxBgColor !== 'transparent' && !inputModalText.trim() ? '수정테이프(화이트) 삽입' : 'PDF에 삽입하기'}
               </button>
             </div>
           </div>
