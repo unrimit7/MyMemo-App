@@ -4,41 +4,107 @@ export interface PptxTextRun {
   text: string;
   isBold?: boolean;
   isItalic?: boolean;
-  size?: number;
-  color?: string;
+  isUnderline?: boolean;
+  fontSize?: number; // pt 단위
+  color?: string; // hex 색상 (예: #FFFFFF, #333333)
 }
 
 export interface PptxParagraph {
   text: string;
   runs: PptxTextRun[];
   level: number;
+  align?: 'left' | 'center' | 'right' | 'justify';
   isTitle?: boolean;
+  bulletChar?: string;
 }
 
-export interface PptxTable {
-  headers: string[];
-  rows: string[][];
+export interface PptxTableCell {
+  text: string;
+  paragraphs: PptxParagraph[];
+  colSpan?: number;
+  rowSpan?: number;
+  fillColor?: string;
+  textColor?: string;
+  align?: 'left' | 'center' | 'right';
+  borders?: {
+    top?: boolean;
+    bottom?: boolean;
+    left?: boolean;
+    right?: boolean;
+    color?: string;
+  };
 }
 
-export interface PptxImage {
+export interface PptxTableRow {
+  cells: PptxTableCell[];
+  height?: number; // percentage
+}
+
+export interface PptxTableElement {
   id: string;
+  type: 'table';
+  left: number; // percentage (0-100)
+  top: number; // percentage (0-100)
+  width: number; // percentage (0-100)
+  height: number; // percentage (0-100)
+  colWidths: number[]; // percentage of table width
+  rows: PptxTableRow[];
+  zIndex: number;
+}
+
+export interface PptxShapeElement {
+  id: string;
+  type: 'shape';
+  shapeType?: string; // 'rect', 'roundRect', 'ellipse', etc.
+  isRounded?: boolean;
+  left: number; // percentage (0-100)
+  top: number; // percentage (0-100)
+  width: number; // percentage (0-100)
+  height: number; // percentage (0-100)
+  fillColor?: string;
+  borderColor?: string;
+  borderWidth?: number;
+  paragraphs: PptxParagraph[];
+  isTitle?: boolean;
+  verticalAlign?: 'top' | 'middle' | 'bottom';
+  zIndex: number;
+}
+
+export interface PptxImageElement {
+  id: string;
+  type: 'image';
+  left: number; // percentage (0-100)
+  top: number; // percentage (0-100)
+  width: number; // percentage (0-100)
+  height: number; // percentage (0-100)
   dataUrl: string;
   contentType: string;
+  zIndex: number;
 }
+
+export type PptxSlideElement = PptxShapeElement | PptxTableElement | PptxImageElement;
 
 export interface PptxSlide {
   slideNumber: number;
   title: string;
-  paragraphs: PptxParagraph[];
-  tables: PptxTable[];
-  images: PptxImage[];
-  notes?: string;
   slidePath: string;
+  width: number;
+  height: number;
+  aspectRatio: number;
+  backgroundColor?: string;
+  elements: PptxSlideElement[]; // 2차원 절대 좌표 렌더링용 엘리먼트 목록
+  paragraphs: PptxParagraph[]; // 레거시/텍스트 추출 호환용
+  tables: { headers: string[]; rows: string[][] }[]; // 레거시 호환용
+  images: { id: string; dataUrl: string; contentType: string }[];
+  notes?: string;
 }
 
 export interface PptxPresentation {
   title: string;
   slideCount: number;
+  slideWidth: number;
+  slideHeight: number;
+  aspectRatio: number; // 16/9 = 1.7777...
   slides: PptxSlide[];
   rawZip?: JSZip;
 }
@@ -89,6 +155,17 @@ function getElementsByLocalName(parent: Element | Document, localName: string): 
   return results;
 }
 
+// 첫 번째 일치하는 로컬 태그 이름 요소 찾기
+function findFirstByLocalName(parent: Element | Document, localName: string): Element | null {
+  const elements = parent.getElementsByTagName('*');
+  for (let i = 0; i < elements.length; i++) {
+    if (elements[i].localName === localName) {
+      return elements[i];
+    }
+  }
+  return null;
+}
+
 // 특정 노드의 직속 자식 중 로컬 태그 이름이 일치하는 요소들 찾기
 function getDirectChildrenByLocalName(parent: Element, localName: string): Element[] {
   const results: Element[] = [];
@@ -101,54 +178,221 @@ function getDirectChildrenByLocalName(parent: Element, localName: string): Eleme
   return results;
 }
 
-// PPTX 파일 파싱
+// DrawingML 색상 파서 (srgbClr, schemeClr, prstClr)
+function parseDrawingColor(parent: Element): string | undefined {
+  // 1. srgbClr (직접 지정 16진수 색상)
+  const srgb = getElementsByLocalName(parent, 'srgbClr');
+  if (srgb.length > 0) {
+    const val = srgb[0].getAttribute('val');
+    if (val) return `#${val}`;
+  }
+
+  // 2. schemeClr (테마 색상 맵핑)
+  const scheme = getElementsByLocalName(parent, 'schemeClr');
+  if (scheme.length > 0) {
+    const val = scheme[0].getAttribute('val');
+    const schemeMap: Record<string, string> = {
+      accent1: '#4F81BD',
+      accent2: '#C0504D',
+      accent3: '#5CB85C', // 자주 쓰이는 초록색
+      accent4: '#8064A2',
+      accent5: '#4BACC6',
+      accent6: '#F79646',
+      dk1: '#111827',
+      lt1: '#FFFFFF',
+      dk2: '#1F497D',
+      lt2: '#F3F4F6',
+      bg1: '#FFFFFF',
+      tx1: '#111827',
+      bg2: '#F3F4F6',
+      tx2: '#1F497D',
+      hlink: '#2563EB',
+      folHlink: '#7C3AED',
+    };
+    if (val && schemeMap[val]) {
+      return schemeMap[val];
+    }
+  }
+
+  // 3. prstClr (사전 정의 색상 이름)
+  const prst = getElementsByLocalName(parent, 'prstClr');
+  if (prst.length > 0) {
+    const val = prst[0].getAttribute('val');
+    if (val) return val;
+  }
+
+  return undefined;
+}
+
+// EMU 좌표를 슬라이드 기준 백분율(0-100%)로 변환
+function parseElementCoordinates(
+  parent: Element,
+  slideWidth: number,
+  slideHeight: number
+): { left: number; top: number; width: number; height: number } | null {
+  const xfrmList = getElementsByLocalName(parent, 'xfrm');
+  if (xfrmList.length === 0) return null;
+  const xfrm = xfrmList[0];
+
+  const offList = getElementsByLocalName(xfrm, 'off');
+  const extList = getElementsByLocalName(xfrm, 'ext');
+
+  if (offList.length === 0 || extList.length === 0) return null;
+
+  const rawX = parseInt(offList[0].getAttribute('x') || '0', 10);
+  const rawY = parseInt(offList[0].getAttribute('y') || '0', 10);
+  const rawW = parseInt(extList[0].getAttribute('cx') || '0', 10);
+  const rawH = parseInt(extList[0].getAttribute('cy') || '0', 10);
+
+  if (slideWidth <= 0 || slideHeight <= 0) return null;
+
+  const left = Math.max(0, Math.min(100, (rawX / slideWidth) * 100));
+  const top = Math.max(0, Math.min(100, (rawY / slideHeight) * 100));
+  const width = Math.max(0, Math.min(100, (rawW / slideWidth) * 100));
+  const height = Math.max(0, Math.min(100, (rawH / slideHeight) * 100));
+
+  return { left, top, width, height };
+}
+
+// 단락(Paragraph) 파서
+function parseParagraph(p: Element): PptxParagraph {
+  let level = 0;
+  let align: 'left' | 'center' | 'right' | 'justify' = 'left';
+
+  const pPrList = getDirectChildrenByLocalName(p, 'pPr');
+  if (pPrList.length > 0) {
+    const lvlAttr = pPrList[0].getAttribute('lvl');
+    if (lvlAttr) level = parseInt(lvlAttr, 10);
+
+    const algnAttr = pPrList[0].getAttribute('algn');
+    if (algnAttr === 'ctr') align = 'center';
+    else if (algnAttr === 'r') align = 'right';
+    else if (algnAttr === 'just') align = 'justify';
+  }
+
+  const runs: PptxTextRun[] = [];
+  const rElements = getDirectChildrenByLocalName(p, 'r');
+  let paragraphFullText = '';
+
+  for (const r of rElements) {
+    const tElements = getDirectChildrenByLocalName(r, 't');
+    for (const t of tElements) {
+      const textContent = t.textContent || '';
+      if (!textContent) continue;
+
+      let isBold = false;
+      let isItalic = false;
+      let isUnderline = false;
+      let fontSize: number | undefined;
+      let color: string | undefined;
+
+      const rPrList = getDirectChildrenByLocalName(r, 'rPr');
+      if (rPrList.length > 0) {
+        const rPr = rPrList[0];
+        isBold = rPr.getAttribute('b') === '1' || rPr.getAttribute('b') === 'true';
+        isItalic = rPr.getAttribute('i') === '1' || rPr.getAttribute('i') === 'true';
+        isUnderline = rPr.getAttribute('u') === 'sng';
+
+        const szAttr = rPr.getAttribute('sz');
+        if (szAttr) {
+          fontSize = Math.round(parseInt(szAttr, 10) / 100);
+        }
+
+        color = parseDrawingColor(rPr);
+      }
+
+      runs.push({
+        text: textContent,
+        isBold,
+        isItalic,
+        isUnderline,
+        fontSize,
+        color,
+      });
+      paragraphFullText += textContent;
+    }
+  }
+
+  // 직속 t 요소 (필드 내 텍스트 등)
+  if (runs.length === 0) {
+    const allT = getElementsByLocalName(p, 't');
+    for (const t of allT) {
+      const textContent = t.textContent || '';
+      if (textContent) {
+        runs.push({ text: textContent });
+        paragraphFullText += textContent;
+      }
+    }
+  }
+
+  return {
+    text: paragraphFullText,
+    runs,
+    level,
+    align,
+  };
+}
+
+// PPTX 파일 파싱 (2차원 절대 좌표 및 벡터 그래픽 복원)
 export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresentation> {
   const binary = dataUrlToBinary(dataUrl);
   const bytes = binaryToUint8Array(binary);
   const zip = await JSZip.loadAsync(bytes);
 
-  // 1. 슬라이드 순서 및 파일 목록 확인
+  // 1. 슬라이드 크기 및 해상도 확인 (presentation.xml)
+  let slideWidth = 12192000; // 16:9 기본 너비 (EMU)
+  let slideHeight = 6858000; // 16:9 기본 높이 (EMU)
   let slidePaths: string[] = [];
 
-  // presentation.xml 및 _rels/presentation.xml.rels 확인
-  const presRelsFile = zip.file('ppt/_rels/presentation.xml.rels');
   const presFile = zip.file('ppt/presentation.xml');
+  const presRelsFile = zip.file('ppt/_rels/presentation.xml.rels');
 
-  if (presRelsFile && presFile) {
+  if (presFile) {
     try {
-      const relsText = await presRelsFile.async('text');
       const presText = await presFile.async('text');
-
-      const relsDoc = parseXml(relsText);
       const presDoc = parseXml(presText);
 
-      // rId -> Target 매핑
-      const relMap = new Map<string, string>();
-      const relElements = getElementsByLocalName(relsDoc, 'Relationship');
-      for (const rel of relElements) {
-        const id = rel.getAttribute('Id');
-        const target = rel.getAttribute('Target');
-        if (id && target) {
-          // 상대 경로 처리: 'slides/slide1.xml' -> 'ppt/slides/slide1.xml'
-          const normalized = target.startsWith('ppt/') ? target : `ppt/${target.replace(/^\//, '')}`;
-          relMap.set(id, normalized);
+      // sldSz (슬라이드 크기)
+      const sldSzList = getElementsByLocalName(presDoc, 'sldSz');
+      if (sldSzList.length > 0) {
+        const cx = parseInt(sldSzList[0].getAttribute('cx') || '0', 10);
+        const cy = parseInt(sldSzList[0].getAttribute('cy') || '0', 10);
+        if (cx > 0 && cy > 0) {
+          slideWidth = cx;
+          slideHeight = cy;
         }
       }
 
-      // presentation.xml 내 sldId 목록 순서대로 추출
-      const sldIdElements = getElementsByLocalName(presDoc, 'sldId');
-      for (const sld of sldIdElements) {
-        const rId = sld.getAttribute('r:id') || sld.getAttribute('id');
-        if (rId && relMap.has(rId)) {
-          slidePaths.push(relMap.get(rId)!);
+      // 슬라이드 순서 및 관계 매핑
+      if (presRelsFile) {
+        const relsText = await presRelsFile.async('text');
+        const relsDoc = parseXml(relsText);
+
+        const relMap = new Map<string, string>();
+        const relElements = getElementsByLocalName(relsDoc, 'Relationship');
+        for (const rel of relElements) {
+          const id = rel.getAttribute('Id');
+          const target = rel.getAttribute('Target');
+          if (id && target) {
+            const normalized = target.startsWith('ppt/') ? target : `ppt/${target.replace(/^\//, '')}`;
+            relMap.set(id, normalized);
+          }
+        }
+
+        const sldIdElements = getElementsByLocalName(presDoc, 'sldId');
+        for (const sld of sldIdElements) {
+          const rId = sld.getAttribute('r:id') || sld.getAttribute('id');
+          if (rId && relMap.has(rId)) {
+            slidePaths.push(relMap.get(rId)!);
+          }
         }
       }
-    } catch (err) {
-      console.warn('presentation.xml.rels 파싱 실패, 파일명 검색 대체:', err);
+    } catch (e) {
+      console.warn('presentation.xml 파싱 오류:', e);
     }
   }
 
-  // 만약 rels를 통해 못 찾았다면 zip 파일 목록에서 직접 탐색
+  // 슬라이드 경로 fallback
   if (slidePaths.length === 0) {
     const allFiles = Object.keys(zip.files);
     const regex = /^ppt\/slides\/slide(\d+)\.xml$/;
@@ -165,10 +409,11 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
     slidePaths = slideEntries.map((e) => e.path);
   }
 
-  // 2. 각 슬라이드 파싱
+  const aspectRatio = slideWidth / slideHeight;
   const slides: PptxSlide[] = [];
   let presentationTitle = '';
 
+  // 2. 각 슬라이드 정밀 파싱
   for (let idx = 0; idx < slidePaths.length; idx++) {
     const sPath = slidePaths[idx];
     const sFile = zip.file(sPath);
@@ -177,14 +422,13 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
     const sXmlText = await sFile.async('text');
     const sDoc = parseXml(sXmlText);
 
-    // 슬라이드 관계(이미지 등) 파싱
-    // 예: ppt/slides/slide1.xml -> ppt/slides/_rels/slide1.xml.rels
+    // 슬라이드 관계(이미지) 매핑
     const pathParts = sPath.split('/');
-    const fileName = pathParts.pop() || '';
-    const relsPath = `${pathParts.join('/')}/_rels/${fileName}.rels`;
+    const sFileName = pathParts.pop() || '';
+    const relsPath = `${pathParts.join('/')}/_rels/${sFileName}.rels`;
     const relsFile = zip.file(relsPath);
 
-    const slideImageMap = new Map<string, string>(); // rId -> target media path
+    const slideImageMap = new Map<string, string>();
     if (relsFile) {
       try {
         const sRelsText = await relsFile.async('text');
@@ -196,7 +440,6 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
             const id = r.getAttribute('Id');
             let target = r.getAttribute('Target') || '';
             if (id && target) {
-              // '../media/image1.png' -> 'ppt/media/image1.png'
               if (target.startsWith('../')) {
                 target = `ppt/${target.substring(3)}`;
               } else if (!target.startsWith('ppt/')) {
@@ -207,157 +450,245 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
           }
         }
       } catch (e) {
-        console.warn(`슬라이드 rels(${relsPath}) 파싱 오류:`, e);
+        console.warn(`슬라이드 rels 파싱 오류 (${relsPath}):`, e);
       }
     }
 
-    // 슬라이드 내 이미지 추출
-    const images: PptxImage[] = [];
-    const blipElements = getElementsByLocalName(sDoc, 'blip');
-    for (const blip of blipElements) {
-      const embedId = blip.getAttribute('r:embed');
-      if (embedId && slideImageMap.has(embedId)) {
-        const mediaPath = slideImageMap.get(embedId)!;
-        const mediaFile = zip.file(mediaPath);
-        if (mediaFile) {
-          try {
-            const ext = mediaPath.split('.').pop()?.toLowerCase() || 'png';
-            const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : ext === 'svg' ? 'image/svg+xml' : 'image/png';
-            const base64 = await mediaFile.async('base64');
-            images.push({
-              id: embedId,
-              dataUrl: `data:${mime};base64,${base64}`,
-              contentType: mime,
-            });
-          } catch (imgErr) {
-            console.warn(`이미지(${mediaPath}) 읽기 오류:`, imgErr);
-          }
-        }
-      }
+    // 슬라이드 배경색
+    let backgroundColor: string | undefined;
+    const bgList = getElementsByLocalName(sDoc, 'bg');
+    if (bgList.length > 0) {
+      backgroundColor = parseDrawingColor(bgList[0]);
     }
 
-    // 슬라이드 내 텍스트 및 제목 추출
+    const elements: PptxSlideElement[] = [];
+    let zOrder = 1;
+
+    // spTree 내의 모든 엘리먼트 순차 탐색
+    const spTree = findFirstByLocalName(sDoc, 'spTree');
+    const shapeContainers: Element[] = spTree ? Array.from(spTree.children) : [];
+
+    // 편의용 레거시 목록
     let slideTitle = '';
-    const paragraphs: PptxParagraph[] = [];
+    const legacyParagraphs: PptxParagraph[] = [];
+    const legacyTables: { headers: string[]; rows: string[][] }[] = [];
+    const legacyImages: { id: string; dataUrl: string; contentType: string }[] = [];
 
-    // 도형(Shape)들 탐색
-    const spElements = getElementsByLocalName(sDoc, 'sp');
-    for (const sp of spElements) {
-      // 제목 여부 판별 (nvSpPr -> nvPr -> ph type="title" | "ctrTitle")
-      let isShapeTitle = false;
-      const phElements = getElementsByLocalName(sp, 'ph');
-      for (const ph of phElements) {
-        const phType = ph.getAttribute('type');
-        if (phType === 'title' || phType === 'ctrTitle' || phType === 'subTitle') {
-          isShapeTitle = true;
-          break;
-        }
-      }
+    for (const item of shapeContainers) {
+      const localName = item.localName;
 
-      // 텍스트 바디(txBody)
-      const txBodyList = getElementsByLocalName(sp, 'txBody');
-      for (const txBody of txBodyList) {
-        const pElements = getDirectChildrenByLocalName(txBody, 'p');
-        for (const p of pElements) {
-          // 들여쓰기 레벨
-          let level = 0;
-          const pPrList = getDirectChildrenByLocalName(p, 'pPr');
-          if (pPrList.length > 0) {
-            const lvlAttr = pPrList[0].getAttribute('lvl');
-            if (lvlAttr) level = parseInt(lvlAttr, 10);
+      // 1. 도형 및 텍스트 상자 (<p:sp>)
+      if (localName === 'sp') {
+        const coords = parseElementCoordinates(item, slideWidth, slideHeight);
+        if (!coords) continue;
+
+        let shapeType = 'rect';
+        let isRounded = false;
+        const prstGeomList = getElementsByLocalName(item, 'prstGeom');
+        if (prstGeomList.length > 0) {
+          shapeType = prstGeomList[0].getAttribute('prst') || 'rect';
+          if (shapeType.toLowerCase().includes('round')) {
+            isRounded = true;
           }
+        }
 
-          // 텍스트 런(run)들 수집
-          const runs: PptxTextRun[] = [];
-          const rElements = getDirectChildrenByLocalName(p, 'r');
-          let paragraphFullText = '';
+        let fillColor: string | undefined;
+        let borderColor: string | undefined;
+        let borderWidth: number | undefined;
 
-          for (const r of rElements) {
-            const tElements = getDirectChildrenByLocalName(r, 't');
-            for (const t of tElements) {
-              const textContent = t.textContent || '';
-              if (!textContent) continue;
+        const spPrList = getElementsByLocalName(item, 'spPr');
+        if (spPrList.length > 0) {
+          const spPr = spPrList[0];
+          fillColor = parseDrawingColor(spPr);
 
-              let isBold = false;
-              let isItalic = false;
-              const rPrList = getDirectChildrenByLocalName(r, 'rPr');
-              if (rPrList.length > 0) {
-                isBold = rPrList[0].getAttribute('b') === '1' || rPrList[0].getAttribute('b') === 'true';
-                isItalic = rPrList[0].getAttribute('i') === '1' || rPrList[0].getAttribute('i') === 'true';
+          const lnList = getElementsByLocalName(spPr, 'ln');
+          if (lnList.length > 0) {
+            borderColor = parseDrawingColor(lnList[0]) || '#CBD5E1';
+            const wAttr = lnList[0].getAttribute('w');
+            borderWidth = wAttr ? Math.max(1, Math.round(parseInt(wAttr, 10) / 12700)) : 1;
+          }
+        }
+
+        // 제목 여부 판별
+        let isTitle = false;
+        const phList = getElementsByLocalName(item, 'ph');
+        if (phList.length > 0) {
+          const phType = phList[0].getAttribute('type') || '';
+          if (phType === 'title' || phType === 'ctrTitle') {
+            isTitle = true;
+          }
+        }
+
+        // 텍스트 단락들 파싱
+        const paragraphs: PptxParagraph[] = [];
+        const txBodyList = getElementsByLocalName(item, 'txBody');
+        if (txBodyList.length > 0) {
+          const pElements = getDirectChildrenByLocalName(txBodyList[0], 'p');
+          for (const p of pElements) {
+            const parsedP = parseParagraph(p);
+            if (parsedP.text.trim()) {
+              if (isTitle && !slideTitle) {
+                slideTitle = parsedP.text.trim();
+                if (idx === 0 && !presentationTitle) {
+                  presentationTitle = slideTitle;
+                }
               }
-
-              runs.push({
-                text: textContent,
-                isBold,
-                isItalic,
-              });
-              paragraphFullText += textContent;
+              paragraphs.push(parsedP);
+              legacyParagraphs.push(parsedP);
             }
           }
-
-          // 직속 t 요소가 있는 경우 (예: 필드 fld 내의 t)
-          if (runs.length === 0) {
-            const allT = getElementsByLocalName(p, 't');
-            for (const t of allT) {
-              const textContent = t.textContent || '';
-              if (textContent) {
-                runs.push({ text: textContent });
-                paragraphFullText += textContent;
-              }
-            }
-          }
-
-          const trimmed = paragraphFullText.trim();
-          if (trimmed) {
-            if (isShapeTitle && !slideTitle) {
-              slideTitle = trimmed;
-              if (idx === 0 && !presentationTitle) {
-                presentationTitle = trimmed;
-              }
-            }
-
-            paragraphs.push({
-              text: trimmed,
-              runs,
-              level,
-              isTitle: isShapeTitle,
-            });
-          }
         }
-      }
-    }
 
-    // 표(Table) 추출
-    const tables: PptxTable[] = [];
-    const tblElements = getElementsByLocalName(sDoc, 'tbl');
-    for (const tbl of tblElements) {
-      const rows: string[][] = [];
-      const trElements = getElementsByLocalName(tbl, 'tr');
-      for (const tr of trElements) {
-        const rowCells: string[] = [];
-        const tcElements = getElementsByLocalName(tr, 'tc');
-        for (const tc of tcElements) {
-          const tElements = getElementsByLocalName(tc, 't');
-          const cellText = tElements.map((t) => t.textContent || '').join(' ').trim();
-          rowCells.push(cellText);
-        }
-        if (rowCells.some((c) => c.length > 0)) {
-          rows.push(rowCells);
-        }
-      }
-
-      if (rows.length > 0) {
-        tables.push({
-          headers: rows[0] || [],
-          rows: rows.slice(1),
+        elements.push({
+          id: `sp-${zOrder}`,
+          type: 'shape',
+          shapeType,
+          isRounded,
+          left: coords.left,
+          top: coords.top,
+          width: coords.width,
+          height: coords.height,
+          fillColor,
+          borderColor,
+          borderWidth,
+          paragraphs,
+          isTitle,
+          zIndex: zOrder++,
         });
       }
+
+      // 2. 표 (<p:graphicFrame> -> <a:tbl>)
+      else if (localName === 'graphicFrame') {
+        const coords = parseElementCoordinates(item, slideWidth, slideHeight);
+        const tblList = getElementsByLocalName(item, 'tbl');
+
+        if (coords && tblList.length > 0) {
+          const tbl = tblList[0];
+
+          // 열 너비 백분율
+          const gridCols = getElementsByLocalName(tbl, 'gridCol');
+          const colWidthsEmu = gridCols.map((gc) => parseInt(gc.getAttribute('w') || '1000000', 10));
+          const totalColsEmu = colWidthsEmu.reduce((a, b) => a + b, 0) || 1;
+          const colWidthsPct = colWidthsEmu.map((w) => (w / totalColsEmu) * 100);
+
+          // 행 데이터
+          const trElements = getElementsByLocalName(tbl, 'tr');
+          const rows: PptxTableRow[] = [];
+          const legacyRows: string[][] = [];
+
+          for (const tr of trElements) {
+            const rawH = parseInt(tr.getAttribute('h') || '0', 10);
+            const rowHeightPct = slideHeight > 0 ? (rawH / slideHeight) * 100 : undefined;
+
+            const cells: PptxTableCell[] = [];
+            const legacyCellTexts: string[] = [];
+            const tcElements = getElementsByLocalName(tr, 'tc');
+
+            for (const tc of tcElements) {
+              const colSpan = parseInt(tc.getAttribute('gridSpan') || '1', 10);
+              const rowSpan = parseInt(tc.getAttribute('rowSpan') || '1', 10);
+
+              let fillColor: string | undefined;
+              const tcPrList = getElementsByLocalName(tc, 'tcPr');
+              if (tcPrList.length > 0) {
+                fillColor = parseDrawingColor(tcPrList[0]);
+              }
+
+              const paragraphs: PptxParagraph[] = [];
+              const pElements = getElementsByLocalName(tc, 'p');
+              let cellText = '';
+
+              for (const p of pElements) {
+                const parsedP = parseParagraph(p);
+                if (parsedP.text.trim()) {
+                  paragraphs.push(parsedP);
+                  cellText += (cellText ? '\n' : '') + parsedP.text;
+                }
+              }
+
+              cells.push({
+                text: cellText,
+                paragraphs,
+                colSpan,
+                rowSpan,
+                fillColor,
+              });
+              legacyCellTexts.push(cellText);
+            }
+
+            if (cells.length > 0) {
+              rows.push({ cells, height: rowHeightPct });
+              legacyRows.push(legacyCellTexts);
+            }
+          }
+
+          if (legacyRows.length > 0) {
+            legacyTables.push({
+              headers: legacyRows[0] || [],
+              rows: legacyRows.slice(1),
+            });
+          }
+
+          elements.push({
+            id: `tbl-${zOrder}`,
+            type: 'table',
+            left: coords.left,
+            top: coords.top,
+            width: coords.width,
+            height: coords.height,
+            colWidths: colWidthsPct,
+            rows,
+            zIndex: zOrder++,
+          });
+        }
+      }
+
+      // 3. 그림 / 이미지 (<p:pic>)
+      else if (localName === 'pic') {
+        const coords = parseElementCoordinates(item, slideWidth, slideHeight);
+        const blipList = getElementsByLocalName(item, 'blip');
+
+        if (coords && blipList.length > 0) {
+          const embedId = blipList[0].getAttribute('r:embed');
+          if (embedId && slideImageMap.has(embedId)) {
+            const mediaPath = slideImageMap.get(embedId)!;
+            const mediaFile = zip.file(mediaPath);
+            if (mediaFile) {
+              try {
+                const ext = mediaPath.split('.').pop()?.toLowerCase() || 'png';
+                const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : ext === 'svg' ? 'image/svg+xml' : 'image/png';
+                const base64 = await mediaFile.async('base64');
+                const dataUrl = `data:${mime};base64,${base64}`;
+
+                elements.push({
+                  id: `img-${zOrder}`,
+                  type: 'image',
+                  left: coords.left,
+                  top: coords.top,
+                  width: coords.width,
+                  height: coords.height,
+                  dataUrl,
+                  contentType: mime,
+                  zIndex: zOrder++,
+                });
+
+                legacyImages.push({
+                  id: embedId,
+                  dataUrl,
+                  contentType: mime,
+                });
+              } catch (e) {
+                console.warn(`이미지 로드 실패: ${mediaPath}`, e);
+              }
+            }
+          }
+        }
+      }
     }
 
-    // 슬라이드 제목 기본값 설정
     if (!slideTitle) {
-      if (paragraphs.length > 0) {
-        slideTitle = paragraphs[0].text;
+      if (legacyParagraphs.length > 0) {
+        slideTitle = legacyParagraphs[0].text;
       } else {
         slideTitle = `슬라이드 ${idx + 1}`;
       }
@@ -366,21 +697,27 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
     slides.push({
       slideNumber: idx + 1,
       title: slideTitle,
-      paragraphs,
-      tables,
-      images,
       slidePath: sPath,
+      width: slideWidth,
+      height: slideHeight,
+      aspectRatio,
+      backgroundColor,
+      elements,
+      paragraphs: legacyParagraphs,
+      tables: legacyTables,
+      images: legacyImages,
     });
   }
 
-  const result: PptxPresentation = {
+  return {
     title: presentationTitle || (slides[0]?.title ?? '파워포인트 프레젠테이션'),
     slideCount: slides.length,
+    slideWidth,
+    slideHeight,
+    aspectRatio,
     slides,
     rawZip: zip,
   };
-
-  return result;
 }
 
 // 캐시 기반 파싱
@@ -394,7 +731,7 @@ export async function getCachedPptxPresentation(attId: string, dataUrl: string):
   return presentation;
 }
 
-// 마크다운 및 일반 텍스트 추출 (메모로 가져오기용)
+// 마크다운 및 텍스트 추출 (메모로 가져오기용)
 export async function extractPptxTextAndMarkdown(dataUrl: string): Promise<{ title: string; markdown: string; text: string }> {
   const pres = await parsePptxPresentation(dataUrl);
 
@@ -409,7 +746,7 @@ export async function extractPptxTextAndMarkdown(dataUrl: string): Promise<{ tit
     textLines.push(`\n[슬라이드 ${slide.slideNumber}] ${slide.title}\n`);
 
     for (const p of slide.paragraphs) {
-      if (p.isTitle && p.text === slide.title) continue; // 중복 제목 생략
+      if (p.isTitle && p.text === slide.title) continue;
       const indent = '  '.repeat(Math.max(0, p.level));
       mdLines.push(`${indent}- ${p.text}`);
       textLines.push(`${indent}• ${p.text}`);
@@ -451,10 +788,8 @@ export async function updatePptxSlideTexts(
     const xmlText = await sFile.async('text');
     const doc = parseXml(xmlText);
 
-    // 슬라이드 내 모든 텍스트 단락(p) 찾기
     const paragraphs = getElementsByLocalName(doc, 'p');
     if (paragraphs.length > 0) {
-      // 1. 첫 단락 또는 제목 단락에 제목 적용
       const firstP = paragraphs[0];
       const tElements = getElementsByLocalName(firstP, 't');
       if (tElements.length > 0) {
@@ -464,14 +799,12 @@ export async function updatePptxSlideTexts(
         }
       }
 
-      // 2. 본문 텍스트 적용 (여러 줄을 단락들에 분배하거나 새 텍스트로 치환)
       const bodyLines = upd.bodyText
         .split('\n')
         .map((l) => l.trim().replace(/^[-*•]\s*/, ''))
         .filter(Boolean);
 
       if (bodyLines.length > 0) {
-        // 기존 2번째 단락부터 수정
         for (let i = 0; i < bodyLines.length; i++) {
           const targetPIndex = i + 1;
           if (targetPIndex < paragraphs.length) {
@@ -482,7 +815,6 @@ export async function updatePptxSlideTexts(
               for (let k = 1; k < pTs.length; k++) pTs[k].textContent = '';
             }
           } else {
-            // 단락이 부족하면 마지막 단락을 복제하여 추가
             const lastP = paragraphs[paragraphs.length - 1];
             const cloneP = lastP.cloneNode(true) as Element;
             const cloneTs = getElementsByLocalName(cloneP, 't');
@@ -496,13 +828,11 @@ export async function updatePptxSlideTexts(
       }
     }
 
-    // 직렬화하여 zip에 다시 쓰기
     const serializer = new XMLSerializer();
     const updatedXml = serializer.serializeToString(doc);
     zip.file(slidePath, updatedXml);
   }
 
-  // base64 data url 생성
   const updatedBase64 = await zip.generateAsync({
     type: 'base64',
     mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
