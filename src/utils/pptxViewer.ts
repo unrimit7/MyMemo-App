@@ -181,7 +181,7 @@ function getDirectChildrenByLocalName(parent: Element, localName: string): Eleme
 }
 
 // DrawingML 색상 파서 (srgbClr, schemeClr, prstClr)
-function parseDrawingColor(parent: Element): string | undefined {
+function parseDrawingColor(parent: Element, themeMap?: Record<string, string>): string | undefined {
   // 1. srgbClr (직접 지정 16진수 색상)
   const srgb = getElementsByLocalName(parent, 'srgbClr');
   if (srgb.length > 0) {
@@ -193,30 +193,35 @@ function parseDrawingColor(parent: Element): string | undefined {
   const scheme = getElementsByLocalName(parent, 'schemeClr');
   if (scheme.length > 0) {
     const val = scheme[0].getAttribute('val');
-    const schemeMap: Record<string, string> = {
-      accent1: '#4F81BD',
-      accent2: '#C0504D',
-      accent3: '#5CB85C', // 자주 쓰이는 초록색
-      accent4: '#8064A2',
-      accent5: '#4BACC6',
-      accent6: '#F79646',
-      dk1: '#111827',
-      lt1: '#FFFFFF',
-      dk2: '#1F497D',
-      lt2: '#F3F4F6',
-      bg1: '#FFFFFF',
-      tx1: '#111827',
-      bg2: '#F3F4F6',
-      tx2: '#1F497D',
-      hlink: '#2563EB',
-      folHlink: '#7C3AED',
-    };
-    if (val && schemeMap[val]) {
+    if (val) {
       const lumMod = getElementsByLocalName(scheme[0], 'lumMod');
       if (val === 'bg1' && lumMod.length > 0) {
         return '#F1F5F9';
       }
-      return schemeMap[val];
+      if (themeMap && themeMap[val]) {
+        return themeMap[val];
+      }
+      const defaultSchemeMap: Record<string, string> = {
+        accent1: '#4F81BD',
+        accent2: '#C0504D',
+        accent3: '#5CB85C',
+        accent4: '#8064A2',
+        accent5: '#4BACC6',
+        accent6: '#F79646',
+        dk1: '#111827',
+        lt1: '#FFFFFF',
+        dk2: '#1F497D',
+        lt2: '#F3F4F6',
+        bg1: '#FFFFFF',
+        tx1: '#111827',
+        bg2: '#F3F4F6',
+        tx2: '#1F497D',
+        hlink: '#2563EB',
+        folHlink: '#7C3AED',
+      };
+      if (defaultSchemeMap[val]) {
+        return defaultSchemeMap[val];
+      }
     }
   }
 
@@ -228,6 +233,45 @@ function parseDrawingColor(parent: Element): string | undefined {
   }
 
   return undefined;
+}
+
+// 테마 파일(theme1.xml)에서 프레젠테이션 고유 색상 팔레트 파싱
+async function parseThemeColors(zip: JSZip): Promise<Record<string, string>> {
+  const themeMap: Record<string, string> = {};
+  const themeFiles = Object.keys(zip.files).filter(
+    (f) => f.startsWith('ppt/theme/theme') && f.endsWith('.xml')
+  );
+  if (themeFiles.length === 0) return themeMap;
+
+  const themeFile = zip.file(themeFiles[0]);
+  if (!themeFile) return themeMap;
+
+  try {
+    const themeText = await themeFile.async('text');
+    const themeDoc = parseXml(themeText);
+    const clrScheme = findFirstByLocalName(themeDoc, 'clrScheme');
+    if (clrScheme) {
+      for (let i = 0; i < clrScheme.children.length; i++) {
+        const child = clrScheme.children[i];
+        const tag = child.localName;
+        const srgbList = getElementsByLocalName(child, 'srgbClr');
+        if (srgbList.length > 0) {
+          const val = srgbList[0].getAttribute('val');
+          if (val) themeMap[tag] = `#${val}`;
+        } else {
+          const sysList = getElementsByLocalName(child, 'sysClr');
+          if (sysList.length > 0) {
+            const lastClr = sysList[0].getAttribute('lastClr');
+            if (lastClr) themeMap[tag] = `#${lastClr}`;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('테마 색상 파싱 오류:', e);
+  }
+
+  return themeMap;
 }
 
 // EMU 좌표를 슬라이드 기준 백분율(0-100%)로 변환
@@ -266,6 +310,7 @@ function parseParagraph(p: Element, defaultAlign?: 'left' | 'center' | 'right' |
   let align: 'left' | 'center' | 'right' | 'justify' = defaultAlign || 'left';
 
   const pPrList = getDirectChildrenByLocalName(p, 'pPr');
+  let bulletPrefix = '';
   if (pPrList.length > 0) {
     const lvlAttr = pPrList[0].getAttribute('lvl');
     if (lvlAttr) level = parseInt(lvlAttr, 10);
@@ -275,6 +320,11 @@ function parseParagraph(p: Element, defaultAlign?: 'left' | 'center' | 'right' |
     else if (algnAttr === 'r') align = 'right';
     else if (algnAttr === 'just') align = 'justify';
     else if (algnAttr === 'l') align = 'left';
+
+    const buAutoNum = getElementsByLocalName(pPrList[0], 'buAutoNum');
+    if (buAutoNum.length > 0) {
+      bulletPrefix = '1. ';
+    }
   }
 
   const runs: PptxTextRun[] = [];
@@ -339,6 +389,14 @@ function parseParagraph(p: Element, defaultAlign?: 'left' | 'center' | 'right' |
         runs.push({ text: textContent });
         paragraphFullText += textContent;
       }
+    }
+  }
+
+  if (bulletPrefix && runs.length > 0) {
+    const trimmed = runs[0].text.trim();
+    if (!trimmed.startsWith('1.') && !trimmed.startsWith('2.') && !trimmed.startsWith('3.')) {
+      runs[0].text = bulletPrefix + runs[0].text;
+      paragraphFullText = bulletPrefix + paragraphFullText;
     }
   }
 
@@ -471,7 +529,8 @@ async function parseSlideLayout(
   zip: JSZip,
   layoutPath: string,
   slideWidth: number,
-  slideHeight: number
+  slideHeight: number,
+  themeMap?: Record<string, string>
 ): Promise<SlideLayoutData> {
   const lFile = zip.file(layoutPath);
   if (!lFile) {
@@ -583,7 +642,7 @@ async function parseSlideLayout(
         if (spPrList.length > 0) {
           const lnList = getElementsByLocalName(spPrList[0], 'ln');
           if (lnList.length > 0) {
-            lineColor = parseDrawingColor(lnList[0]) || '#CBD5E1';
+            lineColor = parseDrawingColor(lnList[0], themeMap) || '#CBD5E1';
             const wAttr = lnList[0].getAttribute('w');
             lineWidth = wAttr ? Math.max(1, Math.round(parseInt(wAttr, 10) / 12700)) : 1;
           }
@@ -621,10 +680,10 @@ async function parseSlideLayout(
 
         const spPrList = getElementsByLocalName(item, 'spPr');
         if (spPrList.length > 0) {
-          fillColor = parseDrawingColor(spPrList[0]);
+          fillColor = parseDrawingColor(spPrList[0], themeMap);
           const lnList = getElementsByLocalName(spPrList[0], 'ln');
           if (lnList.length > 0) {
-            borderColor = parseDrawingColor(lnList[0]) || '#CBD5E1';
+            borderColor = parseDrawingColor(lnList[0], themeMap) || '#CBD5E1';
             const wAttr = lnList[0].getAttribute('w');
             borderWidth = wAttr ? Math.max(1, Math.round(parseInt(wAttr, 10) / 12700)) : 1;
           }
@@ -731,6 +790,7 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
   const slides: PptxSlide[] = [];
   let presentationTitle = '';
   const layoutCache = new Map<string, SlideLayoutData>();
+  const themeMap = await parseThemeColors(zip);
 
   // 2. 각 슬라이드 정밀 파싱
   for (let idx = 0; idx < slidePaths.length; idx++) {
@@ -784,7 +844,7 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
     let layoutData: SlideLayoutData = { elements: [], phStyles: new Map() };
     if (layoutPath) {
       if (!layoutCache.has(layoutPath)) {
-        const parsedLayout = await parseSlideLayout(zip, layoutPath, slideWidth, slideHeight);
+        const parsedLayout = await parseSlideLayout(zip, layoutPath, slideWidth, slideHeight, themeMap);
         layoutCache.set(layoutPath, parsedLayout);
       }
       layoutData = layoutCache.get(layoutPath)!;
@@ -794,7 +854,7 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
     let backgroundColor: string | undefined;
     const bgList = getElementsByLocalName(sDoc, 'bg');
     if (bgList.length > 0) {
-      backgroundColor = parseDrawingColor(bgList[0]);
+      backgroundColor = parseDrawingColor(bgList[0], themeMap);
     }
 
     const elements: PptxSlideElement[] = [];
@@ -847,13 +907,47 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
         const spPrList = getElementsByLocalName(item, 'spPr');
         if (spPrList.length > 0) {
           const spPr = spPrList[0];
-          fillColor = parseDrawingColor(spPr);
+          fillColor = parseDrawingColor(spPr, themeMap);
 
           const lnList = getElementsByLocalName(spPr, 'ln');
           if (lnList.length > 0) {
-            borderColor = parseDrawingColor(lnList[0]) || '#CBD5E1';
+            borderColor = parseDrawingColor(lnList[0], themeMap) || '#CBD5E1';
             const wAttr = lnList[0].getAttribute('w');
             borderWidth = wAttr ? Math.max(1, Math.round(parseInt(wAttr, 10) / 12700)) : 1;
+          }
+        }
+
+        // spPr에 배경색이 없다면 <p:style> -> <a:fillRef> 확인
+        if (!fillColor) {
+          const styleList = getElementsByLocalName(item, 'style');
+          if (styleList.length > 0) {
+            const fillRefList = getElementsByLocalName(styleList[0], 'fillRef');
+            if (fillRefList.length > 0) {
+              fillColor = parseDrawingColor(fillRefList[0], themeMap);
+            }
+          }
+        }
+
+        // spPr에 테두리가 없다면 <p:style> -> <a:lnRef> 확인
+        if (!borderColor) {
+          const styleList = getElementsByLocalName(item, 'style');
+          if (styleList.length > 0) {
+            const lnRefList = getElementsByLocalName(styleList[0], 'lnRef');
+            if (lnRefList.length > 0) {
+              borderColor = parseDrawingColor(lnRefList[0], themeMap);
+              if (borderColor) borderWidth = 1.5;
+            }
+          }
+        }
+
+        let verticalAlign: 'top' | 'middle' | 'bottom' = 'top';
+        const txBodyList = getElementsByLocalName(item, 'txBody');
+        if (txBodyList.length > 0) {
+          const bodyPrList = getElementsByLocalName(txBodyList[0], 'bodyPr');
+          if (bodyPrList.length > 0) {
+            const anchor = bodyPrList[0].getAttribute('anchor');
+            if (anchor === 'ctr' || anchor === 'mid') verticalAlign = 'middle';
+            else if (anchor === 'b') verticalAlign = 'bottom';
           }
         }
 
@@ -878,7 +972,6 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
 
         // 텍스트 단락들 파싱
         const paragraphs: PptxParagraph[] = [];
-        const txBodyList = getElementsByLocalName(item, 'txBody');
         if (txBodyList.length > 0) {
           const pElements = getDirectChildrenByLocalName(txBodyList[0], 'p');
           for (const p of pElements) {
@@ -910,6 +1003,7 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
           borderWidth,
           paragraphs,
           isTitle,
+          verticalAlign,
           zIndex: zOrder++,
         });
       }
@@ -932,10 +1026,11 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
           const trElements = getElementsByLocalName(tbl, 'tr');
           const rows: PptxTableRow[] = [];
           const legacyRows: string[][] = [];
+          const tableHeightEmu = slideHeight > 0 ? (coords.height / 100) * slideHeight : 1;
 
           for (const tr of trElements) {
             const rawH = parseInt(tr.getAttribute('h') || '0', 10);
-            const rowHeightPct = slideHeight > 0 ? (rawH / slideHeight) * 100 : undefined;
+            const rowHeightPct = tableHeightEmu > 0 ? (rawH / tableHeightEmu) * 100 : undefined;
 
             const cells: PptxTableCell[] = [];
             const legacyCellTexts: string[] = [];
@@ -953,20 +1048,20 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
               const rowSpan = parseInt(tc.getAttribute('rowSpan') || '1', 10);
 
               let fillColor: string | undefined;
-              let verticalAlign: 'top' | 'middle' | 'bottom' = 'middle';
+              let verticalAlign: 'top' | 'middle' | 'bottom' = 'top';
 
               const tcPrList = getElementsByLocalName(tc, 'tcPr');
               if (tcPrList.length > 0) {
                 const tcPr = tcPrList[0];
                 const anchor = tcPr.getAttribute('anchor');
-                if (anchor === 't') verticalAlign = 'top';
+                if (anchor === 'ctr' || anchor === 'mid') verticalAlign = 'middle';
                 else if (anchor === 'b') verticalAlign = 'bottom';
-                else verticalAlign = 'middle';
+                else verticalAlign = 'top';
 
                 // 중요: tcPr 직속의 solidFill만 추출하여 테두리 선(lnL, lnR 등)의 tx1(검정색) 오인 방지
                 const solidFillList = getDirectChildrenByLocalName(tcPr, 'solidFill');
                 if (solidFillList.length > 0) {
-                  fillColor = parseDrawingColor(solidFillList[0]);
+                  fillColor = parseDrawingColor(solidFillList[0], themeMap);
                 }
               }
 
@@ -1070,7 +1165,7 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
           if (spPrList.length > 0) {
             const lnList = getElementsByLocalName(spPrList[0], 'ln');
             if (lnList.length > 0) {
-              lineColor = parseDrawingColor(lnList[0]) || '#334155';
+              lineColor = parseDrawingColor(lnList[0], themeMap) || '#334155';
               const wAttr = lnList[0].getAttribute('w');
               lineWidth = wAttr ? Math.max(1, Math.round(parseInt(wAttr, 10) / 12700)) : 1;
             }

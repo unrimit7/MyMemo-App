@@ -220,14 +220,14 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
             height: `${el.height}%`,
             backgroundColor: el.fillColor || 'transparent',
             border: el.borderColor ? `${el.borderWidth || 1}px solid ${el.borderColor}` : undefined,
-            borderRadius: el.isRounded ? '12px' : el.shapeType === 'ellipse' ? '9999px' : '3px',
+            borderRadius: el.isRounded ? '16px' : el.shapeType === 'ellipse' ? '9999px' : '3px',
             zIndex: el.zIndex,
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
             justifyContent:
               el.verticalAlign === 'middle' ? 'center' : el.verticalAlign === 'bottom' ? 'flex-end' : 'flex-start',
-            padding: hasBg ? '6px 10px' : '2px 4px',
+            padding: hasBg ? '8px 12px' : '2px 4px',
             boxSizing: 'border-box',
           }}
           className="pointer-events-auto leading-normal select-text shadow-xs"
@@ -692,7 +692,10 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                       maxWidth: isSlideShow
                         ? `min(98vw, calc(96vh * ${slideAspect}))`
                         : `min(96vw, calc(82vh * ${slideAspect}))`,
-                      width: '100%',
+                      width: isSlideShow
+                        ? `min(98vw, calc(96vh * ${slideAspect}))`
+                        : `min(96vw, calc(82vh * ${slideAspect}))`,
+                      height: 'auto',
                       backgroundColor: currentSlide.backgroundColor || (isDarkMode ? '#0F172A' : '#FFFFFF'),
                     }}
                     className={`rounded-2xl shadow-2xl relative overflow-hidden select-text border transition-all ${
@@ -719,7 +722,10 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                       maxWidth: isSlideShow
                         ? `min(98vw, calc(94vh * ${slideAspect}))`
                         : `min(95vw, calc(78vh * ${slideAspect}))`,
-                      width: '100%',
+                      width: isSlideShow
+                        ? `min(98vw, calc(94vh * ${slideAspect}))`
+                        : `min(95vw, calc(78vh * ${slideAspect}))`,
+                      height: 'auto',
                     }}
                     className={`rounded-2xl shadow-2xl flex flex-col border transition-all overflow-hidden relative ${
                       isDarkMode
