@@ -187,6 +187,25 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
   // 2D 캔버스 요소 렌더러 (한쇼/파워포인트 원본 레이아웃 복원)
   const renderCanvasElement = (el: PptxSlideElement, isDark: boolean) => {
     if (el.type === 'shape') {
+      // 1. 연결선 / 구분선 렌더링
+      if (el.shapeType === 'line') {
+        const isHoriz = el.height <= 0.8;
+        return (
+          <div
+            key={el.id}
+            style={{
+              position: 'absolute',
+              left: `${el.left}%`,
+              top: `${el.top}%`,
+              width: `${Math.max(0.1, el.width)}%`,
+              height: isHoriz ? `${Math.max(1, el.borderWidth || 1)}px` : `${Math.max(0.1, el.height)}%`,
+              backgroundColor: el.borderColor || el.fillColor || (isDark ? '#64748B' : '#334155'),
+              zIndex: el.zIndex,
+            }}
+          />
+        );
+      }
+
       const hasBg = Boolean(el.fillColor && el.fillColor !== 'transparent');
       const isDarkBg = hasBg && isDarkColor(el.fillColor!);
 
@@ -216,15 +235,19 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
           {el.paragraphs.map((p, pIdx) => {
             const textAlign: any = p.align || 'left';
             return (
-              <div key={pIdx} style={{ textAlign }} className={`leading-snug ${el.isTitle ? 'font-extrabold' : ''}`}>
+              <div
+                key={pIdx}
+                style={{ textAlign, whiteSpace: 'pre-line' }}
+                className={`leading-snug ${el.isTitle ? 'font-extrabold' : ''}`}
+              >
                 {p.runs.map((r, rIdx) => {
                   const textColor =
                     r.color ||
                     (hasBg ? (isDarkBg ? '#FFFFFF' : '#0F172A') : isDark ? '#F1F5F9' : '#0F172A');
                   const fontSize = r.fontSize
-                    ? `${Math.max(10, Math.min(26, r.fontSize * 0.72))}px`
+                    ? `${Math.max(10, Math.min(32, r.fontSize * 0.8))}px`
                     : el.isTitle
-                    ? '20px'
+                    ? '24px'
                     : '12px';
 
                   return (
@@ -322,6 +345,8 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
     }
 
     if (el.type === 'image') {
+      const isFullBackground = el.width >= 90 && el.height >= 90;
+
       return (
         <div
           key={el.id}
@@ -333,15 +358,21 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
             height: `${el.height}%`,
             zIndex: el.zIndex,
           }}
-          className="pointer-events-auto flex items-center justify-center"
+          className={`flex items-center justify-center ${
+            isFullBackground ? 'pointer-events-none' : 'pointer-events-auto'
+          }`}
         >
           <img
             src={el.dataUrl}
             alt="Slide graphic"
-            onClick={() => setLightboxImage(el.dataUrl)}
-            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-            className="cursor-zoom-in hover:opacity-95 transition-opacity"
-            title="클릭하여 원본 고해상도로 확대 보기"
+            onClick={() => !isFullBackground && setLightboxImage(el.dataUrl)}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: isFullBackground ? 'cover' : 'contain',
+            }}
+            className={isFullBackground ? '' : 'cursor-zoom-in hover:opacity-95 transition-opacity'}
+            title={isFullBackground ? undefined : '클릭하여 원본 고해상도로 확대 보기'}
           />
         </div>
       );

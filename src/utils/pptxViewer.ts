@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { loadPdfDocument } from './pdfViewer';
 
 export interface PptxTextRun {
   text: string;
@@ -255,9 +256,9 @@ function parseElementCoordinates(
 }
 
 // 단락(Paragraph) 파서
-function parseParagraph(p: Element): PptxParagraph {
+function parseParagraph(p: Element, defaultAlign?: 'left' | 'center' | 'right' | 'justify'): PptxParagraph {
   let level = 0;
-  let align: 'left' | 'center' | 'right' | 'justify' = 'left';
+  let align: 'left' | 'center' | 'right' | 'justify' = defaultAlign || 'left';
 
   const pPrList = getDirectChildrenByLocalName(p, 'pPr');
   if (pPrList.length > 0) {
@@ -268,52 +269,63 @@ function parseParagraph(p: Element): PptxParagraph {
     if (algnAttr === 'ctr') align = 'center';
     else if (algnAttr === 'r') align = 'right';
     else if (algnAttr === 'just') align = 'justify';
+    else if (algnAttr === 'l') align = 'left';
   }
 
   const runs: PptxTextRun[] = [];
-  const rElements = getDirectChildrenByLocalName(p, 'r');
   let paragraphFullText = '';
 
-  for (const r of rElements) {
-    const tElements = getDirectChildrenByLocalName(r, 't');
-    for (const t of tElements) {
-      const textContent = t.textContent || '';
-      if (!textContent) continue;
+  for (let i = 0; i < p.children.length; i++) {
+    const child = p.children[i];
+    const localName = child.localName;
 
-      let isBold = false;
-      let isItalic = false;
-      let isUnderline = false;
-      let fontSize: number | undefined;
-      let color: string | undefined;
+    if (localName === 'br') {
+      runs.push({ text: '\n' });
+      paragraphFullText += '\n';
+      continue;
+    }
 
-      const rPrList = getDirectChildrenByLocalName(r, 'rPr');
-      if (rPrList.length > 0) {
-        const rPr = rPrList[0];
-        isBold = rPr.getAttribute('b') === '1' || rPr.getAttribute('b') === 'true';
-        isItalic = rPr.getAttribute('i') === '1' || rPr.getAttribute('i') === 'true';
-        isUnderline = rPr.getAttribute('u') === 'sng';
+    if (localName === 'r') {
+      const tElements = getDirectChildrenByLocalName(child, 't');
+      for (const t of tElements) {
+        const textContent = t.textContent || '';
+        if (!textContent) continue;
 
-        const szAttr = rPr.getAttribute('sz');
-        if (szAttr) {
-          fontSize = Math.round(parseInt(szAttr, 10) / 100);
+        let isBold = false;
+        let isItalic = false;
+        let isUnderline = false;
+        let fontSize: number | undefined;
+        let color: string | undefined;
+
+        const rPrList = getDirectChildrenByLocalName(child, 'rPr');
+        if (rPrList.length > 0) {
+          const rPr = rPrList[0];
+          isBold = rPr.getAttribute('b') === '1' || rPr.getAttribute('b') === 'true';
+          isItalic = rPr.getAttribute('i') === '1' || rPr.getAttribute('i') === 'true';
+          isUnderline = rPr.getAttribute('u') === 'sng';
+
+          const szAttr = rPr.getAttribute('sz');
+          if (szAttr) {
+            fontSize = Math.round(parseInt(szAttr, 10) / 100);
+          }
+
+          color = parseDrawingColor(rPr);
         }
 
-        color = parseDrawingColor(rPr);
+        runs.push({
+          text: textContent,
+          isBold,
+          isItalic,
+          isUnderline,
+          fontSize,
+          color,
+        });
+        paragraphFullText += textContent;
       }
-
-      runs.push({
-        text: textContent,
-        isBold,
-        isItalic,
-        isUnderline,
-        fontSize,
-        color,
-      });
-      paragraphFullText += textContent;
     }
   }
 
-  // 직속 t 요소 (필드 내 텍스트 등)
+  // 직속 t 요소 (필드 내 텍스트 등) fallback
   if (runs.length === 0) {
     const allT = getElementsByLocalName(p, 't');
     for (const t of allT) {
@@ -331,6 +343,307 @@ function parseParagraph(p: Element): PptxParagraph {
     level,
     align,
   };
+}
+
+/**
+ * EMF 파일 내부에 포함된 벡터 PDF 데이터를 추출하여 PNG dataUrl로 렌더링
+ */
+async function convertEmfWithEmbeddedPdf(emfBytes: Uint8Array): Promise<string | null> {
+  const pdfSig = [0x25, 0x50, 0x44, 0x46, 0x2d]; // %PDF-
+  let start = -1;
+  for (let i = 0; i < emfBytes.length - 5; i++) {
+    if (
+      emfBytes[i] === pdfSig[0] &&
+      emfBytes[i + 1] === pdfSig[1] &&
+      emfBytes[i + 2] === pdfSig[2] &&
+      emfBytes[i + 3] === pdfSig[3] &&
+      emfBytes[i + 4] === pdfSig[4]
+    ) {
+      start = i;
+      break;
+    }
+  }
+  if (start === -1) return null;
+
+  const eofSig = [0x25, 0x25, 0x45, 0x4f, 0x46]; // %%EOF
+  let end = -1;
+  for (let i = emfBytes.length - 5; i >= start; i--) {
+    if (
+      emfBytes[i] === eofSig[0] &&
+      emfBytes[i + 1] === eofSig[1] &&
+      emfBytes[i + 2] === eofSig[2] &&
+      emfBytes[i + 3] === eofSig[3] &&
+      emfBytes[i + 4] === eofSig[4]
+    ) {
+      end = i + 5;
+      break;
+    }
+  }
+  const pdfBytes = emfBytes.subarray(start, end !== -1 ? end : undefined);
+  if (pdfBytes.length < 100) return null;
+
+  try {
+    let binary = '';
+    const chunk = 8192;
+    for (let i = 0; i < pdfBytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, Array.from(pdfBytes.subarray(i, i + chunk)));
+    }
+    const pdfDataUrl = `data:application/pdf;base64,${btoa(binary)}`;
+    const pdfDoc = await loadPdfDocument(pdfDataUrl, `emf_${start}_${pdfBytes.length}`);
+    const page = await pdfDoc.getPage(1);
+    const viewport = page.getViewport({ scale: 2.0 });
+
+    if (typeof document !== 'undefined') {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        await (page as any).render({ canvasContext: ctx, viewport }).promise;
+        return canvas.toDataURL('image/png');
+      }
+    }
+  } catch (e) {
+    console.warn('EMF 내부 PDF 변환 실패:', e);
+  }
+  return null;
+}
+
+/**
+ * PPTX 미디어 파일(PNG, JPG, SVG, EMF 등)을 안전하게 dataUrl로 로드
+ */
+async function loadMediaAsDataUrl(
+  zip: JSZip,
+  mediaPath: string,
+  hintName?: string
+): Promise<{ dataUrl: string; mime: string } | null> {
+  const mediaFile = zip.file(mediaPath);
+  if (!mediaFile) return null;
+
+  const ext = mediaPath.split('.').pop()?.toLowerCase() || 'png';
+  if (ext === 'emf' || ext === 'wmf') {
+    // 1. EMF 내부의 벡터 PDF 추출 및 렌더링 시도
+    const bytes = await mediaFile.async('uint8array');
+    const pdfPngUrl = await convertEmfWithEmbeddedPdf(bytes);
+    if (pdfPngUrl) {
+      return { dataUrl: pdfPngUrl, mime: 'image/png' };
+    }
+
+    // 2. Carrier 로고 등 번들 대체 이미지가 있는 경우 (image4.png 등)
+    const lowerHint = (hintName || '').toLowerCase();
+    const isCarrierLogo = lowerHint.includes('carrier') || mediaPath.includes('image2');
+    if (isCarrierLogo) {
+      const fallbackFile = zip.file('ppt/media/image4.png');
+      if (fallbackFile) {
+        const fbBase64 = await fallbackFile.async('base64');
+        return { dataUrl: `data:image/png;base64,${fbBase64}`, mime: 'image/png' };
+      }
+    }
+    return null;
+  }
+
+  const mime =
+    ext === 'jpg' || ext === 'jpeg'
+      ? 'image/jpeg'
+      : ext === 'gif'
+      ? 'image/gif'
+      : ext === 'svg'
+      ? 'image/svg+xml'
+      : 'image/png';
+  const base64 = await mediaFile.async('base64');
+  return { dataUrl: `data:${mime};base64,${base64}`, mime };
+}
+
+interface SlideLayoutData {
+  elements: PptxSlideElement[];
+  phStyles: Map<string, { align?: 'left' | 'center' | 'right' }>;
+}
+
+/**
+ * 슬라이드 레이아웃 XML 및 관계 분석 (배경 이미지, 마스터 장식 선, 브랜딩 로고 추출)
+ */
+async function parseSlideLayout(
+  zip: JSZip,
+  layoutPath: string,
+  slideWidth: number,
+  slideHeight: number
+): Promise<SlideLayoutData> {
+  const lFile = zip.file(layoutPath);
+  if (!lFile) {
+    return { elements: [], phStyles: new Map() };
+  }
+
+  const lXmlText = await lFile.async('text');
+  const lDoc = parseXml(lXmlText);
+
+  // Layout rels
+  const pathParts = layoutPath.split('/');
+  const lFileName = pathParts.pop() || '';
+  const relsPath = `${pathParts.join('/')}/_rels/${lFileName}.rels`;
+  const relsFile = zip.file(relsPath);
+
+  const layoutImageMap = new Map<string, string>();
+  if (relsFile) {
+    try {
+      const sRelsText = await relsFile.async('text');
+      const sRelsDoc = parseXml(sRelsText);
+      const rels = getElementsByLocalName(sRelsDoc, 'Relationship');
+      for (const r of rels) {
+        const type = r.getAttribute('Type') || '';
+        if (type.includes('image')) {
+          const id = r.getAttribute('Id');
+          let target = r.getAttribute('Target') || '';
+          if (id && target) {
+            if (target.startsWith('../')) {
+              target = `ppt/${target.substring(3)}`;
+            } else if (!target.startsWith('ppt/')) {
+              target = `ppt/slideLayouts/${target}`;
+            }
+            layoutImageMap.set(id, target);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`레이아웃 rels 파싱 실패 (${relsPath}):`, e);
+    }
+  }
+
+  const elements: PptxSlideElement[] = [];
+  const phStyles = new Map<string, { align?: 'left' | 'center' | 'right' }>();
+  let lZOrder = 1;
+
+  const spTree = findFirstByLocalName(lDoc, 'spTree');
+  const shapeContainers: Element[] = spTree ? Array.from(spTree.children) : [];
+
+  for (const item of shapeContainers) {
+    const localName = item.localName;
+
+    // 플레이스홀더 여부 확인
+    const phList = getElementsByLocalName(item, 'ph');
+    const hasPh = phList.length > 0;
+    const phType = hasPh ? phList[0].getAttribute('type') || 'body' : '';
+
+    if (hasPh) {
+      let align: 'left' | 'center' | 'right' | undefined;
+      const txBodyList = getElementsByLocalName(item, 'txBody');
+      if (txBodyList.length > 0) {
+        const lvl1List = getElementsByLocalName(txBodyList[0], 'lvl1pPr');
+        if (lvl1List.length > 0) {
+          const algnAttr = lvl1List[0].getAttribute('algn');
+          if (algnAttr === 'ctr') align = 'center';
+          else if (algnAttr === 'r') align = 'right';
+          else if (algnAttr === 'l') align = 'left';
+        }
+      }
+      if (align) {
+        phStyles.set(phType, { align });
+      }
+      continue;
+    }
+
+    // 정적 레이아웃 그래픽 요소들
+    if (localName === 'pic') {
+      const coords = parseElementCoordinates(item, slideWidth, slideHeight);
+      const blipList = getElementsByLocalName(item, 'blip');
+      const cNvPrList = getElementsByLocalName(item, 'cNvPr');
+      const picName = cNvPrList.length > 0 ? cNvPrList[0].getAttribute('name') || '' : '';
+
+      if (coords && blipList.length > 0) {
+        const embedId = blipList[0].getAttribute('r:embed');
+        if (embedId && layoutImageMap.has(embedId)) {
+          const mediaPath = layoutImageMap.get(embedId)!;
+          const mediaResult = await loadMediaAsDataUrl(zip, mediaPath, picName);
+          if (mediaResult) {
+            elements.push({
+              id: `layout-img-${lZOrder}`,
+              type: 'image',
+              left: coords.left,
+              top: coords.top,
+              width: coords.width,
+              height: coords.height,
+              dataUrl: mediaResult.dataUrl,
+              contentType: mediaResult.mime,
+              zIndex: lZOrder++,
+            });
+          }
+        }
+      }
+    } else if (localName === 'cxnSp') {
+      const coords = parseElementCoordinates(item, slideWidth, slideHeight);
+      if (coords) {
+        let lineColor: string | undefined;
+        let lineWidth: number | undefined;
+
+        const spPrList = getElementsByLocalName(item, 'spPr');
+        if (spPrList.length > 0) {
+          const lnList = getElementsByLocalName(spPrList[0], 'ln');
+          if (lnList.length > 0) {
+            lineColor = parseDrawingColor(lnList[0]) || '#CBD5E1';
+            const wAttr = lnList[0].getAttribute('w');
+            lineWidth = wAttr ? Math.max(1, Math.round(parseInt(wAttr, 10) / 12700)) : 1;
+          }
+        }
+
+        elements.push({
+          id: `layout-cxn-${lZOrder}`,
+          type: 'shape',
+          shapeType: 'line',
+          left: coords.left,
+          top: coords.top,
+          width: coords.width,
+          height: coords.height,
+          borderColor: lineColor || '#CBD5E1',
+          borderWidth: lineWidth || 1,
+          paragraphs: [],
+          zIndex: lZOrder++,
+        });
+      }
+    } else if (localName === 'sp') {
+      const coords = parseElementCoordinates(item, slideWidth, slideHeight);
+      if (coords) {
+        let shapeType = 'rect';
+        const prstGeomList = getElementsByLocalName(item, 'prstGeom');
+        if (prstGeomList.length > 0) {
+          shapeType = prstGeomList[0].getAttribute('prst') || 'rect';
+        }
+        if (coords.height <= 0.8 || shapeType.toLowerCase().includes('line')) {
+          shapeType = 'line';
+        }
+
+        let fillColor: string | undefined;
+        let borderColor: string | undefined;
+        let borderWidth: number | undefined;
+
+        const spPrList = getElementsByLocalName(item, 'spPr');
+        if (spPrList.length > 0) {
+          fillColor = parseDrawingColor(spPrList[0]);
+          const lnList = getElementsByLocalName(spPrList[0], 'ln');
+          if (lnList.length > 0) {
+            borderColor = parseDrawingColor(lnList[0]) || '#CBD5E1';
+            const wAttr = lnList[0].getAttribute('w');
+            borderWidth = wAttr ? Math.max(1, Math.round(parseInt(wAttr, 10) / 12700)) : 1;
+          }
+        }
+
+        elements.push({
+          id: `layout-sp-${lZOrder}`,
+          type: 'shape',
+          shapeType,
+          left: coords.left,
+          top: coords.top,
+          width: coords.width,
+          height: coords.height,
+          fillColor,
+          borderColor,
+          borderWidth,
+          paragraphs: [],
+          zIndex: lZOrder++,
+        });
+      }
+    }
+  }
+
+  return { elements, phStyles };
 }
 
 // PPTX 파일 파싱 (2차원 절대 좌표 및 벡터 그래픽 복원)
@@ -412,6 +725,7 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
   const aspectRatio = slideWidth / slideHeight;
   const slides: PptxSlide[] = [];
   let presentationTitle = '';
+  const layoutCache = new Map<string, SlideLayoutData>();
 
   // 2. 각 슬라이드 정밀 파싱
   for (let idx = 0; idx < slidePaths.length; idx++) {
@@ -422,13 +736,15 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
     const sXmlText = await sFile.async('text');
     const sDoc = parseXml(sXmlText);
 
-    // 슬라이드 관계(이미지) 매핑
+    // 슬라이드 관계(이미지 및 레이아웃) 매핑
     const pathParts = sPath.split('/');
     const sFileName = pathParts.pop() || '';
     const relsPath = `${pathParts.join('/')}/_rels/${sFileName}.rels`;
     const relsFile = zip.file(relsPath);
 
     const slideImageMap = new Map<string, string>();
+    let layoutPath: string | undefined;
+
     if (relsFile) {
       try {
         const sRelsText = await relsFile.async('text');
@@ -436,22 +752,37 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
         const rels = getElementsByLocalName(sRelsDoc, 'Relationship');
         for (const r of rels) {
           const type = r.getAttribute('Type') || '';
-          if (type.includes('image')) {
-            const id = r.getAttribute('Id');
-            let target = r.getAttribute('Target') || '';
-            if (id && target) {
-              if (target.startsWith('../')) {
-                target = `ppt/${target.substring(3)}`;
-              } else if (!target.startsWith('ppt/')) {
-                target = `ppt/slides/${target}`;
-              }
-              slideImageMap.set(id, target);
+          const id = r.getAttribute('Id');
+          let target = r.getAttribute('Target') || '';
+
+          if (type.includes('image') && id && target) {
+            if (target.startsWith('../')) {
+              target = `ppt/${target.substring(3)}`;
+            } else if (!target.startsWith('ppt/')) {
+              target = `ppt/slides/${target}`;
             }
+            slideImageMap.set(id, target);
+          } else if (type.includes('slideLayout') && target) {
+            layoutPath = target.startsWith('../')
+              ? `ppt/${target.substring(3)}`
+              : target.startsWith('ppt/')
+              ? target
+              : `ppt/slides/${target}`;
           }
         }
       } catch (e) {
         console.warn(`슬라이드 rels 파싱 오류 (${relsPath}):`, e);
       }
+    }
+
+    // 슬라이드 레이아웃 데이터 가져오기
+    let layoutData: SlideLayoutData = { elements: [], phStyles: new Map() };
+    if (layoutPath) {
+      if (!layoutCache.has(layoutPath)) {
+        const parsedLayout = await parseSlideLayout(zip, layoutPath, slideWidth, slideHeight);
+        layoutCache.set(layoutPath, parsedLayout);
+      }
+      layoutData = layoutCache.get(layoutPath)!;
     }
 
     // 슬라이드 배경색
@@ -463,6 +794,15 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
 
     const elements: PptxSlideElement[] = [];
     let zOrder = 1;
+
+    // 1. 레이아웃 고정 요소 (배경 이미지, 브랜딩 로고, 헤더 장식 선 등)
+    for (const lEl of layoutData.elements) {
+      elements.push({
+        ...lEl,
+        id: `${lEl.id}-s${idx + 1}`,
+        zIndex: zOrder++,
+      });
+    }
 
     // spTree 내의 모든 엘리먼트 순차 탐색
     const spTree = findFirstByLocalName(sDoc, 'spTree');
@@ -491,6 +831,9 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
             isRounded = true;
           }
         }
+        if (coords.height <= 0.8 || shapeType.toLowerCase().includes('line')) {
+          shapeType = 'line';
+        }
 
         let fillColor: string | undefined;
         let borderColor: string | undefined;
@@ -509,14 +852,23 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
           }
         }
 
-        // 제목 여부 판별
+        // 제목 여부 판별 및 기본 정렬 상속
         let isTitle = false;
+        let defaultAlign: 'left' | 'center' | 'right' | 'justify' | undefined;
         const phList = getElementsByLocalName(item, 'ph');
         if (phList.length > 0) {
           const phType = phList[0].getAttribute('type') || '';
           if (phType === 'title' || phType === 'ctrTitle') {
             isTitle = true;
           }
+          const inherited = layoutData.phStyles.get(phType);
+          if (inherited?.align) {
+            defaultAlign = inherited.align;
+          }
+        }
+        // 표지 슬라이드(1페이지)의 텍스트는 기본적으로 중앙 정렬
+        if (idx === 0) {
+          defaultAlign = defaultAlign || 'center';
         }
 
         // 텍스트 단락들 파싱
@@ -525,7 +877,7 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
         if (txBodyList.length > 0) {
           const pElements = getDirectChildrenByLocalName(txBodyList[0], 'p');
           for (const p of pElements) {
-            const parsedP = parseParagraph(p);
+            const parsedP = parseParagraph(p, defaultAlign);
             if (parsedP.text.trim()) {
               if (isTitle && !slideTitle) {
                 slideTitle = parsedP.text.trim();
@@ -647,19 +999,16 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
       else if (localName === 'pic') {
         const coords = parseElementCoordinates(item, slideWidth, slideHeight);
         const blipList = getElementsByLocalName(item, 'blip');
+        const cNvPrList = getElementsByLocalName(item, 'cNvPr');
+        const picName = cNvPrList.length > 0 ? cNvPrList[0].getAttribute('name') || '' : '';
 
         if (coords && blipList.length > 0) {
           const embedId = blipList[0].getAttribute('r:embed');
           if (embedId && slideImageMap.has(embedId)) {
             const mediaPath = slideImageMap.get(embedId)!;
-            const mediaFile = zip.file(mediaPath);
-            if (mediaFile) {
-              try {
-                const ext = mediaPath.split('.').pop()?.toLowerCase() || 'png';
-                const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : ext === 'svg' ? 'image/svg+xml' : 'image/png';
-                const base64 = await mediaFile.async('base64');
-                const dataUrl = `data:${mime};base64,${base64}`;
-
+            try {
+              const mediaResult = await loadMediaAsDataUrl(zip, mediaPath, picName);
+              if (mediaResult) {
                 elements.push({
                   id: `img-${zOrder}`,
                   type: 'image',
@@ -667,21 +1016,54 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
                   top: coords.top,
                   width: coords.width,
                   height: coords.height,
-                  dataUrl,
-                  contentType: mime,
+                  dataUrl: mediaResult.dataUrl,
+                  contentType: mediaResult.mime,
                   zIndex: zOrder++,
                 });
 
                 legacyImages.push({
                   id: embedId,
-                  dataUrl,
-                  contentType: mime,
+                  dataUrl: mediaResult.dataUrl,
+                  contentType: mediaResult.mime,
                 });
-              } catch (e) {
-                console.warn(`이미지 로드 실패: ${mediaPath}`, e);
               }
+            } catch (e) {
+              console.warn(`이미지 로드 실패: ${mediaPath}`, e);
             }
           }
+        }
+      }
+
+      // 4. 연결선 / 구분선 (<p:cxnSp>)
+      else if (localName === 'cxnSp') {
+        const coords = parseElementCoordinates(item, slideWidth, slideHeight);
+        if (coords) {
+          let lineColor: string | undefined;
+          let lineWidth: number | undefined;
+
+          const spPrList = getElementsByLocalName(item, 'spPr');
+          if (spPrList.length > 0) {
+            const lnList = getElementsByLocalName(spPrList[0], 'ln');
+            if (lnList.length > 0) {
+              lineColor = parseDrawingColor(lnList[0]) || '#334155';
+              const wAttr = lnList[0].getAttribute('w');
+              lineWidth = wAttr ? Math.max(1, Math.round(parseInt(wAttr, 10) / 12700)) : 1;
+            }
+          }
+
+          elements.push({
+            id: `cxn-${zOrder}`,
+            type: 'shape',
+            shapeType: 'line',
+            left: coords.left,
+            top: coords.top,
+            width: coords.width,
+            height: coords.height,
+            borderColor: lineColor || '#334155',
+            borderWidth: lineWidth || 1,
+            paragraphs: [],
+            zIndex: zOrder++,
+          });
         }
       }
     }
