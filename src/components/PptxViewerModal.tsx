@@ -46,6 +46,7 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
   const [showSidebar, setShowSidebar] = useState<boolean>(true);
   const [isSlideShow, setIsSlideShow] = useState<boolean>(false);
   const [isDarkMode, setIsDarkMode] = useState<boolean>(false);
+  const [fitMode, setFitMode] = useState<'fit' | 'expand'>('fit'); // 'fit': 한 화면 맞춤, 'expand': 전체 펼치기
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -160,11 +161,33 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
   const currentSlide: PptxSlide | undefined = presentation?.slides[currentSlideIndex];
   const totalSlides = presentation?.slides.length || 0;
 
+  // 제목 중복 불릿 필터링 (불필요한 세로 공간 낭비 방지)
+  const isDuplicateOfTitle = (text: string, slideTitle: string) => {
+    const cleanT = text.replace(/["'“”‘’`\s]/g, '').toLowerCase();
+    const cleanTitle = (slideTitle || '').replace(/["'“”‘’`\s]/g, '').toLowerCase();
+    if (!cleanT || !cleanTitle) return false;
+    return cleanT === cleanTitle || cleanTitle.startsWith(cleanT) || cleanT.startsWith(cleanTitle);
+  };
+
+  // 슬라이드 내 항목 수 및 밀집도 계산
+  const totalTableRows = currentSlide
+    ? currentSlide.tables.reduce((acc, t) => acc + t.rows.length + 1, 0)
+    : 0;
+  const filteredParagraphs = currentSlide
+    ? currentSlide.paragraphs.filter(
+        (p) => !p.isTitle && !isDuplicateOfTitle(p.text, currentSlide.title)
+      )
+    : [];
+  const paragraphCount = filteredParagraphs.length;
+
+  const isDense = totalTableRows >= 4 || paragraphCount >= 4;
+  const isVeryDense = totalTableRows >= 7 || paragraphCount >= 7;
+
   return (
     <div
       ref={containerRef}
-      className={`fixed inset-0 z-50 flex flex-col bg-black/90 backdrop-blur-sm select-none transition-all ${
-        isSlideShow ? 'p-0' : 'p-2 md:p-4'
+      className={`fixed inset-0 z-50 flex flex-col bg-black/95 backdrop-blur-sm select-none transition-all ${
+        isSlideShow ? 'p-1 sm:p-2' : 'p-2 md:p-4'
       }`}
     >
       <div
@@ -172,7 +195,7 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
           isSlideShow ? 'rounded-none border-none' : 'rounded-2xl max-w-7xl mx-auto'
         }`}
       >
-        {/* 상단 툴바 (슬라이드 쇼 모드에서는 상단 호버 시에만 작게 노출하거나 미니 컨트롤 제공) */}
+        {/* 상단 툴바 (슬라이드 쇼 모드가 아닐 때) */}
         {!isSlideShow ? (
           <div className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
             {/* 좌측: 타이틀 및 슬라이드 카운터 */}
@@ -240,7 +263,7 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
               <button
                 type="button"
                 onClick={handleDownload}
-                className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition-colors cursor-pointer"
+                className="p-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition-colors cursor-pointer"
                 title="파워포인트 파일 다운로드"
               >
                 <Download size={15} />
@@ -259,11 +282,55 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
           </div>
         ) : (
           /* 슬라이드 쇼 상단 플로팅 미니 바 */
-          <div className="absolute top-3 right-4 z-50 flex items-center gap-2 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-full border border-slate-700/60 shadow-lg text-xs text-slate-300">
-            <span className="font-mono text-orange-400 font-bold">
+          <div className="absolute top-3 right-4 z-50 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md px-3 py-1.5 rounded-full border border-slate-700/60 shadow-xl text-xs text-slate-300">
+            <button
+              type="button"
+              onClick={() => setCurrentSlideIndex((prev) => Math.max(0, prev - 1))}
+              disabled={currentSlideIndex <= 0}
+              className="hover:text-white disabled:opacity-20 cursor-pointer"
+              title="이전 슬라이드 (←)"
+            >
+              <ChevronLeft size={16} />
+            </button>
+
+            <span className="font-mono text-orange-400 font-bold px-1">
               {currentSlideIndex + 1} / {totalSlides}
             </span>
+
+            <button
+              type="button"
+              onClick={() => setCurrentSlideIndex((prev) => Math.min(totalSlides - 1, prev + 1))}
+              disabled={currentSlideIndex >= totalSlides - 1}
+              className="hover:text-white disabled:opacity-20 cursor-pointer"
+              title="다음 슬라이드 (→)"
+            >
+              <ChevronRight size={16} />
+            </button>
+
             <span className="text-slate-600">|</span>
+
+            {/* 화면 맞춤 / 전체 펼침 전환 */}
+            <button
+              type="button"
+              onClick={() => setFitMode((prev) => (prev === 'fit' ? 'expand' : 'fit'))}
+              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] cursor-pointer"
+              title="화면 맞춤 / 내용 전체 펼침 전환"
+            >
+              {fitMode === 'fit' ? '🔍 화면 맞춤' : '📜 전체 펼침'}
+            </button>
+
+            {/* 배경 테마 토글 */}
+            <button
+              type="button"
+              onClick={() => setIsDarkMode((prev) => !prev)}
+              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] cursor-pointer"
+              title="배경 테마 전환"
+            >
+              {isDarkMode ? '다크' : '화이트'}
+            </button>
+
+            <span className="text-slate-600">|</span>
+
             <button
               type="button"
               onClick={() => setIsSlideShow(false)}
@@ -349,7 +416,7 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
 
           {/* 중앙 슬라이드 스테이지 */}
           <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden relative">
-            {/* 상단 뷰어 옵션 바 (사이드바 토글 및 배경색 토글) */}
+            {/* 상단 뷰어 옵션 바 (사이드바 토글, 화면 맞춤 토글, 배경색 토글) */}
             {!isSlideShow && (
               <div className="px-3 py-1.5 bg-slate-900/60 border-b border-slate-800/80 flex items-center justify-between text-xs text-slate-400 shrink-0">
                 <button
@@ -363,6 +430,20 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                 </button>
 
                 <div className="flex items-center gap-2">
+                  {/* 화면 맞춤 vs 전체 펼침 토글 */}
+                  <button
+                    type="button"
+                    onClick={() => setFitMode((prev) => (prev === 'fit' ? 'expand' : 'fit'))}
+                    className={`px-2 py-0.5 rounded text-[11px] border cursor-pointer transition-colors ${
+                      fitMode === 'fit'
+                        ? 'bg-orange-600/20 text-orange-300 border-orange-500/40 font-semibold'
+                        : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-750'
+                    }`}
+                    title="한 화면에 슬라이드 전체 맞춤 / 내용 전체 펼침 전환"
+                  >
+                    {fitMode === 'fit' ? '🔍 한 화면 맞춤 (Fit)' : '📜 전체 내용 펼침 (Expand)'}
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setIsDarkMode((prev) => !prev)}
@@ -376,82 +457,141 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
               </div>
             )}
 
-            {/* 슬라이드 렌더링 영역 */}
-            <div className="flex-1 flex items-center justify-center p-3 sm:p-6 overflow-auto">
+            {/* 슬라이드 렌더링 영역 (전체 페이지가 한눈에 보이도록 자동 조절) */}
+            <div className="flex-1 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
               {currentSlide ? (
                 <div
-                  className={`w-full max-w-5xl aspect-video rounded-2xl shadow-2xl overflow-hidden flex flex-col border transition-all relative ${
+                  style={
+                    fitMode === 'fit'
+                      ? {
+                          aspectRatio: '16/9',
+                          maxHeight: isSlideShow ? '94vh' : '78vh',
+                          maxWidth: isSlideShow
+                            ? 'min(98vw, calc(94vh * 16 / 9))'
+                            : 'min(95vw, calc(78vh * 16 / 9))',
+                          width: '100%',
+                        }
+                      : {
+                          width: '100%',
+                          maxWidth: isSlideShow ? 'min(98vw, 1280px)' : '1080px',
+                          minHeight: 'min(520px, 70vh)',
+                          height: 'auto',
+                        }
+                  }
+                  className={`rounded-2xl shadow-2xl flex flex-col border transition-all relative ${
+                    fitMode === 'fit' ? 'overflow-hidden' : 'overflow-visible'
+                  } ${
                     isDarkMode
                       ? 'bg-slate-900 border-slate-750 text-slate-100'
                       : 'bg-white border-slate-200 text-slate-900 shadow-slate-950/40'
                   }`}
                 >
                   {/* 슬라이드 상단 액센트 바 */}
-                  <div className="h-2 bg-gradient-to-r from-orange-500 via-amber-500 to-indigo-600 shrink-0" />
+                  <div className="h-1.5 sm:h-2 bg-gradient-to-r from-orange-500 via-amber-500 to-indigo-600 shrink-0" />
 
-                  {/* 슬라이드 내부 콘텐츠 */}
-                  <div className="flex-1 p-6 sm:p-10 flex flex-col overflow-y-auto">
-                    {/* 슬라이드 제목 */}
-                    <div className="mb-6 pb-3 border-b border-orange-500/30 flex items-center justify-between">
-                      <h1 className={`text-xl sm:text-2xl md:text-3xl font-extrabold tracking-tight ${
-                        isDarkMode ? 'text-white' : 'text-slate-900'
-                      }`}>
-                        {currentSlide.title}
-                      </h1>
-                      <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${
-                        isDarkMode ? 'bg-slate-800 text-orange-400' : 'bg-orange-100 text-orange-700'
-                      }`}>
-                        {currentSlide.slideNumber}
-                      </span>
-                    </div>
+                  {/* 슬라이드 내부 콘텐츠: 내용 밀도에 따른 스마트 여백 & 크기 자동 조절 */}
+                  <div
+                    className={`flex-1 flex flex-col justify-between ${
+                      fitMode === 'fit' ? 'overflow-hidden' : 'overflow-visible'
+                    } ${
+                      isVeryDense
+                        ? 'p-3 sm:p-4 md:p-5'
+                        : isDense
+                        ? 'p-4 sm:p-5 md:p-7'
+                        : 'p-6 sm:p-8 md:p-10'
+                    }`}
+                  >
+                    <div>
+                      {/* 슬라이드 제목 */}
+                      <div
+                        className={`border-b border-orange-500/30 flex items-center justify-between ${
+                          isVeryDense ? 'mb-2 pb-1.5' : isDense ? 'mb-2.5 pb-2' : 'mb-4 pb-2.5'
+                        }`}
+                      >
+                        <h1
+                          className={`font-extrabold tracking-tight truncate ${
+                            isVeryDense
+                              ? 'text-base sm:text-lg md:text-xl'
+                              : isDense
+                              ? 'text-lg sm:text-xl md:text-2xl'
+                              : 'text-xl sm:text-2xl md:text-3xl'
+                          } ${isDarkMode ? 'text-white' : 'text-slate-900'}`}
+                        >
+                          {currentSlide.title}
+                        </h1>
+                        <span
+                          className={`text-xs font-mono font-bold px-2 py-0.5 rounded shrink-0 ml-2 ${
+                            isDarkMode ? 'bg-slate-800 text-orange-400' : 'bg-orange-100 text-orange-700'
+                          }`}
+                        >
+                          {currentSlide.slideNumber}
+                        </span>
+                      </div>
 
-                    {/* 본문 단락 및 불릿 목록 */}
-                    <div className="space-y-3.5 flex-1">
-                      {currentSlide.paragraphs
-                        .filter((p) => !p.isTitle || p.text !== currentSlide.title)
-                        .map((p, pIdx) => {
-                          const indentClass =
-                            p.level === 1
-                              ? 'pl-6'
-                              : p.level >= 2
-                              ? 'pl-10'
-                              : 'pl-1';
+                      {/* 본문 단락 및 불릿 목록 (중복 제목 필터링 적용) */}
+                      {filteredParagraphs.length > 0 && (
+                        <div
+                          className={`${
+                            isVeryDense ? 'space-y-1' : isDense ? 'space-y-1.5' : 'space-y-2.5'
+                          }`}
+                        >
+                          {filteredParagraphs.map((p, pIdx) => {
+                            const indentClass =
+                              p.level === 1 ? 'pl-4' : p.level >= 2 ? 'pl-7' : 'pl-0.5';
 
-                          return (
-                            <div
-                              key={pIdx}
-                              className={`flex items-start gap-2.5 text-sm sm:text-base leading-relaxed ${indentClass}`}
-                            >
-                              <span className="text-orange-500 mt-1 shrink-0 text-sm select-none">
-                                {p.level === 0 ? '●' : p.level === 1 ? '○' : '▪'}
-                              </span>
-                              <p className={isDarkMode ? 'text-slate-200' : 'text-slate-800'}>
-                                {p.runs && p.runs.length > 0 ? (
-                                  p.runs.map((r, rIdx) => (
-                                    <span
-                                      key={rIdx}
-                                      className={`${r.isBold ? 'font-bold' : ''} ${r.isItalic ? 'italic' : ''}`}
-                                    >
-                                      {r.text}
-                                    </span>
-                                  ))
-                                ) : (
-                                  p.text
-                                )}
-                              </p>
-                            </div>
-                          );
-                        })}
+                            return (
+                              <div
+                                key={pIdx}
+                                className={`flex items-start gap-2 leading-relaxed ${indentClass} ${
+                                  isVeryDense ? 'text-xs' : isDense ? 'text-xs sm:text-sm' : 'text-sm sm:text-base'
+                                }`}
+                              >
+                                <span className="text-orange-500 mt-0.5 shrink-0 text-xs select-none">
+                                  {p.level === 0 ? '●' : p.level === 1 ? '○' : '▪'}
+                                </span>
+                                <p className={isDarkMode ? 'text-slate-200' : 'text-slate-800'}>
+                                  {p.runs && p.runs.length > 0 ? (
+                                    p.runs.map((r, rIdx) => (
+                                      <span
+                                        key={rIdx}
+                                        className={`${r.isBold ? 'font-bold' : ''} ${r.isItalic ? 'italic' : ''}`}
+                                      >
+                                        {r.text}
+                                      </span>
+                                    ))
+                                  ) : (
+                                    p.text
+                                  )}
+                                </p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
 
-                      {/* 표(Table) 렌더링 */}
+                      {/* 표(Table) 렌더링 (전체 행이 한눈에 보이도록 패딩/폰트 밀착 최적화) */}
                       {currentSlide.tables.map((table, tIdx) => (
-                        <div key={tIdx} className="my-4 overflow-x-auto rounded-xl border border-slate-300 dark:border-slate-700">
-                          <table className="w-full text-left text-xs sm:text-sm border-collapse">
+                        <div
+                          key={tIdx}
+                          className={`overflow-x-auto rounded-xl border border-slate-300 dark:border-slate-700 ${
+                            isVeryDense ? 'my-1.5' : isDense ? 'my-2' : 'my-3'
+                          }`}
+                        >
+                          <table className="w-full text-left border-collapse">
                             {table.headers.length > 0 && (
                               <thead className={isDarkMode ? 'bg-slate-800 text-slate-200' : 'bg-slate-100 text-slate-800'}>
                                 <tr>
                                   {table.headers.map((h, hIdx) => (
-                                    <th key={hIdx} className="px-3 py-2 border-b font-bold border-slate-300 dark:border-slate-700">
+                                    <th
+                                      key={hIdx}
+                                      className={`border-b font-bold border-slate-300 dark:border-slate-700 ${
+                                        isVeryDense
+                                          ? 'px-2 py-1 text-[11px] sm:text-xs'
+                                          : isDense
+                                          ? 'px-2.5 py-1.5 text-xs'
+                                          : 'px-3 py-2 text-xs sm:text-sm'
+                                      }`}
+                                    >
                                       {h}
                                     </th>
                                   ))}
@@ -460,9 +600,29 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                             )}
                             <tbody>
                               {table.rows.map((row, rIdx) => (
-                                <tr key={rIdx} className={rIdx % 2 === 0 ? (isDarkMode ? 'bg-slate-900/50' : 'bg-white') : (isDarkMode ? 'bg-slate-850' : 'bg-slate-50')}>
+                                <tr
+                                  key={rIdx}
+                                  className={
+                                    rIdx % 2 === 0
+                                      ? isDarkMode
+                                        ? 'bg-slate-900/50'
+                                        : 'bg-white'
+                                      : isDarkMode
+                                      ? 'bg-slate-850'
+                                      : 'bg-slate-50'
+                                  }
+                                >
                                   {row.map((cell, cIdx) => (
-                                    <td key={cIdx} className="px-3 py-2 border-b border-slate-200 dark:border-slate-800 text-xs sm:text-sm">
+                                    <td
+                                      key={cIdx}
+                                      className={`border-b border-slate-200 dark:border-slate-800 leading-snug ${
+                                        isVeryDense
+                                          ? 'px-2 py-0.5 sm:py-1 text-[10px] sm:text-[11px]'
+                                          : isDense
+                                          ? 'px-2.5 py-1 text-xs'
+                                          : 'px-3 py-1.5 sm:py-2 text-xs sm:text-sm'
+                                      }`}
+                                    >
                                       {cell}
                                     </td>
                                   ))}
@@ -475,22 +635,22 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
 
                       {/* 슬라이드 내 이미지들 */}
                       {currentSlide.images.length > 0 && (
-                        <div className="mt-4 flex flex-wrap gap-3 items-center justify-center">
+                        <div className="mt-2 flex flex-wrap gap-2 items-center justify-center">
                           {currentSlide.images.map((img) => (
                             <img
                               key={img.id}
                               src={img.dataUrl}
                               alt="Slide element"
-                              className="max-h-48 sm:max-h-60 rounded-xl border border-slate-300 dark:border-slate-750 shadow-md object-contain"
+                              className="max-h-28 sm:max-h-36 rounded-lg border border-slate-300 dark:border-slate-750 shadow-xs object-contain"
                             />
                           ))}
                         </div>
                       )}
                     </div>
 
-                    {/* 하단 슬라이드 워터마크 */}
-                    <div className="mt-auto pt-4 flex items-center justify-between text-[11px] text-slate-400 select-none">
-                      <span className="truncate">{presentation?.title}</span>
+                    {/* 하단 슬라이드 워터마크 및 푸터 */}
+                    <div className="pt-2 mt-auto flex items-center justify-between text-[10px] text-slate-400 select-none">
+                      <span className="truncate max-w-[70%]">{presentation?.title}</span>
                       <span className="font-mono">Slide {currentSlide.slideNumber}</span>
                     </div>
                   </div>
