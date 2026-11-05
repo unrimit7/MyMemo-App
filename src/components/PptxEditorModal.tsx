@@ -14,7 +14,8 @@ import {
   Eye,
   Type,
   ImageIcon,
-  Maximize2
+  Maximize2,
+  Table as TableIcon,
 } from 'lucide-react';
 import {
   parsePptxPresentation,
@@ -31,11 +32,17 @@ interface PptxEditorModalProps {
   onSave?: (updatedDataUrl: string) => Promise<void> | void;
 }
 
+export interface EditableTableData {
+  id: string;
+  rows: string[][];
+}
+
 interface EditableSlide {
   slideNumber: number;
   title: string;
   bodyText: string;
   images: { id: string; dataUrl: string }[];
+  tables: EditableTableData[];
 }
 
 export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
@@ -70,17 +77,32 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
 
         const editableList: EditableSlide[] = pres.slides.map((s) => {
           const bodyLines = s.paragraphs
-            .filter((p) => !p.isTitle || p.text !== s.title)
+            .filter((p) => !p.isTitle && p.text !== s.title)
             .map((p) => {
               const indent = '  '.repeat(Math.max(0, p.level));
               return `${indent}• ${p.text}`;
             });
+
+          // 슬라이드 내 표(Table) 목록 추출
+          const slideTables: EditableTableData[] = [];
+          for (const el of s.elements) {
+            if (el.type === 'table') {
+              const tableRows = el.rows.map((row) =>
+                row.cells.map((cell) => cell.text)
+              );
+              slideTables.push({
+                id: el.id,
+                rows: tableRows,
+              });
+            }
+          }
 
           return {
             slideNumber: s.slideNumber,
             title: s.title,
             bodyText: bodyLines.join('\n'),
             images: s.images.map((img) => ({ id: img.id, dataUrl: img.dataUrl })),
+            tables: slideTables,
           };
         });
 
@@ -127,6 +149,32 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
     setHasChanges(true);
   };
 
+  // 활성 슬라이드 표 셀 내용 수정
+  const handleUpdateTableCell = (
+    tableIdx: number,
+    rowIndex: number,
+    colIndex: number,
+    newText: string
+  ) => {
+    setSlides((prev) => {
+      const copy = [...prev];
+      const current = { ...copy[activeSlideIndex] };
+      current.tables = current.tables.map((tbl, tIdx) => {
+        if (tIdx !== tableIdx) return tbl;
+        const newRows = tbl.rows.map((r, rIdx) => {
+          if (rIdx !== rowIndex) return [...r];
+          const newCells = [...r];
+          newCells[colIndex] = newText;
+          return newCells;
+        });
+        return { ...tbl, rows: newRows };
+      });
+      copy[activeSlideIndex] = current;
+      return copy;
+    });
+    setHasChanges(true);
+  };
+
   // 새 슬라이드 추가
   const handleAddSlide = () => {
     const nextNum = slides.length + 1;
@@ -135,6 +183,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
       title: `새 슬라이드 ${nextNum}`,
       bodyText: '• 새로운 내용을 입력하세요\n• 부가 설명을 입력하세요',
       images: [],
+      tables: [],
     };
     setSlides((prev) => [...prev, newSlide]);
     setActiveSlideIndex(slides.length);
@@ -199,6 +248,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
           slideNumber: s.slideNumber,
           title: s.title,
           bodyText: s.bodyText,
+          tables: s.tables.map((t) => ({ rows: t.rows })),
         }))
       );
 
@@ -226,6 +276,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
           slideNumber: s.slideNumber,
           title: s.title,
           bodyText: s.bodyText,
+          tables: s.tables.map((t) => ({ rows: t.rows })),
         }))
       );
 
@@ -471,17 +522,17 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
                     <label className="block text-xs font-semibold text-slate-300 mb-1.5">
                       슬라이드 제목
                     </label>
-                    <input
-                      type="text"
+                    <textarea
+                      rows={2}
                       value={currentSlide.title}
                       onChange={(e) => handleUpdateTitle(e.target.value)}
                       placeholder="슬라이드 제목을 입력하세요..."
-                      className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700/80 rounded-xl text-slate-100 font-bold text-base focus:outline-none focus:border-orange-500 transition-colors shadow-inner"
+                      className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700/80 rounded-xl text-slate-100 font-bold text-sm sm:text-base leading-snug resize-y focus:outline-none focus:border-orange-500 transition-colors shadow-inner"
                     />
                   </div>
 
                   {/* 본문 단락 / 불릿 입력 */}
-                  <div className="flex-1 flex flex-col">
+                  <div className="flex-1 flex flex-col mb-4">
                     <div className="flex items-center justify-between mb-1.5">
                       <label className="block text-xs font-semibold text-slate-300">
                         본문 내용 (줄 단위 글머리 기호)
@@ -494,9 +545,76 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
                       value={currentSlide.bodyText}
                       onChange={(e) => handleUpdateBody(e.target.value)}
                       placeholder="• 첫 번째 항목&#10;• 두 번째 항목..."
-                      className="w-full flex-1 min-h-[180px] p-3.5 bg-slate-900 border border-slate-700/80 rounded-xl text-slate-100 font-sans text-sm leading-6 resize-none focus:outline-none focus:border-orange-500 transition-colors shadow-inner"
+                      className="w-full min-h-[120px] p-3.5 bg-slate-900 border border-slate-700/80 rounded-xl text-slate-100 font-sans text-sm leading-6 resize-y focus:outline-none focus:border-orange-500 transition-colors shadow-inner"
                     />
                   </div>
+
+                  {/* 슬라이드 표(Table) 편집 섹션 */}
+                  {currentSlide.tables.length > 0 && (
+                    <div className="mt-2 pt-4 border-t border-slate-800">
+                      <div className="flex items-center justify-between mb-2.5">
+                        <label className="flex items-center gap-1.5 text-xs font-bold text-orange-400 uppercase tracking-wider">
+                          <TableIcon size={14} />
+                          <span>슬라이드 표 내용 직접 수정 ({currentSlide.tables.length}개 표)</span>
+                        </label>
+                        <span className="text-[11px] text-slate-400">
+                          셀 내용을 입력하면 실시간으로 미리보기 및 파일에 반영됩니다
+                        </span>
+                      </div>
+
+                      <div className="space-y-4">
+                        {currentSlide.tables.map((tbl, tblIdx) => (
+                          <div
+                            key={tbl.id || tblIdx}
+                            className="rounded-xl border border-slate-700/80 bg-slate-900/90 overflow-hidden shadow-inner"
+                          >
+                            <div className="px-3 py-1.5 bg-slate-800/80 border-b border-slate-700/60 flex items-center justify-between text-xs text-slate-300">
+                              <span className="font-semibold text-orange-300">
+                                표 #{tblIdx + 1} ({tbl.rows.length}행 × {tbl.rows[0]?.length || 0}열)
+                              </span>
+                              <span className="text-[10px] text-emerald-400 font-medium">
+                                편집 가능
+                              </span>
+                            </div>
+
+                            <div className="max-h-72 overflow-auto p-2">
+                              <table className="w-full text-xs border-collapse border border-slate-700">
+                                <tbody>
+                                  {tbl.rows.map((row, rIdx) => (
+                                    <tr
+                                      key={rIdx}
+                                      className={
+                                        rIdx === 0
+                                          ? 'bg-slate-800/90 font-bold text-slate-100'
+                                          : 'hover:bg-slate-850/60'
+                                      }
+                                    >
+                                      {row.map((cellText, cIdx) => (
+                                        <td
+                                          key={cIdx}
+                                          className="border border-slate-700/80 p-1 min-w-[100px]"
+                                        >
+                                          <input
+                                            type="text"
+                                            value={cellText}
+                                            onChange={(e) =>
+                                              handleUpdateTableCell(tblIdx, rIdx, cIdx, e.target.value)
+                                            }
+                                            className="w-full px-2 py-1 bg-slate-950/60 border border-slate-700/50 rounded text-slate-100 text-xs focus:outline-none focus:border-orange-500 focus:bg-slate-900 transition-colors"
+                                            placeholder={`(${rIdx + 1}, ${cIdx + 1})`}
+                                          />
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* 포함된 이미지 확인 및 관리 섹션 */}
                   {currentSlide.images.length > 0 && (
@@ -570,24 +688,66 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
                   {/* 16:9 슬라이드 카드 */}
                   <div className="w-full max-w-xl aspect-video bg-white text-slate-900 rounded-2xl shadow-2xl overflow-hidden flex flex-col border border-slate-200">
                     <div className="h-2 bg-gradient-to-r from-orange-500 via-amber-500 to-indigo-600 shrink-0" />
-                    <div className="flex-1 p-5 sm:p-6 flex flex-col justify-between overflow-hidden">
+                    <div className="flex-1 p-5 sm:p-6 flex flex-col justify-between overflow-y-auto">
                       <div>
-                        <h1 className="text-base sm:text-lg font-extrabold text-slate-900 pb-2 mb-2.5 border-b border-orange-500/30">
+                        <h1 className="text-base sm:text-lg font-extrabold text-slate-900 pb-2 mb-2.5 border-b border-orange-500/30 whitespace-pre-wrap leading-tight">
                           {currentSlide.title || '(제목 없음)'}
                         </h1>
 
-                        <div className="space-y-1.5">
-                          {currentSlide.bodyText
-                            .split('\n')
-                            .filter((l) => l.trim().length > 0)
-                            .map((line, lIdx) => (
-                              <div key={lIdx} className="flex items-start gap-2 text-xs leading-relaxed text-slate-800">
-                                <span className="text-orange-500 font-bold select-none">•</span>
-                                <span>{line.replace(/^[-*•]\s*/, '')}</span>
+                        {/* 본문 텍스트 (글머리 기호) */}
+                        {currentSlide.bodyText.trim().length > 0 && (
+                          <div className="space-y-1.5 mb-3">
+                            {currentSlide.bodyText
+                              .split('\n')
+                              .filter((l) => l.trim().length > 0)
+                              .map((line, lIdx) => (
+                                <div key={lIdx} className="flex items-start gap-2 text-xs leading-relaxed text-slate-800">
+                                  <span className="text-orange-500 font-bold select-none">•</span>
+                                  <span className="whitespace-pre-wrap">{line.replace(/^[-*•]\s*/, '')}</span>
+                                </div>
+                              ))}
+                          </div>
+                        )}
+
+                        {/* 표(Table) 실시간 렌더링 */}
+                        {currentSlide.tables.length > 0 && (
+                          <div className="space-y-3 my-3">
+                            {currentSlide.tables.map((tbl, tblIdx) => (
+                              <div
+                                key={tbl.id || tblIdx}
+                                className="overflow-x-auto rounded-lg border border-slate-300 shadow-xs max-h-60 overflow-y-auto"
+                              >
+                                <table className="w-full text-[10px] sm:text-xs border-collapse">
+                                  <tbody>
+                                    {tbl.rows.map((row, rIdx) => (
+                                      <tr
+                                        key={rIdx}
+                                        className={
+                                          rIdx === 0
+                                            ? 'bg-slate-100 font-bold text-slate-900 sticky top-0 z-10 shadow-xs'
+                                            : rIdx % 2 === 1
+                                            ? 'bg-white text-slate-800'
+                                            : 'bg-slate-50/70 text-slate-800'
+                                        }
+                                      >
+                                        {row.map((cellText, cIdx) => (
+                                          <td
+                                            key={cIdx}
+                                            className="border border-slate-300 px-2 py-1 whitespace-pre-wrap align-top"
+                                          >
+                                            {cellText || <span className="text-slate-300 italic">-</span>}
+                                          </td>
+                                        ))}
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
                               </div>
                             ))}
-                        </div>
+                          </div>
+                        )}
 
+                        {/* 슬라이드 이미지 목록 */}
                         {currentSlide.images.length > 0 && (
                           <div className="mt-3 flex flex-wrap gap-2.5 items-center justify-center">
                             {currentSlide.images.map((img, imgIdx) => (

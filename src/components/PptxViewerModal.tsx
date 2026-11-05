@@ -234,10 +234,34 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
         >
           {el.paragraphs.map((p, pIdx) => {
             const textAlign: any = p.align || 'left';
+            const isBlank = !p.text || !p.text.trim();
+            const indentPx =
+              p.level > 0
+                ? p.level * 16
+                : p.marL && p.marL > 0 && (!p.indent || p.indent >= 0)
+                ? Math.min(48, Math.round(p.marL / 12700))
+                : undefined;
+
+            if (isBlank) {
+              return (
+                <div
+                  key={pIdx}
+                  style={{ minHeight: '1.2em', whiteSpace: 'pre-wrap' }}
+                  className="leading-snug select-none"
+                >
+                  &nbsp;
+                </div>
+              );
+            }
+
             return (
               <div
                 key={pIdx}
-                style={{ textAlign, whiteSpace: 'pre-line' }}
+                style={{
+                  textAlign,
+                  whiteSpace: 'pre-wrap',
+                  paddingLeft: indentPx ? `${indentPx}px` : undefined,
+                }}
                 className={`leading-snug ${el.isTitle ? 'font-extrabold' : ''}`}
               >
                 {p.runs.map((r, rIdx) => {
@@ -317,37 +341,60 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                       }}
                       className="leading-snug overflow-hidden select-text"
                     >
-                      {cell.paragraphs.map((p, pIdx) => (
-                        <div
-                          key={pIdx}
-                          style={{
-                            textAlign: p.align || 'left',
-                            whiteSpace: 'pre-line',
-                          }}
-                          className="mb-0.5 last:mb-0"
-                        >
-                          {p.runs.map((r, rIdx) => {
-                            const textColor = r.color || (isDark ? '#E2E8F0' : '#0F172A');
-                            const fontSize = r.fontSize
-                              ? `${Math.max(9, Math.min(18, r.fontSize * 0.7))}px`
-                              : '11px';
+                      {cell.paragraphs.map((p, pIdx) => {
+                        const isBlank = !p.text || !p.text.trim();
+                        const indentPx =
+                          p.level > 0
+                            ? p.level * 16
+                            : p.marL && p.marL > 0 && (!p.indent || p.indent >= 0)
+                            ? Math.min(48, Math.round(p.marL / 12700))
+                            : undefined;
 
-                            return (
-                              <span
-                                key={rIdx}
-                                style={{
-                                  color: textColor,
-                                  fontSize,
-                                  fontWeight: r.isBold ? 'bold' : 'normal',
-                                  fontStyle: r.isItalic ? 'italic' : 'normal',
-                                }}
-                              >
-                                {r.text}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      ))}
+                        if (isBlank) {
+                          return (
+                            <div
+                              key={pIdx}
+                              style={{ minHeight: '1.1em', whiteSpace: 'pre-wrap' }}
+                              className="mb-0.5 last:mb-0 select-none"
+                            >
+                              &nbsp;
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div
+                            key={pIdx}
+                            style={{
+                              textAlign: p.align || 'left',
+                              whiteSpace: 'pre-wrap',
+                              paddingLeft: indentPx ? `${indentPx}px` : undefined,
+                            }}
+                            className="mb-0.5 last:mb-0"
+                          >
+                            {p.runs.map((r, rIdx) => {
+                              const textColor = r.color || (isDark ? '#E2E8F0' : '#0F172A');
+                              const fontSize = r.fontSize
+                                ? `${Math.max(9, Math.min(18, r.fontSize * 0.7))}px`
+                                : '11px';
+
+                              return (
+                                <span
+                                  key={rIdx}
+                                  style={{
+                                    color: textColor,
+                                    fontSize,
+                                    fontWeight: r.isBold ? 'bold' : 'normal',
+                                    fontStyle: r.isItalic ? 'italic' : 'normal',
+                                  }}
+                                >
+                                  {r.text}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
                     </td>
                   ))}
                 </tr>

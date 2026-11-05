@@ -17,6 +17,9 @@ export interface PptxParagraph {
   align?: 'left' | 'center' | 'right' | 'justify';
   isTitle?: boolean;
   bulletChar?: string;
+  marL?: number; // 왼쪽 여백 (EMU)
+  indent?: number; // 첫 줄 들여쓰기 (EMU)
+  isBlank?: boolean;
 }
 
 export interface PptxTableCell {
@@ -308,12 +311,20 @@ function parseElementCoordinates(
 function parseParagraph(p: Element, defaultAlign?: 'left' | 'center' | 'right' | 'justify'): PptxParagraph {
   let level = 0;
   let align: 'left' | 'center' | 'right' | 'justify' = defaultAlign || 'left';
+  let marL: number | undefined;
+  let indent: number | undefined;
 
   const pPrList = getDirectChildrenByLocalName(p, 'pPr');
   let bulletPrefix = '';
   if (pPrList.length > 0) {
     const lvlAttr = pPrList[0].getAttribute('lvl');
     if (lvlAttr) level = parseInt(lvlAttr, 10);
+
+    const marLAttr = pPrList[0].getAttribute('marL');
+    if (marLAttr) marL = parseInt(marLAttr, 10);
+
+    const indentAttr = pPrList[0].getAttribute('indent');
+    if (indentAttr) indent = parseInt(indentAttr, 10);
 
     const algnAttr = pPrList[0].getAttribute('algn');
     if (algnAttr === 'ctr') align = 'center';
@@ -402,9 +413,12 @@ function parseParagraph(p: Element, defaultAlign?: 'left' | 'center' | 'right' |
 
   return {
     text: paragraphFullText,
-    runs,
+    runs: runs.length > 0 ? runs : [{ text: paragraphFullText }],
     level,
     align,
+    marL,
+    indent,
+    isBlank: !paragraphFullText.trim(),
   };
 }
 
@@ -965,6 +979,11 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
             defaultAlign = inherited.align;
           }
         }
+        // 명시적 ph 태그가 없더라도, 슬라이드 상단에 위치한 첫 대형 텍스트 상자면 제목으로 인식
+        if (!isTitle && !slideTitle && coords.top <= 16 && coords.width >= 35) {
+          isTitle = true;
+        }
+
         // 표지 슬라이드(1페이지)의 텍스트는 기본적으로 중앙 정렬
         if (idx === 0) {
           defaultAlign = defaultAlign || 'center';
@@ -974,18 +993,37 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
         const paragraphs: PptxParagraph[] = [];
         if (txBodyList.length > 0) {
           const pElements = getDirectChildrenByLocalName(txBodyList[0], 'p');
+          const titleParts: string[] = [];
+
           for (const p of pElements) {
             const parsedP = parseParagraph(p, defaultAlign);
             if (parsedP.text.trim()) {
-              if (isTitle && !slideTitle) {
-                slideTitle = parsedP.text.trim();
-                if (idx === 0 && !presentationTitle) {
-                  presentationTitle = slideTitle;
-                }
+              if (isTitle) {
+                parsedP.isTitle = true;
+                titleParts.push(parsedP.text.trim());
+              } else {
+                legacyParagraphs.push(parsedP);
               }
               paragraphs.push(parsedP);
-              legacyParagraphs.push(parsedP);
+            } else {
+              // 빈 단락도 줄바꿈/간격 유지를 위해 보존
+              paragraphs.push(parsedP);
             }
+          }
+
+          if (isTitle && titleParts.length > 0 && !slideTitle) {
+            slideTitle = titleParts.join(' ');
+            if (idx === 0 && !presentationTitle) {
+              presentationTitle = slideTitle;
+            }
+          }
+
+          // 양 끝(앞뒤)의 불필요한 빈 단락만 정리 (중간 빈 줄은 보존)
+          while (paragraphs.length > 0 && !paragraphs[0].text.trim()) {
+            paragraphs.shift();
+          }
+          while (paragraphs.length > 0 && !paragraphs[paragraphs.length - 1].text.trim()) {
+            paragraphs.pop();
           }
         }
 
@@ -1067,15 +1105,21 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
 
               const paragraphs: PptxParagraph[] = [];
               const pElements = getElementsByLocalName(tc, 'p');
-              let cellText = '';
 
               for (const p of pElements) {
                 const parsedP = parseParagraph(p);
-                if (parsedP.text.trim()) {
-                  paragraphs.push(parsedP);
-                  cellText += (cellText ? '\n' : '') + parsedP.text;
-                }
+                paragraphs.push(parsedP);
               }
+
+              // 셀 앞뒤의 불필요한 빈 단락 정리 (중간 빈 줄은 보존)
+              while (paragraphs.length > 0 && !paragraphs[0].text.trim()) {
+                paragraphs.shift();
+              }
+              while (paragraphs.length > 0 && !paragraphs[paragraphs.length - 1].text.trim()) {
+                paragraphs.pop();
+              }
+
+              const cellText = paragraphs.map((p) => p.text).join('\n');
 
               cells.push({
                 text: cellText,
@@ -1273,10 +1317,17 @@ export async function extractPptxTextAndMarkdown(dataUrl: string): Promise<{ tit
   };
 }
 
-// 슬라이드 텍스트 수정 후 새로운 PPTX Data URL 생성
+export interface UpdatedSlideContent {
+  slideNumber: number;
+  title: string;
+  bodyText: string;
+  tables?: { rows: string[][] }[];
+}
+
+// 슬라이드 텍스트 및 표 내용 수정 후 새로운 PPTX Data URL 생성
 export async function updatePptxSlideTexts(
   originalDataUrl: string,
-  updatedSlides: { slideNumber: number; title: string; bodyText: string }[]
+  updatedSlides: UpdatedSlideContent[]
 ): Promise<string> {
   const binary = dataUrlToBinary(originalDataUrl);
   const bytes = binaryToUint8Array(binary);
@@ -1290,40 +1341,81 @@ export async function updatePptxSlideTexts(
     const xmlText = await sFile.async('text');
     const doc = parseXml(xmlText);
 
-    const paragraphs = getElementsByLocalName(doc, 'p');
-    if (paragraphs.length > 0) {
-      const firstP = paragraphs[0];
-      const tElements = getElementsByLocalName(firstP, 't');
+    // 1. 슬라이드 내 제목 도형 찾기
+    const spList = getElementsByLocalName(doc, 'sp');
+    let titleSp: Element | null = null;
+    for (const sp of spList) {
+      const phList = getElementsByLocalName(sp, 'ph');
+      if (phList.length > 0) {
+        const phType = phList[0].getAttribute('type');
+        if (phType === 'title' || phType === 'ctrTitle') {
+          titleSp = sp;
+          break;
+        }
+      }
+    }
+    if (!titleSp && spList.length > 0) {
+      titleSp = spList[0];
+    }
+
+    // 제목 업데이트
+    if (titleSp) {
+      const tElements = getElementsByLocalName(titleSp, 't');
       if (tElements.length > 0) {
         tElements[0].textContent = upd.title;
         for (let i = 1; i < tElements.length; i++) {
           tElements[i].textContent = '';
         }
       }
+    }
 
-      const bodyLines = upd.bodyText
-        .split('\n')
-        .map((l) => l.trim().replace(/^[-*•]\s*/, ''))
-        .filter(Boolean);
+    // 2. 본문 도형 텍스트 업데이트
+    const otherSpList = spList.filter((sp) => sp !== titleSp);
+    const bodyLines = upd.bodyText
+      .split('\n')
+      .map((l) => l.trim().replace(/^[-*•]\s*/, ''))
+      .filter(Boolean);
 
-      if (bodyLines.length > 0) {
-        for (let i = 0; i < bodyLines.length; i++) {
-          const targetPIndex = i + 1;
-          if (targetPIndex < paragraphs.length) {
-            const p = paragraphs[targetPIndex];
-            const pTs = getElementsByLocalName(p, 't');
-            if (pTs.length > 0) {
-              pTs[0].textContent = bodyLines[i];
-              for (let k = 1; k < pTs.length; k++) pTs[k].textContent = '';
-            }
-          } else {
-            const lastP = paragraphs[paragraphs.length - 1];
-            const cloneP = lastP.cloneNode(true) as Element;
-            const cloneTs = getElementsByLocalName(cloneP, 't');
-            if (cloneTs.length > 0) {
-              cloneTs[0].textContent = bodyLines[i];
-              for (let k = 1; k < cloneTs.length; k++) cloneTs[k].textContent = '';
-              lastP.parentNode?.appendChild(cloneP);
+    if (otherSpList.length > 0 && bodyLines.length > 0) {
+      const bodySp = otherSpList[0];
+      const pElements = getElementsByLocalName(bodySp, 'p');
+      for (let i = 0; i < bodyLines.length; i++) {
+        if (i < pElements.length) {
+          const p = pElements[i];
+          const pTs = getElementsByLocalName(p, 't');
+          if (pTs.length > 0) {
+            pTs[0].textContent = bodyLines[i];
+            for (let k = 1; k < pTs.length; k++) pTs[k].textContent = '';
+          }
+        }
+      }
+    }
+
+    // 3. 표(Table) 셀 데이터 업데이트
+    if (upd.tables && upd.tables.length > 0) {
+      const tblList = getElementsByLocalName(doc, 'tbl');
+      for (let tblIdx = 0; tblIdx < upd.tables.length; tblIdx++) {
+        if (tblIdx >= tblList.length) break;
+        const tbl = tblList[tblIdx];
+        const trList = getElementsByLocalName(tbl, 'tr');
+        const updatedRows = upd.tables[tblIdx].rows;
+
+        for (let rIdx = 0; rIdx < updatedRows.length; rIdx++) {
+          if (rIdx >= trList.length) break;
+          const tr = trList[rIdx];
+          const tcList = getElementsByLocalName(tr, 'tc');
+          const updatedCells = updatedRows[rIdx];
+
+          for (let cIdx = 0; cIdx < updatedCells.length; cIdx++) {
+            if (cIdx >= tcList.length) break;
+            const tc = tcList[cIdx];
+            const newText = updatedCells[cIdx];
+            const tcTs = getElementsByLocalName(tc, 't');
+            if (tcTs.length > 0) {
+              tcTs[0].textContent = newText;
+              for (let k = 1; k < tcTs.length; k++) {
+                tcTs[k].textContent = '';
+              }
             }
           }
         }
