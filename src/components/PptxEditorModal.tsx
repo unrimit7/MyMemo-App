@@ -12,7 +12,9 @@ import {
   ArrowUp,
   ArrowDown,
   Eye,
-  Type
+  Type,
+  ImageIcon,
+  Maximize2
 } from 'lucide-react';
 import {
   parsePptxPresentation,
@@ -52,6 +54,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
   const [saveToast, setSaveToast] = useState<string | null>(null);
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'split' | 'editOnly' | 'previewOnly'>('split');
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
   // 원본 PPTX 파싱 및 편집용 슬라이드 상태 초기화
   useEffect(() => {
@@ -183,7 +186,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
     setHasChanges(true);
   };
 
-  // 저장 및 메모 반영
+  // 저장 및 메모 반영 (기존 이미지와 레이아웃은 100% 무손실 보존됨)
   const handleSave = async () => {
     setIsSaving(true);
     setSaveToast(null);
@@ -438,6 +441,12 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
                     <div className="font-semibold text-xs text-slate-200 truncate">
                       {s.title || `(제목 없음)`}
                     </div>
+
+                    {s.images.length > 0 && (
+                      <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                        <ImageIcon size={10} className="text-orange-400" /> 이미지 {s.images.length}개 보존됨
+                      </span>
+                    )}
                   </div>
                 );
               })}
@@ -485,9 +494,63 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
                       value={currentSlide.bodyText}
                       onChange={(e) => handleUpdateBody(e.target.value)}
                       placeholder="• 첫 번째 항목&#10;• 두 번째 항목..."
-                      className="w-full flex-1 min-h-[220px] p-3.5 bg-slate-900 border border-slate-700/80 rounded-xl text-slate-100 font-sans text-sm leading-6 resize-none focus:outline-none focus:border-orange-500 transition-colors shadow-inner"
+                      className="w-full flex-1 min-h-[180px] p-3.5 bg-slate-900 border border-slate-700/80 rounded-xl text-slate-100 font-sans text-sm leading-6 resize-none focus:outline-none focus:border-orange-500 transition-colors shadow-inner"
                     />
                   </div>
+
+                  {/* 포함된 이미지 확인 및 관리 섹션 */}
+                  {currentSlide.images.length > 0 && (
+                    <div className="mt-4 pt-3.5 border-t border-slate-800">
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
+                          <ImageIcon size={14} className="text-orange-400" />
+                          <span>슬라이드 포함 이미지 ({currentSlide.images.length}개)</span>
+                        </label>
+                        <span className="text-[11px] text-emerald-400 font-medium flex items-center gap-1 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30">
+                          <CheckCircle size={11} />
+                          <span>저장 시 원본 무손실 안전 보존</span>
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                        {currentSlide.images.map((img, imgIdx) => (
+                          <div
+                            key={img.id || imgIdx}
+                            className="relative group rounded-xl border border-slate-800 bg-slate-900 p-2 flex flex-col items-center overflow-hidden hover:border-orange-500/50 transition-colors"
+                          >
+                            <img
+                              src={img.dataUrl}
+                              alt={`Slide element ${imgIdx + 1}`}
+                              onClick={() => setLightboxImage(img.dataUrl)}
+                              className="w-full h-24 object-contain rounded-lg cursor-zoom-in group-hover:scale-105 transition-transform bg-white/5"
+                              title="클릭하여 원본 고해상도로 확대 보기"
+                            />
+                            <div className="w-full mt-2 flex items-center justify-between text-[10px] text-slate-400">
+                              <span className="font-mono">이미지 #{imgIdx + 1}</span>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setLightboxImage(img.dataUrl)}
+                                  className="p-1 hover:bg-slate-800 text-slate-400 hover:text-orange-300 rounded cursor-pointer"
+                                  title="원본 크게 보기"
+                                >
+                                  <Maximize2 size={12} />
+                                </button>
+                                <a
+                                  href={img.dataUrl}
+                                  download={`slide_${currentSlide.slideNumber}_img_${imgIdx + 1}.png`}
+                                  className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded cursor-pointer no-underline"
+                                  title="이미지 파일 다운로드"
+                                >
+                                  <Download size={12} />
+                                </a>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -499,7 +562,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
                   <div className="w-full max-w-xl flex items-center justify-between text-xs text-slate-400 mb-2">
                     <span className="flex items-center gap-1 font-semibold text-orange-400">
                       <Eye size={13} />
-                      <span>실시간 슬라이드 미리보기</span>
+                      <span>실시간 슬라이드 미리보기 (이미지 클릭 시 원본 확대)</span>
                     </span>
                     <span className="font-mono">16 : 9</span>
                   </div>
@@ -507,30 +570,34 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
                   {/* 16:9 슬라이드 카드 */}
                   <div className="w-full max-w-xl aspect-video bg-white text-slate-900 rounded-2xl shadow-2xl overflow-hidden flex flex-col border border-slate-200">
                     <div className="h-2 bg-gradient-to-r from-orange-500 via-amber-500 to-indigo-600 shrink-0" />
-                    <div className="flex-1 p-5 sm:p-6 flex flex-col overflow-y-auto">
-                      <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 pb-2 mb-3 border-b border-orange-500/30">
-                        {currentSlide.title || '(제목 없음)'}
-                      </h1>
+                    <div className="flex-1 p-5 sm:p-6 flex flex-col justify-between overflow-hidden">
+                      <div>
+                        <h1 className="text-base sm:text-lg font-extrabold text-slate-900 pb-2 mb-2.5 border-b border-orange-500/30">
+                          {currentSlide.title || '(제목 없음)'}
+                        </h1>
 
-                      <div className="space-y-2 flex-1">
-                        {currentSlide.bodyText
-                          .split('\n')
-                          .filter((l) => l.trim().length > 0)
-                          .map((line, lIdx) => (
-                            <div key={lIdx} className="flex items-start gap-2 text-xs sm:text-sm leading-relaxed text-slate-800">
-                              <span className="text-orange-500 font-bold select-none">•</span>
-                              <span>{line.replace(/^[-*•]\s*/, '')}</span>
-                            </div>
-                          ))}
+                        <div className="space-y-1.5">
+                          {currentSlide.bodyText
+                            .split('\n')
+                            .filter((l) => l.trim().length > 0)
+                            .map((line, lIdx) => (
+                              <div key={lIdx} className="flex items-start gap-2 text-xs leading-relaxed text-slate-800">
+                                <span className="text-orange-500 font-bold select-none">•</span>
+                                <span>{line.replace(/^[-*•]\s*/, '')}</span>
+                              </div>
+                            ))}
+                        </div>
 
                         {currentSlide.images.length > 0 && (
-                          <div className="mt-3 flex gap-2">
-                            {currentSlide.images.map((img) => (
+                          <div className="mt-3 flex flex-wrap gap-2.5 items-center justify-center">
+                            {currentSlide.images.map((img, imgIdx) => (
                               <img
-                                key={img.id}
+                                key={img.id || imgIdx}
                                 src={img.dataUrl}
                                 alt="Slide image"
-                                className="max-h-24 rounded border object-contain shadow-xs"
+                                onClick={() => setLightboxImage(img.dataUrl)}
+                                className="max-h-28 sm:max-h-32 rounded-lg border border-slate-300 shadow-sm object-contain cursor-zoom-in hover:scale-105 transition-transform"
+                                title="클릭하여 원본 고해상도로 확대 보기"
                               />
                             ))}
                           </div>
@@ -549,6 +616,50 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
           )}
         </div>
       </div>
+
+      {/* 고해상도 이미지 라이트박스 (클릭 시 원본 확대 모달) */}
+      {lightboxImage && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-md flex flex-col items-center justify-center p-4 select-none animate-fadeIn"
+          onClick={() => setLightboxImage(null)}
+        >
+          <div
+            className="relative max-w-5xl w-full max-h-[92vh] flex flex-col items-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-full flex items-center justify-between pb-2 text-xs text-slate-300">
+              <span className="font-semibold text-orange-400 flex items-center gap-1.5">
+                <ImageIcon size={14} />
+                <span>슬라이드 포함 이미지 원본 고해상도 확대 (글씨 선명하게 확인 가능)</span>
+              </span>
+              <div className="flex items-center gap-2">
+                <a
+                  href={lightboxImage}
+                  download={`slide_image_${Date.now()}.png`}
+                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg border border-slate-700 flex items-center gap-1 text-xs no-underline cursor-pointer"
+                  title="이미지 파일로 다운로드"
+                >
+                  <Download size={12} />
+                  <span>다운로드</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setLightboxImage(null)}
+                  className="p-1 bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-300 rounded-lg border border-slate-700 cursor-pointer"
+                  title="닫기 (Esc)"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <img
+              src={lightboxImage}
+              alt="Expanded slide element"
+              className="max-w-full max-h-[84vh] rounded-xl shadow-2xl object-contain border border-slate-700 bg-slate-900"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

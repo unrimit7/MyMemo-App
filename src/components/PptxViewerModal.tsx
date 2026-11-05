@@ -47,6 +47,7 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
   const [isSlideShow, setIsSlideShow] = useState<boolean>(false);
   const [isDarkMode, setIsDarkMode] = useState<boolean>(false);
   const [fitMode, setFitMode] = useState<'fit' | 'expand'>('fit'); // 'fit': 한 화면 맞춤, 'expand': 전체 펼치기
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -103,7 +104,10 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
         e.preventDefault();
         setIsSlideShow((prev) => !prev);
       } else if (e.key === 'Escape') {
-        if (isSlideShow) {
+        if (lightboxImage) {
+          e.preventDefault();
+          setLightboxImage(null);
+        } else if (isSlideShow) {
           e.preventDefault();
           setIsSlideShow(false);
         } else {
@@ -633,15 +637,17 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                         </div>
                       ))}
 
-                      {/* 슬라이드 내 이미지들 */}
+                      {/* 슬라이드 내 이미지들 (클릭 시 원본 고해상도 확대) */}
                       {currentSlide.images.length > 0 && (
-                        <div className="mt-2 flex flex-wrap gap-2 items-center justify-center">
-                          {currentSlide.images.map((img) => (
+                        <div className="mt-3 flex flex-wrap gap-2.5 items-center justify-center">
+                          {currentSlide.images.map((img, imgIdx) => (
                             <img
-                              key={img.id}
+                              key={img.id || imgIdx}
                               src={img.dataUrl}
                               alt="Slide element"
-                              className="max-h-28 sm:max-h-36 rounded-lg border border-slate-300 dark:border-slate-750 shadow-xs object-contain"
+                              onClick={() => setLightboxImage(img.dataUrl)}
+                              className="max-h-36 sm:max-h-48 md:max-h-56 rounded-lg border border-slate-300 dark:border-slate-750 shadow-sm object-contain cursor-zoom-in hover:scale-105 transition-transform"
+                              title="클릭하여 원본 고해상도로 확대 보기"
                             />
                           ))}
                         </div>
@@ -717,6 +723,50 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 고해상도 이미지 라이트박스 (클릭 시 원본 확대 모달) */}
+      {lightboxImage && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-md flex flex-col items-center justify-center p-4 select-none animate-fadeIn"
+          onClick={() => setLightboxImage(null)}
+        >
+          <div
+            className="relative max-w-5xl w-full max-h-[92vh] flex flex-col items-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-full flex items-center justify-between pb-2 text-xs text-slate-300">
+              <span className="font-semibold text-orange-400 flex items-center gap-1.5">
+                <ImageIcon size={14} />
+                <span>슬라이드 포함 이미지 원본 고해상도 확대 (글씨 선명하게 확인 가능)</span>
+              </span>
+              <div className="flex items-center gap-2">
+                <a
+                  href={lightboxImage}
+                  download={`slide_image_${Date.now()}.png`}
+                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-white rounded-lg border border-slate-700 flex items-center gap-1 text-xs no-underline cursor-pointer"
+                  title="이미지 파일로 다운로드"
+                >
+                  <Download size={12} />
+                  <span>다운로드</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setLightboxImage(null)}
+                  className="p-1 bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-300 rounded-lg border border-slate-700 cursor-pointer"
+                  title="닫기 (Esc)"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <img
+              src={lightboxImage}
+              alt="Expanded slide element"
+              className="max-w-full max-h-[84vh] rounded-xl shadow-2xl object-contain border border-slate-700 bg-slate-900"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
