@@ -117,6 +117,14 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
     att.type === 'application/msword' ||
     att.data?.startsWith('data:application/vnd.openxmlformats-officedocument.wordprocessingml');
 
+  const isPptx =
+    att.name.toLowerCase().endsWith('.pptx') ||
+    att.name.toLowerCase().endsWith('.ppt') ||
+    att.type?.includes('presentation') ||
+    att.type?.includes('powerpoint') ||
+    att.data?.startsWith('data:application/vnd.openxmlformats-officedocument.presentationml') ||
+    att.data?.startsWith('data:application/vnd.ms-powerpoint');
+
   const isBinary =
     att.name.toLowerCase().endsWith('.bin') ||
     att.name.toLowerCase().endsWith('.dat') ||
@@ -131,8 +139,8 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
 
   // 사용자가 마크다운 [대괄호] 안에 수정한 표시 이름이 있으면 우선 사용
   const cleanLabel = (labelText || '')
-    .replace(/^[\s📄📎🖼️📝📊💾]*/, '')
-    .replace(/^(?:PDF\s*문서:\s*|한글\s*문서:\s*|한글:\s*|엑셀\s*문서:\s*|엑셀:\s*|워드\s*문서:\s*|워드:\s*|DOCX:\s*|바이너리\s*문서:\s*|바이너리:\s*|HEX:\s*|파일:\s*)/i, '')
+    .replace(/^[\s📄📎🖼️📝📊💾🖥️]*/, '')
+    .replace(/^(?:PDF\s*문서:\s*|한글\s*문서:\s*|한글:\s*|엑셀\s*문서:\s*|엑셀:\s*|워드\s*문서:\s*|워드:\s*|DOCX:\s*|파워포인트\s*문서:\s*|파워포인트:\s*|PPTX:\s*|PPT:\s*|바이너리\s*문서:\s*|바이너리:\s*|HEX:\s*|파일:\s*)/i, '')
     .trim();
   const displayName = cleanLabel || att.name;
   const downloadName = isPdf && !displayName.toLowerCase().endsWith('.pdf')
@@ -141,8 +149,74 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
     ? `${displayName}.hwp`
     : isDocx && !displayName.toLowerCase().endsWith('.docx') && !displayName.toLowerCase().endsWith('.doc')
     ? `${displayName}.docx`
+    : isPptx && !displayName.toLowerCase().endsWith('.pptx') && !displayName.toLowerCase().endsWith('.ppt')
+    ? `${displayName}.pptx`
     : displayName;
   const targetUrl = (isPdf || isHwp) ? getAttachmentBlobUrl(att) : att.data;
+
+  if (isPptx) {
+    return `
+<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl pptx-inline-viewer" data-att-id="${att.id}" data-file-name="${displayName}">
+  <!-- 상단 헤더: 문서명, 직접 편집, 메모로 가져오기, 전면 뷰어, 다운로드 버튼 -->
+  <div class="px-3.5 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
+    <div class="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-100 min-w-0">
+      <span class="text-base md:text-lg">📊</span>
+      <span class="truncate" title="${displayName}">${displayName}</span>
+      <span class="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-300 border border-orange-500/30 font-bold shrink-0 uppercase">
+        PPTX
+      </span>
+    </div>
+
+    <div class="flex items-center gap-1.5 shrink-0">
+      <!-- 파워포인트 직접 편집 버튼 -->
+      <button type="button" class="pptx-btn-edit px-2.5 py-1 bg-orange-600/20 hover:bg-orange-600/30 text-orange-300 rounded-lg text-xs font-semibold border border-orange-500/30 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="웹에서 파워포인트 슬라이드 직접 편집">
+        <span>✏️ 직접 편집</span>
+      </button>
+
+      <!-- 본문 메모로 가져오기 버튼 -->
+      <button type="button" class="pptx-btn-import px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white rounded-lg text-xs font-semibold border border-indigo-500/40 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="파워포인트 슬라이드 내용을 마크다운으로 메모 본문에 가져오기">
+        <span>📝 메모로 가져오기</span>
+      </button>
+
+      <!-- 전면 뷰어로 크게 보기 버튼 -->
+      <button type="button" class="pptx-btn-fullscreen px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-indigo-300 rounded-lg text-xs font-semibold border border-indigo-500/30 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="전면 뷰어 및 슬라이드 쇼 열기">
+        <span>🔍 크게 보기</span>
+      </button>
+
+      <!-- 다운로드 버튼 -->
+      <a href="${att.data}" download="${downloadName}" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-slate-700 flex items-center gap-1 active:scale-95 transition-all no-underline" title="기기에 파일로 다운로드">
+        <span>⬇️ 저장</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- 본문 인라인 16:9 슬라이드 미리보기 카드 -->
+  <div class="w-full bg-slate-950 p-4 md:p-6 flex flex-col items-center justify-center pptx-container cursor-pointer hover:bg-slate-925 transition-colors" data-att-id="${att.id}" data-file-name="${displayName}" title="클릭하면 전면 뷰어로 크게 볼 수 있습니다.">
+    <div class="w-full max-w-2xl aspect-video bg-white text-slate-900 rounded-2xl shadow-xl overflow-hidden flex flex-col border border-slate-200 select-none">
+      <div class="h-2 bg-gradient-to-r from-orange-500 via-amber-500 to-indigo-600 shrink-0"></div>
+      <div class="flex-1 p-6 flex flex-col justify-between">
+        <div>
+          <div class="flex items-center justify-between text-xs text-orange-600 font-bold mb-2">
+            <span>PRESENTATION SLIDE</span>
+            <span class="bg-orange-100 px-2 py-0.5 rounded">SLIDE 1</span>
+          </div>
+          <h3 class="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight line-clamp-2">
+            ${displayName}
+          </h3>
+          <p class="text-xs sm:text-sm text-slate-500 mt-2">
+            클릭하여 전면 슬라이드 뷰어 및 슬라이드 쇼(F5)로 감상하세요.
+          </p>
+        </div>
+        <div class="pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
+          <span>Microsoft PowerPoint Presentation</span>
+          <span class="text-orange-600 font-semibold flex items-center gap-1">슬라이드 쇼 보기 ▶</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    `.trim();
+  }
 
   if (isDocx) {
     return `

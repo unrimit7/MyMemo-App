@@ -19,6 +19,9 @@ import { parseExcelWorkbook, sheetRowsToMarkdownTable, invalidateExcelCache } fr
 import { DocxViewerModal } from './DocxViewerModal';
 import { DocxEditorModal } from './DocxEditorModal';
 import { renderDocxToContainer, extractDocxTextAndHtml, invalidateDocxCache } from '../utils/docxViewer';
+import { PptxViewerModal } from './PptxViewerModal';
+import { PptxEditorModal } from './PptxEditorModal';
+import { extractPptxTextAndMarkdown, invalidatePptxCache } from '../utils/pptxViewer';
 import { HexEditorModal } from './HexEditorModal';
 import type { AttachmentItem } from '../types';
 import { 
@@ -188,6 +191,16 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     title: string;
   } | null>(null);
   const [activeDocxEditorModal, setActiveDocxEditorModal] = useState<{
+    attId: string;
+    data: string;
+    title: string;
+  } | null>(null);
+  const [activePptxModal, setActivePptxModal] = useState<{
+    attId?: string;
+    data: string;
+    title: string;
+  } | null>(null);
+  const [activePptxEditorModal, setActivePptxEditorModal] = useState<{
     attId: string;
     data: string;
     title: string;
@@ -2413,7 +2426,69 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       return;
     }
 
-    // 7-10. 바이너리/모든 첨부파일 [🔍 헥스 편집기] 또는 바이너리 뷰어 클릭 시 울트라에디트 모달 열기
+    // 7-10. 파워포인트 [✏️ 직접 편집] 클릭 시 웹 슬라이드 에디터 열기
+    const editPptxBtn = target.closest<HTMLElement>('.pptx-btn-edit');
+    if (editPptxBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = editPptxBtn.getAttribute('data-att-id');
+      const title = editPptxBtn.getAttribute('data-file-name') || '파워포인트 발표 자료';
+      if (attId && localAttachments[attId]) {
+        setActivePptxEditorModal({
+          attId,
+          data: localAttachments[attId].data,
+          title,
+        });
+      }
+      return;
+    }
+
+    // 7-11. 파워포인트 [🔍 크게 보기] 또는 슬라이드 카드 클릭 시 전면 슬라이드 뷰어/쇼 열기
+    const fullscreenPptxBtn = target.closest<HTMLElement>('.pptx-btn-fullscreen') || target.closest<HTMLElement>('.pptx-container');
+    if (fullscreenPptxBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = fullscreenPptxBtn.getAttribute('data-att-id');
+      const title = fullscreenPptxBtn.getAttribute('data-file-name') || '파워포인트 발표 자료';
+      if (attId && localAttachments[attId]) {
+        setActivePptxModal({
+          attId,
+          data: localAttachments[attId].data,
+          title,
+        });
+      }
+      return;
+    }
+
+    // 7-12. 파워포인트 [📝 메모로 가져오기] 클릭 시 마크다운으로 본문 반영
+    const importPptxBtn = target.closest<HTMLElement>('.pptx-btn-import');
+    if (importPptxBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = importPptxBtn.getAttribute('data-att-id');
+      if (attId && localAttachments[attId]) {
+        extractPptxTextAndMarkdown(localAttachments[attId].data)
+          .then(({ markdown, text }) => {
+            const contentToImport = markdown || text;
+            if (!contentToImport.trim()) {
+              alert('추출할 수 있는 슬라이드 내용이 없습니다.');
+              return;
+            }
+            const insertBlock = `\n\n${contentToImport}\n\n`;
+            const newContent = `${localContent}${insertBlock}`;
+            setLocalContent(newContent);
+            debouncedSyncToParent({ content: newContent });
+            alert(`'${localAttachments[attId].name}' 발표 자료 내용을 메모에 성공적으로 가져왔습니다!`);
+          })
+          .catch((err) => {
+            console.error('파워포인트 본문 추출 실패:', err);
+            alert('파워포인트 슬라이드 내용을 추출하지 못했습니다.');
+          });
+      }
+      return;
+    }
+
+    // 7-13. 바이너리/모든 첨부파일 [🔍 헥스 편집기] 또는 바이너리 뷰어 클릭 시 울트라에디트 모달 열기
     const hexBtn = target.closest<HTMLElement>('.hex-btn-edit') || target.closest<HTMLElement>('.binary-container');
     if (hexBtn) {
       e.preventDefault();
@@ -3646,6 +3721,65 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               setTimeout(() => {
                 renderInlineDocx.current(attId, updatedDataUrl);
               }, 120);
+            }
+          }}
+        />
+      )}
+
+      {/* 파워포인트(PPTX) 슬라이드 뷰어 및 슬라이드 쇼 모달 */}
+      {activePptxModal && (
+        <PptxViewerModal
+          isOpen={true}
+          onClose={() => setActivePptxModal(null)}
+          data={activePptxModal.data}
+          title={activePptxModal.title}
+          attId={activePptxModal.attId}
+          onOpenEditor={() => {
+            const attId = activePptxModal.attId || Object.keys(localAttachments).find(
+              (id) => localAttachments[id].data === activePptxModal.data
+            ) || '';
+            setActivePptxEditorModal({
+              attId,
+              data: activePptxModal.data,
+              title: activePptxModal.title,
+            });
+            setActivePptxModal(null);
+          }}
+          onImportMarkdown={(markdown) => {
+            const insertBlock = `\n\n${markdown}\n\n`;
+            const newContent = `${localContent}${insertBlock}`;
+            setLocalContent(newContent);
+            debouncedSyncToParent({ content: newContent });
+            alert(`'${activePptxModal.title}' 슬라이드 내용을 메모 본문에 삽입했습니다!`);
+          }}
+        />
+      )}
+
+      {/* 파워포인트(PPTX) 슬라이드 웹 직접 편집기 모달 */}
+      {activePptxEditorModal && (
+        <PptxEditorModal
+          isOpen={true}
+          onClose={() => setActivePptxEditorModal(null)}
+          data={activePptxEditorModal.data}
+          title={activePptxEditorModal.title}
+          attId={activePptxEditorModal.attId}
+          onSave={async (updatedDataUrl) => {
+            const attId = activePptxEditorModal.attId;
+            if (attId) {
+              invalidatePptxCache(attId);
+              invalidateAttachmentBlobUrl(attId);
+
+              const updatedAtts = {
+                ...localAttachmentsRef.current,
+                [attId]: {
+                  ...(localAttachmentsRef.current[attId] || {}),
+                  data: updatedDataUrl,
+                },
+              };
+              setLocalAttachments(updatedAtts);
+              localAttachmentsRef.current = updatedAtts;
+              onUpdateNote({ attachments: updatedAtts });
+              setActivePptxEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
             }
           }}
         />

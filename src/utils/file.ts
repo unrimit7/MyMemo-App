@@ -214,7 +214,44 @@ export async function processFileForNote(file: File): Promise<ProcessedDroppedFi
     });
   }
 
-  // 7. 바이너리(BIN, DAT, EXE, DLL, HEX, ISO 등) 파일
+  // 7. 파워포인트(PPTX, PPT) 프레젠테이션 파일
+  if (
+    fileName.toLowerCase().endsWith('.pptx') ||
+    fileName.toLowerCase().endsWith('.ppt') ||
+    mimeType.includes('presentation') ||
+    mimeType.includes('powerpoint')
+  ) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        const attId = `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        resolve({
+          title: `[PPT] ${safeBaseTitle}`,
+          content: `# 📊 ${safeName}\n\n[📊 파워포인트: ${safeName}](attachment:${attId})\n\n`,
+          attachments: {
+            [attId]: {
+              id: attId,
+              name: fileName,
+              type: mimeType || 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+              data: dataUrl,
+            },
+          },
+          type: 'other',
+        });
+      };
+      reader.onerror = () => {
+        resolve({
+          title: `[PPT] ${safeBaseTitle}`,
+          content: `파워포인트 파일: ${fileName}`,
+          type: 'other',
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // 8. 바이너리(BIN, DAT, EXE, DLL, HEX, ISO 등) 파일
   const lowerName = fileName.toLowerCase();
   if (
     lowerName.endsWith('.bin') ||
