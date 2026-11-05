@@ -303,15 +303,29 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                       rowSpan={cell.rowSpan}
                       style={{
                         backgroundColor:
-                          cell.fillColor || (rIdx === 0 ? (isDark ? '#1E293B' : '#F8FAFC') : 'transparent'),
+                          cell.fillColor ||
+                          (rIdx === 0
+                            ? isDark
+                              ? '#1E293B'
+                              : '#F8FAFC'
+                            : isDark
+                            ? '#0F172A'
+                            : '#FFFFFF'),
                         border: `1px solid ${isDark ? '#334155' : '#CBD5E1'}`,
-                        verticalAlign: 'top',
+                        verticalAlign: cell.verticalAlign || 'middle',
                         padding: '4px 6px',
                       }}
                       className="leading-snug overflow-hidden select-text"
                     >
                       {cell.paragraphs.map((p, pIdx) => (
-                        <div key={pIdx} className="mb-0.5 last:mb-0">
+                        <div
+                          key={pIdx}
+                          style={{
+                            textAlign: p.align || 'left',
+                            whiteSpace: 'pre-line',
+                          }}
+                          className="mb-0.5 last:mb-0"
+                        >
                           {p.runs.map((r, rIdx) => {
                             const textColor = r.color || (isDark ? '#E2E8F0' : '#0F172A');
                             const fontSize = r.fontSize

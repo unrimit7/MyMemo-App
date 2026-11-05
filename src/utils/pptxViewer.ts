@@ -26,6 +26,7 @@ export interface PptxTableCell {
   rowSpan?: number;
   fillColor?: string;
   textColor?: string;
+  verticalAlign?: 'top' | 'middle' | 'bottom';
   align?: 'left' | 'center' | 'right';
   borders?: {
     top?: boolean;
@@ -211,6 +212,10 @@ function parseDrawingColor(parent: Element): string | undefined {
       folHlink: '#7C3AED',
     };
     if (val && schemeMap[val]) {
+      const lumMod = getElementsByLocalName(scheme[0], 'lumMod');
+      if (val === 'bg1' && lumMod.length > 0) {
+        return '#F1F5F9';
+      }
       return schemeMap[val];
     }
   }
@@ -937,13 +942,32 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
             const tcElements = getElementsByLocalName(tr, 'tc');
 
             for (const tc of tcElements) {
+              // 1. 병합 검사: hMerge 및 vMerge는 이전/상단 셀에 포함되므로 렌더링에서 제외
+              const hMerge = tc.getAttribute('hMerge');
+              const vMerge = tc.getAttribute('vMerge');
+              if (hMerge === '1' || hMerge === 'true' || vMerge === '1' || vMerge === 'true') {
+                continue;
+              }
+
               const colSpan = parseInt(tc.getAttribute('gridSpan') || '1', 10);
               const rowSpan = parseInt(tc.getAttribute('rowSpan') || '1', 10);
 
               let fillColor: string | undefined;
+              let verticalAlign: 'top' | 'middle' | 'bottom' = 'middle';
+
               const tcPrList = getElementsByLocalName(tc, 'tcPr');
               if (tcPrList.length > 0) {
-                fillColor = parseDrawingColor(tcPrList[0]);
+                const tcPr = tcPrList[0];
+                const anchor = tcPr.getAttribute('anchor');
+                if (anchor === 't') verticalAlign = 'top';
+                else if (anchor === 'b') verticalAlign = 'bottom';
+                else verticalAlign = 'middle';
+
+                // 중요: tcPr 직속의 solidFill만 추출하여 테두리 선(lnL, lnR 등)의 tx1(검정색) 오인 방지
+                const solidFillList = getDirectChildrenByLocalName(tcPr, 'solidFill');
+                if (solidFillList.length > 0) {
+                  fillColor = parseDrawingColor(solidFillList[0]);
+                }
               }
 
               const paragraphs: PptxParagraph[] = [];
@@ -964,6 +988,7 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
                 colSpan,
                 rowSpan,
                 fillColor,
+                verticalAlign,
               });
               legacyCellTexts.push(cellText);
             }
