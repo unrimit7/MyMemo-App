@@ -166,5 +166,8 @@ export default defineConfig({
       }
     })
   ],
+  build: {
+    target: ['es2020', 'chrome80', 'safari13', 'edge80'],
+  },
   base: './' // 상대 경로로 빌드하여 GitHub Pages 등 어디서나 서브디렉토리 배포 가능
 });

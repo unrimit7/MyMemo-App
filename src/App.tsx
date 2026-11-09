@@ -264,44 +264,52 @@ export function App() {
   // 1. 초기 데이터 로딩 및 앱 켤 때 자동 동기화 1회 실행
   useEffect(() => {
     const initApp = async () => {
-      // 브라우저 및 윈도우 스토리지 센스로부터 로컬 데이터 영구 보존 요청
-      requestPersistentStorage().catch(() => {});
+      try {
+        // 브라우저 및 윈도우 스토리지 센스로부터 로컬 데이터 영구 보존 요청
+        requestPersistentStorage().catch(() => {});
 
-      await seedInitialDataIfNeeded();
-      const loadedProjects = await getAllProjects();
-      const loadedNotes = await getAllNotes();
-      const config = await getGitHubConfig();
+        await seedInitialDataIfNeeded();
+        const loadedProjects = await getAllProjects();
+        const loadedNotes = await getAllNotes();
+        const config = await getGitHubConfig();
 
-      setProjects(loadedProjects);
-      setNotes(loadedNotes);
-      setGitHubConfig(config);
+        setProjects(loadedProjects);
+        setNotes(loadedNotes);
+        setGitHubConfig(config);
 
-      // 마지막으로 선택했던 폴더 및 메모 복원
-      const savedProjId = localStorage.getItem('mymemo_active_project_id');
-      const savedNoteId = localStorage.getItem('mymemo_active_note_id');
+        // 마지막으로 선택했던 폴더 및 메모 복원
+        let savedProjId: string | null = null;
+        let savedNoteId: string | null = null;
+        try {
+          savedProjId = localStorage.getItem('mymemo_active_project_id');
+          savedNoteId = localStorage.getItem('mymemo_active_note_id');
+        } catch {}
 
-      if (savedProjId && (savedProjId === 'ALL' || loadedProjects.some((p) => p.id === savedProjId))) {
-        setActiveProjectId(savedProjId);
-      } else {
-        setActiveProjectId('ALL');
-        localStorage.setItem('mymemo_active_project_id', 'ALL');
-      }
+        if (savedProjId && (savedProjId === 'ALL' || loadedProjects.some((p) => p.id === savedProjId))) {
+          setActiveProjectId(savedProjId);
+        } else {
+          setActiveProjectId('ALL');
+          try { localStorage.setItem('mymemo_active_project_id', 'ALL'); } catch {}
+        }
 
-      if (savedNoteId && loadedNotes.some((n) => n.id === savedNoteId)) {
-        setActiveNoteId(savedNoteId);
-      } else if (loadedNotes.length > 0) {
-        // 선택된 폴더가 있다면 그 폴더 내의 첫 메모를 우선 선택
-        const notesInProj = savedProjId && savedProjId !== 'ALL'
-          ? loadedNotes.filter((n) => n.projectId === savedProjId)
-          : loadedNotes;
-        const targetNote = notesInProj[0] || loadedNotes[0];
-        setActiveNoteId(targetNote.id);
-        localStorage.setItem('mymemo_active_note_id', targetNote.id);
-      }
+        if (savedNoteId && loadedNotes.some((n) => n.id === savedNoteId)) {
+          setActiveNoteId(savedNoteId);
+        } else if (loadedNotes.length > 0) {
+          // 선택된 폴더가 있다면 그 폴더 내의 첫 메모를 우선 선택
+          const notesInProj = savedProjId && savedProjId !== 'ALL'
+            ? loadedNotes.filter((n) => n.projectId === savedProjId)
+            : loadedNotes;
+          const targetNote = notesInProj[0] || loadedNotes[0];
+          setActiveNoteId(targetNote.id);
+          try { localStorage.setItem('mymemo_active_note_id', targetNote.id); } catch {}
+        }
 
-      // 설정이 연결되어 있고 '앱 시작 시 자동 동기화(syncOnStartup)' 또는 '실시간 자동 동기화(autoSync)' 옵션이 켜져 있을 때만 앱 시작 시 동기화
-      if (config && config.isConnected && (config.syncOnStartup || config.autoSync)) {
-        runSync(true, config);
+        // 설정이 연결되어 있고 '앱 시작 시 자동 동기화(syncOnStartup)' 또는 '실시간 자동 동기화(autoSync)' 옵션이 켜져 있을 때만 앱 시작 시 동기화
+        if (config && config.isConnected && (config.syncOnStartup || config.autoSync)) {
+          runSync(true, config);
+        }
+      } catch (err) {
+        console.warn('MyMemo 초기 데이터 로드 중 경고(인앱 브라우저 등):', err);
       }
     };
 

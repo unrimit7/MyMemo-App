@@ -81,6 +81,24 @@ if (typeof WeakMap !== 'undefined') {
   }
 }
 
+// PWA 단일 인스턴스 (LaunchQueue & BroadcastChannel 포커스 연동)
+if (typeof window !== 'undefined') {
+  if ('launchQueue' in window) {
+    (window as any).launchQueue.setConsumer(() => {
+      window.focus();
+    });
+  }
+  if (typeof BroadcastChannel !== 'undefined') {
+    const singleInstanceChannel = new BroadcastChannel('mymemo_single_instance');
+    singleInstanceChannel.onmessage = (e) => {
+      if (e.data === 'REQUEST_FOCUS') {
+        window.focus();
+      }
+    };
+    singleInstanceChannel.postMessage('REQUEST_FOCUS');
+  }
+}
+
 // 새 서비스 워커가 업데이트되어 활성화되면 구버전 캐시 대신 즉시 화면을 갱신
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   let refreshing = false;

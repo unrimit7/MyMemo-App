@@ -11,9 +11,69 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#0f172a" />
     <title>MyMemo</title>
+    <script>
+      // 1. 끝 슬래시 누락 자동 보정 (상대 경로 에셋 404 방지)
+      if (location.pathname.endsWith('/MyMemo-App')) {
+        location.replace(location.pathname + '/' + location.search + location.hash);
+      }
+
+      // 2. 카카오톡 인앱 브라우저 감지 시 기본 브라우저(삼성 인터넷, 크롬 등)로 자동 열기
+      if (/KAKAOTALK/i.test(navigator.userAgent) && /Android/i.test(navigator.userAgent)) {
+        location.href = 'kakaotalk://web/openExternal?url=' + encodeURIComponent(location.href);
+      }
+    </script>
   </head>
-  <body>
-    <div id="root"></div>
+  <body style="margin:0;background-color:#0f172a;">
+    <div id="root">
+      <div id="initial-loader" style="display:flex;min-height:100vh;width:100vw;align-items:center;justify-content:center;background-color:#0f172a;color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:24px;box-sizing:border-box;text-align:center;">
+        <div style="max-width:380px;width:100%;">
+          <div style="width:44px;height:44px;border:3px solid #334155;border-top-color:#ea580c;border-radius:50%;margin:0 auto 18px;animation:mymemo-spin 0.9s linear infinite;"></div>
+          <div style="font-size:18px;font-weight:bold;margin-bottom:8px;color:#f1f5f9;">MyMemo</div>
+          <div id="initial-status" style="font-size:13px;color:#94a3b8;line-height:1.6;margin-bottom:16px;">
+            앱을 준비하고 있습니다...
+          </div>
+          <div id="initial-help" style="display:none;background-color:#1e293b;border:1px solid #334155;border-radius:14px;padding:16px;font-size:12px;color:#cbd5e1;line-height:1.6;text-align:left;box-shadow:0 10px 25px -5px rgba(0,0,0,0.5);">
+            <div style="font-weight:bold;color:#f59e0b;margin-bottom:6px;font-size:13px;">💡 화면이 멈춰있나요?</div>
+            • <b>카카오톡 / 문자 메시지</b>로 접속 중이시라면 우측 상단 <b>⋮ (더보기) → [다른 브라우저로 열기]</b>를 선택해 주세요.<br>
+            • 삼성 인터넷 또는 Chrome 브라우저에서 열면 오프라인 저장 및 전체 기능이 정상 작동합니다.
+            <div style="display:flex;gap:8px;margin-top:14px;">
+              <button onclick="window.location.reload()" style="flex:1;padding:8px 12px;background-color:#ea580c;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:bold;cursor:pointer;">새로고침</button>
+              <button onclick="try{localStorage.clear();sessionStorage.clear();}catch(e){}window.location.reload();" style="flex:1;padding:8px 12px;background-color:#334155;color:#cbd5e1;border:none;border-radius:8px;font-size:12px;cursor:pointer;">캐시 초기화</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <style>
+        @keyframes mymemo-spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      </style>
+      <script>
+        // 4초 이상 React가 마운트되지 않으면 도움말 박스 자동 표시
+        setTimeout(function() {
+          var help = document.getElementById('initial-help');
+          var status = document.getElementById('initial-status');
+          if (help && document.getElementById('initial-loader')) {
+            help.style.display = 'block';
+            if (status) status.textContent = '로딩에 시간이 다소 소요되고 있습니다.';
+          }
+        }, 4000);
+
+        // 스크립트 파싱/실행 오류 감지 시 즉시 도움말 및 안내 표시
+        window.addEventListener('error', function(e) {
+          var help = document.getElementById('initial-help');
+          var status = document.getElementById('initial-status');
+          if (help && document.getElementById('initial-loader')) {
+            help.style.display = 'block';
+            if (status) {
+              status.style.color = '#f87171';
+              status.textContent = '실행 중 오류가 발생했습니다. 브라우저를 변경해 보세요.';
+            }
+          }
+        });
+      </script>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
