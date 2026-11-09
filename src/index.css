@@ -435,3 +435,64 @@
 .markdown-preview tr:hover {
   background-color: rgba(99, 102, 241, 0.08);
 }
+
+/* ========================================================
+   노션 스타일 접이식 토글(Toggle List) & 콜아웃(Callout) 서식
+   ======================================================== */
+.markdown-preview details {
+  margin: 0.85rem 0;
+  padding: 0.6rem 0.95rem;
+  background-color: rgba(30, 41, 59, 0.45);
+  border: 1px solid rgba(51, 65, 85, 0.7);
+  border-radius: 0.75rem;
+  transition: all 0.2s ease;
+}
+
+.markdown-preview details[open] {
+  background-color: rgba(30, 41, 59, 0.75);
+  border-color: rgba(249, 115, 22, 0.4);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.markdown-preview details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #f1f5f9;
+  outline: none;
+  user-select: none;
+  padding: 0.25rem 0;
+  display: list-item;
+  transition: color 0.15s ease;
+}
+
+.markdown-preview details > summary:hover {
+  color: #fb923c;
+}
+
+.markdown-preview details > *:not(summary) {
+  margin-top: 0.65rem;
+}
+
+/* 노션/GitHub 스타일 콜아웃 강조 박스 */
+.callout-box {
+  margin: 1rem 0;
+  padding: 0.85rem 1.15rem;
+  border-radius: 0.85rem;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  border-width: 1px;
+  border-style: solid;
+  border-left-width: 4px;
+}
+
+.callout-box p {
+  margin: 0.25rem 0;
+}
+
+.callout-box p:first-of-type {
+  margin-top: 0;
+}
+
+.callout-box p:last-of-type {
+  margin-bottom: 0;
+}

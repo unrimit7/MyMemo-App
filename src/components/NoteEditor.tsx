@@ -23,6 +23,7 @@ import { PptxViewerModal } from './PptxViewerModal';
 import { PptxEditorModal } from './PptxEditorModal';
 import { extractPptxTextAndMarkdown, invalidatePptxCache } from '../utils/pptxViewer';
 import { HexEditorModal } from './HexEditorModal';
+import { SlashCommandMenu, getSlashCommands, type SlashCommandItem } from './SlashCommandMenu';
 import type { AttachmentItem } from '../types';
 import { 
   Lock, 
@@ -62,6 +63,9 @@ import {
   Undo2,
   Redo2,
   FileText,
+  ChevronRight,
+  Info,
+  Sparkles,
   FileSpreadsheet,
   Palette,
   Download
@@ -232,6 +236,16 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const [localAttachments, setLocalAttachments] = useState<Record<string, AttachmentItem>>(note?.attachments || {});
   const localAttachmentsRef = useRef(localAttachments);
   localAttachmentsRef.current = localAttachments;
+
+  // 노션 스타일 슬래시(/) 빠른 입력 메뉴 상태
+  const [slashMenuState, setSlashMenuState] = useState<{
+    isOpen: boolean;
+    query: string;
+    matchStart: number;
+    matchEnd: number;
+    position?: { top: number; left: number };
+  } | null>(null);
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState<number>(0);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -463,12 +477,74 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     debouncedSyncToParent({ title: newTitle });
   };
 
+  // 슬래시(/) 명령어 감지 및 위치 계산
+  const checkSlashCommand = (textarea: HTMLTextAreaElement) => {
+    const cursor = textarea.selectionStart;
+    if (cursor !== textarea.selectionEnd) {
+      if (slashMenuState?.isOpen) setSlashMenuState(null);
+      return;
+    }
+    const val = textarea.value;
+    const lineStart = val.lastIndexOf('\n', cursor - 1) + 1;
+    const lineToCursor = val.substring(lineStart, cursor);
+    const slashMatch = lineToCursor.match(/(?:^|\s)\/([a-zA-Z0-9가-힣ㄱ-ㅎㅏ-ㅣ_-]*)$/);
+
+    if (slashMatch) {
+      const query = slashMatch[1];
+      const matchStart = cursor - slashMatch[1].length - 1; // '/'의 시작 위치
+      const textBefore = val.substring(0, cursor);
+      const lines = textBefore.split('\n');
+      const lineIndex = lines.length - 1;
+      const currentLine = lines[lineIndex];
+
+      const approxTop = Math.max(10, Math.min(textarea.clientHeight - 340, (lineIndex + 1) * 24 - textarea.scrollTop + 8));
+      const approxLeft = Math.max(16, Math.min(textarea.clientWidth - 320, currentLine.length * 8.5 + 16));
+
+      setSlashMenuState({
+        isOpen: true,
+        query,
+        matchStart,
+        matchEnd: cursor,
+        position: { top: approxTop, left: approxLeft },
+      });
+      setSlashSelectedIndex(0);
+    } else {
+      if (slashMenuState?.isOpen) {
+        setSlashMenuState(null);
+      }
+    }
+  };
+
+  // 슬래시 명령어 실행 및 텍스트 치환
+  const executeSlashCommand = (cmd: SlashCommandItem) => {
+    if (!slashMenuState) return;
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const text = localContent;
+    const before = text.substring(0, slashMenuState.matchStart);
+    const after = text.substring(slashMenuState.matchEnd);
+    const newContent = before + cmd.snippet + after;
+    const nextPos = slashMenuState.matchStart + (cmd.cursorOffset !== undefined ? cmd.cursorOffset : cmd.snippet.length);
+
+    setLocalContent(newContent);
+    debouncedSyncToParent({ content: newContent });
+    pushHistory(newContent, nextPos);
+    setSlashMenuState(null);
+
+    setTimeout(() => {
+      textarea.focus({ preventScroll: true });
+      textarea.setSelectionRange(nextPos, nextPos);
+    }, 0);
+  };
+
   // 본문 변경 핸들러 (한글 조합 중 리렌더링 차단)
   const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newContent = e.target.value;
     setLocalContent(newContent);
     debouncedSyncToParent({ content: newContent });
     debouncedPushHistory(newContent, e.target.selectionStart);
+    checkSlashCommand(e.target);
   };
 
   // 폴더 계층 빵가루(Breadcrumb) 계산
@@ -528,6 +604,72 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
       // 표(table)를 모바일 가로 스크롤 컨테이너로 감싸 좁은 화면에서 컬럼이 찌그러지는 현상 방지
       rawHtml = rawHtml.replace(/<table>([\s\S]*?)<\/table>/g, '<div class="table-scroll-container"><table>$1</table></div>');
+
+      // 노션 및 GitHub 스타일 콜아웃(Callout) 서식 변환 (> [!NOTE], > [!TIP], > [!WARNING], > [!IMPORTANT], > [!CAUTION])
+      const alertConfig: Record<string, { title: string; icon: string; bg: string; border: string; borderLeft: string; headerColor: string }> = {
+        NOTE: {
+          title: '참고 (Note)',
+          icon: 'ℹ️',
+          bg: 'rgba(30, 58, 138, 0.22)',
+          border: 'rgba(59, 130, 246, 0.4)',
+          borderLeft: '#3b82f6',
+          headerColor: '#60a5fa',
+        },
+        TIP: {
+          title: '팁 (Tip)',
+          icon: '💡',
+          bg: 'rgba(6, 78, 59, 0.22)',
+          border: 'rgba(16, 185, 129, 0.4)',
+          borderLeft: '#10b981',
+          headerColor: '#34d399',
+        },
+        IMPORTANT: {
+          title: '중요 (Important)',
+          icon: '📌',
+          bg: 'rgba(76, 29, 149, 0.25)',
+          border: 'rgba(139, 92, 246, 0.4)',
+          borderLeft: '#8b5cf6',
+          headerColor: '#a78bfa',
+        },
+        WARNING: {
+          title: '주의 (Warning)',
+          icon: '⚠️',
+          bg: 'rgba(120, 53, 15, 0.25)',
+          border: 'rgba(245, 158, 11, 0.4)',
+          borderLeft: '#f59e0b',
+          headerColor: '#fbbf24',
+        },
+        CAUTION: {
+          title: '위험 (Caution)',
+          icon: '🛑',
+          bg: 'rgba(127, 29, 29, 0.25)',
+          border: 'rgba(239, 68, 68, 0.4)',
+          borderLeft: '#ef4444',
+          headerColor: '#f87171',
+        },
+      };
+
+      rawHtml = rawHtml.replace(
+        /<blockquote>\s*<p>\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:\s*<br\s*\/?>)?([\s\S]*?)<\/blockquote>/gi,
+        (_match, type, content) => {
+          const key = type.toUpperCase();
+          const config = alertConfig[key] || alertConfig.NOTE;
+          let body = (content || '').trim();
+          if (body.startsWith('</p>')) body = body.substring(4);
+          if (body.endsWith('</p>')) body = body.substring(0, body.length - 4);
+          return `
+            <div class="callout-box" style="background-color: ${config.bg}; border-color: ${config.border}; border-left-color: ${config.borderLeft};">
+              <div style="display: flex; align-items: center; gap: 7px; font-weight: 700; color: ${config.headerColor}; margin-bottom: 6px; font-size: 0.9em; text-transform: uppercase; letter-spacing: 0.05em;">
+                <span style="font-size: 1.1em;">${config.icon}</span>
+                <span>${config.title}</span>
+              </div>
+              <div style="color: #cbd5e1; font-size: 0.95em; line-height: 1.65;">
+                <p style="margin: 0;">${body.trim()}</p>
+              </div>
+            </div>
+          `;
+        }
+      );
 
       // 마크다운 체크박스를 보기 모드에서도 직접 클릭해 체크/해제할 수 있도록 속성 변환
       let taskCounter = 0;
@@ -1404,8 +1546,59 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     applyLinePrefix('ordered');
   };
 
+  // 노션 토글(Toggle) 삽입
+  const insertToggle = () => {
+    insertMarkdown('\n<details>\n<summary>토글 제목을 입력하세요</summary>\n\n숨겨둘 상세 내용을 여기에 작성하세요.\n</details>\n\n');
+  };
+
+  // 노션 콜아웃(Callout) 삽입
+  const insertCallout = (type: 'NOTE' | 'TIP' | 'WARNING' | 'IMPORTANT' = 'NOTE') => {
+    insertMarkdown(`\n> [!${type}]\n> 강조할 내용을 여기에 입력하세요.\n\n`);
+  };
+
   // PC 작성 편의를 위한 키보드 단축키 핸들러
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // 슬래시(/) 빠른 서식 메뉴 키보드 내비게이션
+    if (slashMenuState?.isOpen) {
+      const allCommands = getSlashCommands();
+      const filteredCommands = allCommands.filter((cmd) => {
+        if (!slashMenuState.query) return true;
+        const cleanQ = slashMenuState.query.toLowerCase().trim();
+        return (
+          cmd.title.toLowerCase().includes(cleanQ) ||
+          cmd.description.toLowerCase().includes(cleanQ) ||
+          cmd.keywords.some((k) => k.toLowerCase().includes(cleanQ))
+        );
+      });
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (filteredCommands.length > 0) {
+          setSlashSelectedIndex((prev) => (prev + 1) % filteredCommands.length);
+        }
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (filteredCommands.length > 0) {
+          setSlashSelectedIndex((prev) => (prev - 1 + filteredCommands.length) % filteredCommands.length);
+        }
+        return;
+      }
+      if (e.key === 'Enter') {
+        if (filteredCommands.length > 0 && filteredCommands[slashSelectedIndex]) {
+          e.preventDefault();
+          executeSlashCommand(filteredCommands[slashSelectedIndex]);
+          return;
+        }
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSlashMenuState(null);
+        return;
+      }
+    }
+
     const isCtrlOrCmd = e.ctrlKey || e.metaKey;
 
     // Ctrl + S: 현재 작성 중인 내용 즉시 확정 저장 후 GitHub 동기화
@@ -3073,6 +3266,44 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             >
               <Minus size={13} />
             </button>
+            {/* 노션 접이식 토글 */}
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={insertToggle}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-amber-300 text-amber-400 rounded-md transition-colors shrink-0 active:scale-90"
+              title="노션 스타일 접이식 토글(Toggle) 목록 삽입"
+            >
+              <ChevronRight size={14} />
+            </button>
+            {/* 노션 콜아웃 박스 */}
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => insertCallout('NOTE')}
+              className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-blue-300 text-blue-400 rounded-md transition-colors shrink-0 active:scale-90"
+              title="노션 스타일 알림/콜아웃(Callout) 강조 박스 삽입"
+            >
+              <Info size={13} />
+            </button>
+            {/* 슬래시 빠른 서식 메뉴 열기 */}
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                const textarea = textareaRef.current;
+                if (!textarea) return;
+                insertMarkdown('/', '');
+                setTimeout(() => {
+                  checkSlashCommand(textarea);
+                }, 50);
+              }}
+              className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-orange-300 text-orange-400 bg-orange-500/10 border border-orange-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
+              title="슬래시(/) 빠른 서식 메뉴 열기"
+            >
+              <Sparkles size={12} />
+              <span>/ 서식</span>
+            </button>
 
             <div className="w-[1px] h-3.5 bg-slate-800/80 mx-1 shrink-0" />
 
@@ -3269,19 +3500,36 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         {(viewMode === 'edit' || viewMode === 'split') && (
           <div 
             style={viewMode === 'split' ? { width: `${splitRatio}%` } : undefined}
-            className={`${viewMode === 'split' ? 'shrink-0 pr-3' : 'flex-1'} flex flex-col h-full overflow-hidden`}
+            className={`${viewMode === 'split' ? 'shrink-0 pr-3' : 'flex-1'} flex flex-col h-full overflow-hidden relative`}
           >
             <textarea
               ref={textareaRef}
               value={localContent}
               onChange={handleContentChange}
               onKeyDown={handleKeyDown}
+              onKeyUp={(e) => {
+                if (['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(e.key)) return;
+                checkSlashCommand(e.currentTarget);
+              }}
+              onClick={(e) => checkSlashCommand(e.currentTarget)}
               onPaste={handlePaste}
               onScroll={handleEditorScroll}
-              placeholder="마크다운 문법으로 자유롭게 작성해 보세요... 이미지는 Ctrl + V 로 바로 붙여넣을 수 있습니다!"
+              placeholder="마크다운 문법으로 자유롭게 작성해 보세요... ('/'를 입력하면 노션 스타일 빠른 서식 메뉴가 열립니다)"
               className="w-full flex-1 bg-transparent text-slate-200 text-sm md:text-base leading-relaxed resize-none focus:outline-none font-mono placeholder-slate-600 scrollbar-thin"
               spellCheck={false}
             />
+
+            {/* 슬래시(/) 명령어 자동완성 팝업 메뉴 */}
+            {slashMenuState?.isOpen && (
+              <SlashCommandMenu
+                isOpen={slashMenuState.isOpen}
+                query={slashMenuState.query}
+                selectedIndex={slashSelectedIndex}
+                onSelectCommand={executeSlashCommand}
+                onClose={() => setSlashMenuState(null)}
+                position={slashMenuState.position}
+              />
+            )}
           </div>
         )}
 
