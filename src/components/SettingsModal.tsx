@@ -328,7 +328,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="p-3 bg-indigo-950/40 border border-indigo-500/30 rounded-xl flex items-center justify-between gap-3 text-indigo-300">
               <div className="flex items-center gap-2 min-w-0">
                 <BookOpen size={16} className="text-indigo-400 shrink-0" />
-                <span className="text-[11px] text-indigo-200 truncate">처음이라 설정이 헷갈리시나요?</span>
+                <span className="text-[11px] text-indigo-200 truncate">처음이라 설정이나 기능 사용법이 궁금하신가요?</span>
               </div>
               <button
                 type="button"

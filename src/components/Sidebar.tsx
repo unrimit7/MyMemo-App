@@ -18,7 +18,8 @@ import {
   Calendar,
   ArrowUpDown,
   GripVertical,
-  Palette
+  Palette,
+  BookOpen
 } from 'lucide-react';
 import { type AppTheme, THEME_OPTIONS } from '../types';
 
@@ -36,6 +37,7 @@ interface SidebarProps {
   noteCounts: Record<string, number>;
   gitHubConfig: GitHubConfig | null;
   onOpenSettings: () => void;
+  onOpenGuide?: () => void;
   onSync: () => void;
   isSyncing: boolean;
   isOpenMobile: boolean;
@@ -66,6 +68,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   noteCounts,
   gitHubConfig,
   onOpenSettings,
+  onOpenGuide,
   onSync,
   isSyncing,
   isOpenMobile,
@@ -845,6 +848,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   title={`현재 테마: ${THEME_OPTIONS.find(t => t.id === currentTheme)?.name || '기본'} (클릭하여 다른 분위기로 변경)`}
                 >
                   <Palette size={15} />
+                </button>
+              )}
+
+              {onOpenGuide && (
+                <button
+                  type="button"
+                  onClick={onOpenGuide}
+                  className="p-1.5 text-slate-400 hover:text-indigo-300 hover:bg-slate-800 rounded-lg transition-colors"
+                  title="사용가이드 & 종합 설명서 열기"
+                >
+                  <BookOpen size={15} />
                 </button>
               )}
 

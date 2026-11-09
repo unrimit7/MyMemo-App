@@ -27,6 +27,7 @@ import { getFolderHierarchyPath, updateTitleWithFolderPath, stripFolderPrefixFro
 import { Calendar as CalendarIcon, X, FolderTree } from 'lucide-react';
 import { crossTabSync } from './services/crossTabSync';
 import type { MyMemoBackupData } from './utils/backup';
+import { getGuideNotes } from './utils/guideNotes';
 
 interface DeleteConfirmState {
   isOpen: boolean;
@@ -1322,121 +1323,83 @@ export function App() {
     return updatedCount;
   };
 
-  // 설치 및 GitHub 동기화 가이드 메모 열기 또는 생성
+  // 사용가이드 폴더 및 최신 가이드 메모 일괄 생성/갱신
   const handleCreateOrOpenGuideNote = async () => {
-    const guideContent = `# MyMemo 마크다운 메모장에 오신 것을 환영합니다! 🎉
+    // 1. '사용가이드' 폴더가 있는지 확인, 없으면 자동 생성
+    let guideFolder = projects.find((p) => p.name.trim() === '사용가이드');
+    let nextProjects = [...projects];
 
-휴대폰과 PC 어디서나 빠르고 안전하게 동기화되는 마크다운 메모장입니다.
-아래 가이드를 따라 하시면 **3분 안에 앱 설치 및 나만의 안전한 클라우드 동기화**를 마칠 수 있습니다!
-
----
-
-> ⚠️ **[필독] 데이터 안전 및 손실 방지 안내 (백업의 중요성)**
-> 
-> MyMemo의 데이터는 기본적으로 브라우저 내부(IndexedDB)에 저장됩니다.
-> - **브라우저 청소 시 주의**: 브라우저의 '방문 기록'이나 '캐시'를 지우는 것은 안전하지만, **[쿠키 및 사이트 데이터]를 무심코 전체 삭제하거나 기기를 포맷하면 로컬 메모가 모두 삭제**되어 큰 데이터 손실이 발생할 수 있습니다!
-> - **1. 안전한 클라우드 영구 보존**: 아래 가이드를 따라 **GitHub 동기화를 꼭 연결해 두세요!** 동기화를 해두시면 컴퓨터가 고장 나거나 브라우저 데이터를 실수로 다 날려도 1초 만에 100% 되살아납니다.
-> - **2. '기기 전용(🔒)' 메모는 로컬 백업 필수**: 자물쇠를 걸어둔 '기기 전용' 메모는 보안상 클라우드로 가지 않으므로, **좌측 하단 ⚙️ [설정] ➔ [로컬 전체 데이터 백업(.json)]** 버튼을 통해 PC의 안전한 폴더(D드라이브, 외장하드, USB)에 파일로 백업해 두세요! 백업 없이 기기를 정리하면 복구할 수 없습니다.
-
----
-
-## 📱 1. 앱 설치 방법 (홈 화면에 추가)
-
-MyMemo는 앱스토어를 거치지 않고 웹 브라우저에서 바로 단독 앱(PWA)으로 설치할 수 있습니다:
-
-- **스마트폰 (갤럭시 / 안드로이드)**:
-  - 크롬 또는 삼성인터넷 우측 상단 **메뉴(점 3개)** ➔ **[홈 화면에 추가]** 또는 **[앱 설치]** 클릭
-- **스마트폰 (아이폰 / iOS)**:
-  - 사파리(Safari) 브라우저 하단 **공유 버튼(네모+화살표)** ➔ **[홈 화면에 추가]** 클릭
-- **PC (크롬 / 엣지 / 웨일)**:
-  - 브라우저 주소창 오른쪽 끝에 있는 **[모니터/컴퓨터 모양 설치 아이콘]** ➔ **[설치]** 클릭
-
-> 💡 설치하면 바탕화면에 '엔젤기프트 날개' 아이콘이 생성되어 독립된 전용 창으로 편리하게 실행됩니다.
-
----
-
-## ☁️ 2. GitHub 3분 동기화 설정 가이드
-
-MyMemo의 모든 메모는 **내 개인 GitHub 저장소(Repository)**에 안전하게 백업 및 동기화됩니다.
-
-### 1단계: GitHub 저장소 만들기
-1. [GitHub(github.com)](https://github.com)에 로그인합니다.
-2. 우측 상단 **\`+\`** 버튼 클릭 ➔ **[New repository]** 선택
-3. **Repository name**에 \`my-notes\` 입력
-4. 공개 설정은 **Private**(비공개) 권장
-5. ⚠️ **중요 꿀팁**: **[Add a README file]**에 체크(V)해 주세요! (체크를 깜빡 잊고 빈 저장소로 만들어도 앱에서 자동 처리됩니다.)
-6. 맨 아래 초록색 **[Create repository]** 클릭!
-
-### 2단계: 개인 접근 토큰(PAT) 발급받기
-1. GitHub 우측 상단 내 **프로필 사진** 클릭 ➔ **Settings** 메뉴로 들어갑니다.
-2. 왼쪽 메뉴 맨 아래 **Developer settings** 클릭
-3. **Personal access tokens** ➔ **Tokens (classic)** 클릭
-4. **[Generate new token]** ➔ **[Generate new token (classic)]** 클릭
-5. **Note**: \`MyMemo\` 입력
-6. **Expiration**: \`No expiration\`(만료 없음) 선택 권장
-7. **Select scopes(권한)**: 맨 위에 있는 **\`repo\`** (Full control of private repositories) 체크박스 하나만 체크!
-8. 맨 아래 초록색 **[Generate token]** 버튼 클릭!
-9. 생성된 녹색 상자의 토큰 문자열(\`ghp_...\`로 시작)을 **[복사]**합니다. *(이 창을 닫으면 다시 볼 수 없으니 꼭 복사하세요!)*
-
-### 3단계: MyMemo 앱에서 연결하기
-1. MyMemo 앱 화면 좌측 하단(또는 메뉴)의 **⚙️ [설정]** 버튼을 누릅니다.
-2. 정보를 입력합니다:
-   - **GitHub 아이디 (Owner)**: 내 GitHub 계정 아이디
-   - **저장소 이름 (Repository)**: \`my-notes\`
-   - **개인 액세스 토큰 (Token)**: 복사한 \`ghp_...\` 토큰 붙여넣기
-3. 하단의 **[연결 테스트]** 버튼을 눌러 초록색 성공 메시지를 확인한 뒤 **[저장 및 완료]**를 누르면 끝!
-
----
-
-## 🚀 3. MyMemo 핵심 기능 사용 팁
-
-- **달력 일정 드래그 이동**: 달력 뷰에서 등록된 일정을 다른 날짜 칸으로 마우스 드래그하면 날짜가 바로 변경됩니다!
-- **글자 색상 & 형광펜**: 텍스트를 드래그하고 상단 툴바의 **팔레트 아이콘(🎨)**을 누르면 7가지 색상과 4가지 형광펜을 적용할 수 있습니다.
-- **표(Table) & PDF 첨부**: 툴바의 표 아이콘, PDF 첨부 버튼을 통해 문서와 표를 깔끔하게 관리할 수 있습니다.
-- **🔒 기기 전용(로컬) 보관 & 백업**: 메모 상단의 자물쇠 아이콘을 켜면 해당 메모는 GitHub로 전송되지 않고 오직 이 기기에만 안전하게 보관됩니다. 좌측 하단 ⚙️ [설정] 창에서 언제든 원클릭으로 전체 백업 파일(.json)을 내려받거나 복원할 수 있습니다.
-`;
-
-    const existing = notes.find(
-      (n) => n.id === 'note-welcome' || n.title.includes('설치 & GitHub 동기화') || n.title.includes('환영합니다')
-    );
-
-    if (existing) {
-      const updatedNote: Note = {
-        ...existing,
-        title: 'MyMemo 설치 & GitHub 동기화 완벽 가이드 📖',
-        content: guideContent,
+    if (!guideFolder) {
+      guideFolder = {
+        id: `proj-guide-${Date.now()}`,
+        name: '사용가이드',
+        isLocalOnly: false,
+        color: '#6366f1',
+        createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        syncStatus: existing.isLocalOnly ? 'local_only' : 'pending',
+        order: 9999,
       };
-      await saveNote(updatedNote);
-      setNotes((prev) => prev.map((n) => (n.id === existing.id ? updatedNote : n)));
-      setIsCalendarOpen(false);
-      handleSelectNote(existing.id);
-      setIsSettingsOpen(false);
-      setSyncToast('📖 설치 & GitHub 동기화 가이드가 최신 내용으로 갱신되었습니다.');
-      setTimeout(() => setSyncToast(null), 3000);
-      return;
+      await saveProject(guideFolder);
+      nextProjects = [...projects, guideFolder];
+      setProjects(nextProjects);
     }
 
-    const defaultProj = projects.find((p) => !p.isLocalOnly) || projects[0];
-    const guideNote: Note = {
-      id: `note-guide-${Date.now()}`,
-      projectId: defaultProj ? defaultProj.id : 'proj-default',
-      title: 'MyMemo 설치 & GitHub 동기화 완벽 가이드 📖',
-      content: guideContent,
-      isLocalOnly: false,
-      syncStatus: 'pending',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    // 2. 가이드 메모 목록 가져오기
+    const guideDefs = getGuideNotes();
+    const updatedNotesList = [...notes];
+    let firstGuideId: string | null = null;
 
-    await saveNote(guideNote);
-    setNotes((prev) => [guideNote, ...prev]);
+    for (let i = 0; i < guideDefs.length; i++) {
+      const def = guideDefs[i];
+      // 이미 같은 제목이나 관련 가이드 메모가 있는지 탐색
+      const existing = updatedNotesList.find(
+        (n) => n.title.trim() === def.title.trim() || (i === 0 && (n.id === 'note-welcome' || n.title.includes('MyMemo 시작하기')))
+      );
+
+      if (existing) {
+        const updated: Note = {
+          ...existing,
+          projectId: guideFolder.id, // 항상 사용가이드 폴더에 배치
+          title: def.title,
+          content: def.content,
+          updatedAt: new Date().toISOString(),
+        };
+        await saveNote(updated);
+        const idx = updatedNotesList.findIndex((n) => n.id === existing.id);
+        if (idx !== -1) updatedNotesList[idx] = updated;
+        if (i === 0) firstGuideId = existing.id;
+      } else {
+        const newNote: Note = {
+          id: `note-guide-${Date.now()}-${i}`,
+          projectId: guideFolder.id,
+          title: def.title,
+          content: def.content,
+          isLocalOnly: false,
+          syncStatus: 'pending',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        await saveNote(newNote);
+        updatedNotesList.unshift(newNote);
+        if (i === 0) firstGuideId = newNote.id;
+      }
+    }
+
+    setNotes(updatedNotesList);
+    setActiveProjectId(guideFolder.id);
+    localStorage.setItem('mymemo_active_project_id', guideFolder.id);
+
+    if (firstGuideId) {
+      handleSelectNote(firstGuideId);
+    }
+
     setIsCalendarOpen(false);
-    handleSelectNote(guideNote.id);
     setIsSettingsOpen(false);
-    setSyncToast('📖 설치 & GitHub 동기화 가이드 메모가 생성되었습니다.');
-    setTimeout(() => setSyncToast(null), 3000);
+    crossTabSync.broadcastChange('notes');
+    crossTabSync.broadcastChange('projects');
+
+    setSyncToast('📖 [사용가이드] 폴더에 최신 사용 설명서가 준비되었습니다.');
+    setTimeout(() => setSyncToast(null), 3500);
   };
 
   // 전역 단축키 핸들러 (Ctrl + S: 언제 어디서나 GitHub 동기화 실행)
@@ -1542,6 +1505,7 @@ MyMemo의 모든 메모는 **내 개인 GitHub 저장소(Repository)**에 안전
         noteCounts={noteCounts}
         gitHubConfig={gitHubConfig}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenGuide={handleCreateOrOpenGuideNote}
         onSync={handleManualSync}
         isSyncing={isSyncing}
         isOpenMobile={isSidebarOpenMobile}
