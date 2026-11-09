@@ -17,11 +17,12 @@ import {
   Minus,
   Quote,
   Sparkles,
+  Link2,
 } from 'lucide-react';
 
 export interface SlashCommandItem {
   id: string;
-  category: '노션 특수 블록' | '기본 서식' | '실무 도구';
+  category: '특수 블록' | '기본 서식' | '실무 도구';
   title: string;
   description: string;
   icon: React.ReactNode;
@@ -42,10 +43,20 @@ export function getSlashCommands(): SlashCommandItem[] {
   )}:${String(now.getSeconds()).padStart(2, '0')}`;
 
   return [
-    // 1. 노션 특수 서식
+    // 1. 특수 블록 서식
+    {
+      id: 'wikilink',
+      category: '특수 블록',
+      title: '메모 연결 위키링크 ([[ ]])',
+      description: '다른 메모로 바로 이동하거나 새 메모를 생성하는 양방향 링크',
+      icon: <Link2 size={16} className="text-indigo-400" />,
+      keywords: ['링크', '위키', '위키링크', '백링크', '연결', 'link', 'flrzm'],
+      snippet: '[[]]',
+      cursorOffset: 2,
+    },
     {
       id: 'table',
-      category: '노션 특수 블록',
+      category: '특수 블록',
       title: '표 삽입 (Table)',
       description: '3열 2행 마크다운 데이터 표 생성',
       icon: <Table size={16} className="text-orange-400" />,
@@ -54,7 +65,7 @@ export function getSlashCommands(): SlashCommandItem[] {
     },
     {
       id: 'toggle',
-      category: '노션 특수 블록',
+      category: '특수 블록',
       title: '접이식 토글 목록 (Toggle)',
       description: '클릭하면 펼쳐지는 세련된 접이식 내용 상자',
       icon: <ChevronRight size={16} className="text-amber-400" />,
@@ -63,7 +74,7 @@ export function getSlashCommands(): SlashCommandItem[] {
     },
     {
       id: 'callout-note',
-      category: '노션 특수 블록',
+      category: '특수 블록',
       title: '참고 콜아웃 (Note)',
       description: '파란색 안내 및 참고 사항 강조 상자',
       icon: <Info size={16} className="text-blue-400" />,
@@ -72,7 +83,7 @@ export function getSlashCommands(): SlashCommandItem[] {
     },
     {
       id: 'callout-tip',
-      category: '노션 특수 블록',
+      category: '특수 블록',
       title: '유용한 팁 콜아웃 (Tip)',
       description: '초록색 팁 및 권장 사항 강조 상자',
       icon: <Lightbulb size={16} className="text-emerald-400" />,
@@ -81,7 +92,7 @@ export function getSlashCommands(): SlashCommandItem[] {
     },
     {
       id: 'callout-important',
-      category: '노션 특수 블록',
+      category: '특수 블록',
       title: '중요 강조 콜아웃 (Important)',
       description: '보라색 핵심 및 필수 확인 강조 상자',
       icon: <BookmarkCheck size={16} className="text-purple-400" />,
@@ -90,7 +101,7 @@ export function getSlashCommands(): SlashCommandItem[] {
     },
     {
       id: 'callout-warning',
-      category: '노션 특수 블록',
+      category: '특수 블록',
       title: '주의 콜아웃 (Warning)',
       description: '노란색 주의 및 경고 강조 상자',
       icon: <AlertTriangle size={16} className="text-amber-400" />,
@@ -99,7 +110,7 @@ export function getSlashCommands(): SlashCommandItem[] {
     },
     {
       id: 'callout-caution',
-      category: '노션 특수 블록',
+      category: '특수 블록',
       title: '위험 콜아웃 (Caution)',
       description: '빨간색 위험 및 고장 주의 강조 상자',
       icon: <ShieldAlert size={16} className="text-rose-400" />,
@@ -263,7 +274,7 @@ export const SlashCommandMenu: React.FC<SlashCommandMenuProps> = ({
       <div className="px-3.5 py-2 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between text-[11px] text-slate-400 select-none">
         <span className="flex items-center gap-1.5 font-bold text-orange-400">
           <Sparkles size={12} />
-          <span>슬라이스 빠른 서식</span>
+          <span>빠른 서식 메뉴</span>
           {query && <span className="font-mono text-slate-300 bg-slate-800 px-1 rounded">/{query}</span>}
         </span>
         <span className="text-[10px] text-slate-500">↑↓ 이동 · Enter 선택 · Esc 닫기</span>

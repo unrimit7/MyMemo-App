@@ -496,3 +496,73 @@
 .callout-box p:last-of-type {
   margin-bottom: 0;
 }
+
+/* ========================================================
+   위키링크([[노트제목]]) & 해시태그(#태그) 인터랙티브 배지
+   ======================================================== */
+.wikilink-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.12rem 0.5rem;
+  margin: 0 0.15rem;
+  border-radius: 0.5rem;
+  font-size: 0.85em;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+  vertical-align: baseline;
+  line-height: 1.4;
+}
+
+.wikilink-pill.wikilink-exists {
+  background-color: rgba(99, 102, 241, 0.18);
+  color: #a5b4fc;
+  border: 1px solid rgba(129, 140, 248, 0.4);
+}
+
+.wikilink-pill.wikilink-exists:hover {
+  background-color: rgba(99, 102, 241, 0.32);
+  color: #e0e7ff;
+  border-color: rgba(165, 180, 252, 0.7);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+}
+
+.wikilink-pill.wikilink-missing {
+  background-color: rgba(30, 41, 59, 0.55);
+  color: #94a3b8;
+  border: 1px dashed rgba(100, 116, 139, 0.75);
+}
+
+.wikilink-pill.wikilink-missing:hover {
+  background-color: rgba(99, 102, 241, 0.15);
+  color: #c7d2fe;
+  border-color: rgba(129, 140, 248, 0.65);
+}
+
+.hashtag-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.55rem;
+  margin: 0 0.15rem;
+  border-radius: 9999px;
+  font-size: 0.82em;
+  font-weight: 600;
+  background-color: rgba(16, 185, 129, 0.15);
+  color: #6ee7b7;
+  border: 1px solid rgba(52, 211, 153, 0.35);
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+  vertical-align: baseline;
+  line-height: 1.4;
+}
+
+.hashtag-pill:hover {
+  background-color: rgba(16, 185, 129, 0.28);
+  color: #a7f3d0;
+  border-color: rgba(110, 231, 183, 0.7);
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
+}

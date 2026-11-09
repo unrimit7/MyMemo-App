@@ -69,6 +69,7 @@ export function App() {
   const [isNoteListCollapsed, setIsNoteListCollapsed] = useState<boolean>(() => {
     return localStorage.getItem('mymemo_notelist_collapsed') === 'true';
   });
+  const [noteSearchQuery, setNoteSearchQuery] = useState<string>('');
 
   const toggleSidebar = () => {
     setIsSidebarCollapsed((prev) => {
@@ -1150,6 +1151,41 @@ export function App() {
     crossTabSync.broadcastChange('notes');
   };
 
+  // 위키링크([[문서명]]) 클릭 시 특정 제목으로 새 메모 바로 생성
+  const handleCreateNoteWithTitle = async (title: string) => {
+    let targetProjId = activeProjectId;
+    if (targetProjId === 'ALL') {
+      targetProjId = projects[0]?.id || 'proj-default';
+    }
+    const currentProj = projects.find((p) => p.id === targetProjId);
+    const isLocalOnly = currentProj?.isLocalOnly || false;
+
+    const newNote: Note = {
+      id: `note-${Date.now()}`,
+      projectId: targetProjId,
+      title,
+      content: `# ${title}\n\n`,
+      isLocalOnly,
+      syncStatus: isLocalOnly ? 'local_only' : 'pending',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await saveNote(newNote);
+    setNotes((prev) => [newNote, ...prev]);
+    handleSelectNote(newNote.id);
+    crossTabSync.broadcastChange('notes');
+    return newNote;
+  };
+
+  // 본문 내 #태그 클릭 시 메모 목록에서 해당 태그 즉시 검색 필터링
+  const handleSearchTag = (tag: string) => {
+    setNoteSearchQuery(tag);
+    setIsNoteListCollapsed(false);
+    setMobileScreen('list');
+    localStorage.setItem('mymemo_mobile_screen', 'list');
+  };
+
   // 메모 내용 수정 핸들러 (수정 3초 후 자동 동기화 예약)
   const handleUpdateNote = async (updated: Partial<Note>, specificNoteId?: string) => {
     const targetNoteId = specificNoteId || calendarPreviewNoteId || activeNoteId;
@@ -1567,6 +1603,8 @@ MyMemo의 모든 메모는 **내 개인 GitHub 저장소(Repository)**에 안전
               activeProjectId={activeProjectId}
               activeNoteId={activeNoteId}
               noteCounts={noteCounts}
+              searchQuery={noteSearchQuery}
+              onSearchQueryChange={setNoteSearchQuery}
               onSelectProject={handleSelectProject}
               onSelectNote={handleSelectNote}
               onCreateNote={handleCreateNote}
@@ -1605,6 +1643,10 @@ MyMemo의 모든 메모는 **내 개인 GitHub 저장소(Repository)**에 안전
             <NoteEditor
               note={activeNote}
               projects={projects}
+              allNotes={notes}
+              onSelectNote={handleSelectNote}
+              onCreateNoteWithTitle={handleCreateNoteWithTitle}
+              onSearchTag={handleSearchTag}
               onUpdateNote={handleUpdateNote}
               onBackToList={handleBackToList}
               onDeleteNote={requestDeleteNote}
@@ -1698,6 +1740,16 @@ MyMemo의 모든 메모는 **내 개인 GitHub 저장소(Repository)**에 안전
                 <NoteEditor
                   note={previewNote}
                   projects={projects}
+                  allNotes={notes}
+                  onSelectNote={(id) => {
+                    setCalendarPreviewNoteId(null);
+                    handleSelectNote(id);
+                  }}
+                  onCreateNoteWithTitle={handleCreateNoteWithTitle}
+                  onSearchTag={(tag) => {
+                    setCalendarPreviewNoteId(null);
+                    handleSearchTag(tag);
+                  }}
                   onUpdateNote={(updated) => handleUpdateNote(updated, previewNote.id)}
                   onBackToList={() => setCalendarPreviewNoteId(null)}
                   onDeleteNote={(id) => {

@@ -108,6 +108,10 @@ const HIGHLIGHT_COLORS = [
 interface NoteEditorProps {
   note: Note | null;
   projects: Project[];
+  allNotes?: Note[];
+  onSelectNote?: (id: string) => void;
+  onCreateNoteWithTitle?: (title: string) => void;
+  onSearchTag?: (tag: string) => void;
   onUpdateNote: (updated: Partial<Note>) => void;
   onBackToList: () => void;
   onDeleteNote?: (id: string) => void;
@@ -122,6 +126,10 @@ interface NoteEditorProps {
 export const NoteEditor: React.FC<NoteEditorProps> = ({
   note,
   projects,
+  allNotes = [],
+  onSelectNote,
+  onCreateNoteWithTitle,
+  onSearchTag,
   onUpdateNote,
   onBackToList,
   onDeleteNote,
@@ -246,6 +254,37 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     position?: { top: number; left: number };
   } | null>(null);
   const [slashSelectedIndex, setSlashSelectedIndex] = useState<number>(0);
+
+  // 지식 연결망 & 백링크(Backlinks) 패널 펼침 상태
+  const [isBacklinksExpanded, setIsBacklinksExpanded] = useState(false);
+
+  // 현재 노트를 인용하고 있는 다른 메모들(백링크) 실시간 계산
+  const backlinks = useMemo(() => {
+    if (!note || !allNotes) return [];
+    const currentTitle = (note.title || '').trim();
+    if (!currentTitle) return [];
+    const escaped = currentTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const wikiRegex = new RegExp(`\\[\\[${escaped}(?:\\|[^\\]]*)?\\]\\]`, 'i');
+    return allNotes.filter((n) => n.id !== note.id && wikiRegex.test(n.content));
+  }, [note, allNotes]);
+
+  // 현재 노트에서 [[...]] 형태로 연결한 나가는 링크들 계산
+  const outlinks = useMemo(() => {
+    if (!localContent) return [];
+    const matches = Array.from(localContent.matchAll(/\[\[([^\[\]\n\r]+)\]\]/g));
+    const titles = Array.from(new Set(matches.map((m) => m[1].split('|')[0].trim()))).filter(Boolean);
+    return titles.map((title) => {
+      const found = allNotes.find((n) => n.title.trim().toLowerCase() === title.toLowerCase());
+      return { title, noteId: found?.id, exists: !!found };
+    });
+  }, [localContent, allNotes]);
+
+  // 현재 본문에 포함된 #해시태그 목록 추출
+  const tagsInNote = useMemo(() => {
+    if (!localContent) return [];
+    const matches = Array.from(localContent.matchAll(/(?:^|[\s(（\[{<])#([a-zA-Z0-9가-힣_-]{1,30})/g));
+    return Array.from(new Set(matches.map((m) => m[1]))).slice(0, 20);
+  }, [localContent]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -679,6 +718,49 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         const cleanAfter = after.replace(/disabled(?:="[^"]*")?/g, '');
         return `<input ${cleanBefore}type="checkbox"${cleanAfter} data-task-index="${currentIndex}" class="task-checkbox cursor-pointer">`;
       });
+
+      // 위키링크([[노트제목]]) 및 해시태그(#태그) 인터랙티브 배지 변환
+      // HTML 태그 속성 및 code/pre 블록 내부를 안전하게 보존하기 위해 태그 기준으로 분할 처리
+      const htmlTokens = rawHtml.split(/(<[^>]+>)/g);
+      let inCodeBlock = false;
+      for (let i = 0; i < htmlTokens.length; i++) {
+        const token = htmlTokens[i];
+        if (token.startsWith('<')) {
+          if (/^<(?:code|pre|textarea|input|kbd)\b/i.test(token)) inCodeBlock = true;
+          if (/^<\/(?:code|pre|textarea|input|kbd)>/i.test(token)) inCodeBlock = false;
+          continue;
+        }
+        if (inCodeBlock || !token) continue;
+
+        let processed = token;
+
+        // 1. 위키링크 변환: [[문서명]] 또는 [[문서명|별칭]]
+        processed = processed.replace(/\[\[([^\[\]\n\r]+)\]\]/g, (_m, inner) => {
+          const parts = inner.split('|');
+          const targetTitle = parts[0].trim();
+          const alias = (parts[1] !== undefined ? parts[1].trim() : targetTitle) || targetTitle;
+          const cleanTarget = targetTitle.toLowerCase();
+          const targetNote = allNotes.find((n) => n.title.trim().toLowerCase() === cleanTarget);
+
+          const safeTarget = targetTitle.replace(/"/g, '&quot;');
+          const safeAlias = alias.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+          if (targetNote) {
+            return `<button type="button" class="wikilink-pill wikilink-exists" data-wikilink-id="${targetNote.id}" data-wikilink-title="${safeTarget}" title="메모 바로가기: ${safeTarget}">🔗 ${safeAlias}</button>`;
+          } else {
+            return `<button type="button" class="wikilink-pill wikilink-missing" data-wikilink-create="true" data-wikilink-title="${safeTarget}" title="클릭 시 새 메모 생성: ${safeTarget}">📄 ${safeAlias} <span style="font-size: 10px; color: #818cf8; opacity: 0.9; margin-left: 2px;">+생성</span></button>`;
+          }
+        });
+
+        // 2. 해시태그 변환: #태그명 (공백이나 문장부호 경계)
+        processed = processed.replace(/(?<=^|[\s(（\[{<])#([a-zA-Z0-9가-힣_-]{1,30})(?=[\s)）\]}>,.:;!?~]|$)/g, (_m, tagName) => {
+          const safeTag = tagName.replace(/"/g, '&quot;');
+          return `<button type="button" class="hashtag-pill" data-tag-name="${safeTag}" title="#${safeTag} 태그로 메모 검색">#${safeTag}</button>`;
+        });
+
+        htmlTokens[i] = processed;
+      }
+      rawHtml = htmlTokens.join('');
 
       return { __html: renderAttachmentsInHtml(rawHtml, localAttachments) };
     } catch {
@@ -1556,6 +1638,11 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     insertMarkdown(`\n> [!${type}]\n> 강조할 내용을 여기에 입력하세요.\n\n`);
   };
 
+  // 위키링크([[ ]]) 삽입
+  const insertWikiLink = () => {
+    insertMarkdown('[[', ']]');
+  };
+
   // PC 작성 편의를 위한 키보드 단축키 핸들러
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // 슬래시(/) 빠른 서식 메뉴 키보드 내비게이션
@@ -2236,6 +2323,37 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           data: att.data,
           title,
         });
+      }
+      return;
+    }
+
+    // 1-2. 위키링크([[문서명]]) 클릭 처리
+    const wikiBtn = target.closest<HTMLElement>('.wikilink-pill');
+    if (wikiBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const noteId = wikiBtn.getAttribute('data-wikilink-id');
+      const targetTitle = wikiBtn.getAttribute('data-wikilink-title') || '';
+      const isCreate = wikiBtn.getAttribute('data-wikilink-create') === 'true';
+
+      if (noteId && onSelectNote) {
+        onSelectNote(noteId);
+      } else if (isCreate && targetTitle && onCreateNoteWithTitle) {
+        if (window.confirm(`'${targetTitle}' 메모가 아직 없습니다. 새 메모로 생성하시겠습니까?`)) {
+          onCreateNoteWithTitle(targetTitle);
+        }
+      }
+      return;
+    }
+
+    // 1-3. 해시태그(#태그) 클릭 처리
+    const tagBtn = target.closest<HTMLElement>('.hashtag-pill');
+    if (tagBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const tagName = tagBtn.getAttribute('data-tag-name');
+      if (tagName && onSearchTag) {
+        onSearchTag(`#${tagName}`);
       }
       return;
     }
@@ -3266,25 +3384,36 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             >
               <Minus size={13} />
             </button>
-            {/* 노션 접이식 토글 */}
+            {/* 접이식 토글 */}
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={insertToggle}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-amber-300 text-amber-400 rounded-md transition-colors shrink-0 active:scale-90"
-              title="노션 스타일 접이식 토글(Toggle) 목록 삽입"
+              title="접이식 토글 목록 삽입"
             >
               <ChevronRight size={14} />
             </button>
-            {/* 노션 콜아웃 박스 */}
+            {/* 콜아웃 박스 */}
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => insertCallout('NOTE')}
               className="w-7 h-7 flex items-center justify-center hover:bg-slate-800 hover:text-blue-300 text-blue-400 rounded-md transition-colors shrink-0 active:scale-90"
-              title="노션 스타일 알림/콜아웃(Callout) 강조 박스 삽입"
+              title="콜아웃 강조 박스 삽입"
             >
               <Info size={13} />
+            </button>
+            {/* 위키링크 버튼 */}
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={insertWikiLink}
+              className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-indigo-300 text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
+              title="메모 연결 링크([[ ]]) 삽입"
+            >
+              <Link2 size={12} />
+              <span>[[ ]]</span>
             </button>
             {/* 슬래시 빠른 서식 메뉴 열기 */}
             <button
@@ -3299,10 +3428,27 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                 }, 50);
               }}
               className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-orange-300 text-orange-400 bg-orange-500/10 border border-orange-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
-              title="슬래시(/) 빠른 서식 메뉴 열기"
+              title="빠른 서식 메뉴 열기 (/)"
             >
               <Sparkles size={12} />
               <span>/ 서식</span>
+            </button>
+            {/* 지식 연결망 & 백링크 토글 버튼 */}
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setIsBacklinksExpanded((prev) => !prev)}
+              className={`h-7 px-2 flex items-center gap-1 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90 ${
+                isBacklinksExpanded
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : backlinks.length > 0
+                    ? 'hover:bg-slate-800 text-indigo-300 bg-indigo-500/15 border border-indigo-500/30'
+                    : 'hover:bg-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+              title="지식 연결망 및 백링크 목록 열기/닫기"
+            >
+              <Link2 size={12} />
+              <span>백링크{backlinks.length > 0 ? ` (${backlinks.length})` : ''}</span>
             </button>
 
             <div className="w-[1px] h-3.5 bg-slate-800/80 mx-1 shrink-0" />
@@ -3576,6 +3722,150 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           </div>
         )}
       </div>
+
+      {/* 4단: 지식 연결망 & 백링크(Backlinks) 패널 */}
+      {note && (
+        <div className="border-t border-slate-800/80 bg-slate-950/70 backdrop-blur-xs select-none shrink-0 z-20">
+          {/* 패널 헤더 바 */}
+          <div className="px-4 md:px-6 py-2 flex items-center justify-between hover:bg-slate-900/60 transition-colors text-xs text-slate-400">
+            <button
+              type="button"
+              onClick={() => setIsBacklinksExpanded((prev) => !prev)}
+              className="flex items-center gap-2 font-medium group cursor-pointer focus:outline-none"
+            >
+              <Link2 size={13} className="text-indigo-400 group-hover:scale-110 transition-transform" />
+              <span className="text-slate-300 font-semibold">지식 연결망</span>
+
+              {/* 백링크 뱃지 */}
+              <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold transition-colors ${
+                backlinks.length > 0 
+                  ? 'bg-indigo-500/25 text-indigo-300 border border-indigo-500/40' 
+                  : 'bg-slate-800/80 text-slate-500'
+              }`}>
+                백링크 {backlinks.length}
+              </span>
+
+              {/* 나가는 링크 뱃지 */}
+              {outlinks.length > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-800/80 text-slate-400 border border-slate-700/60">
+                  링크 {outlinks.length}
+                </span>
+              )}
+
+              {/* 태그 뱃지 */}
+              {tagsInNote.length > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                  #{tagsInNote.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsBacklinksExpanded((prev) => !prev)}
+              className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
+            >
+              <span>{isBacklinksExpanded ? '접기' : '펼쳐보기'}</span>
+              <ChevronRight
+                size={14}
+                className={`transition-transform duration-200 ${isBacklinksExpanded ? 'rotate-90 text-indigo-400' : ''}`}
+              />
+            </button>
+          </div>
+
+          {/* 확장된 상세 정보 영역 */}
+          {isBacklinksExpanded && (
+            <div className="px-4 md:px-6 py-3 border-t border-slate-800/50 bg-slate-900/60 max-h-56 overflow-y-auto space-y-3 scrollbar-thin">
+              {/* 1. 백링크 (이 메모를 인용하는 메모들) */}
+              <div>
+                <div className="text-[11px] font-semibold text-indigo-300 mb-1.5 flex items-center gap-1.5">
+                  <span>🔗 이 메모를 참조하는 메모 (백링크 {backlinks.length}개)</span>
+                </div>
+                {backlinks.length === 0 ? (
+                  <p className="text-xs text-slate-500 pl-1">
+                    다른 메모에서 <code className="text-indigo-400 bg-slate-800/80 px-1 py-0.5 rounded font-mono">[[{note.title}]]</code> 형태로 이 메모를 인용하면 여기에 연결 목록이 표시됩니다.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                    {backlinks.map((bNote) => (
+                      <button
+                        key={bNote.id}
+                        type="button"
+                        onClick={() => onSelectNote?.(bNote.id)}
+                        className="p-2.5 rounded-xl bg-slate-900/90 border border-indigo-500/25 hover:border-indigo-400/60 hover:bg-slate-800/90 text-left transition-all group/item cursor-pointer shadow-xs"
+                      >
+                        <div className="text-xs font-semibold text-slate-200 group-hover/item:text-indigo-300 flex items-center justify-between truncate">
+                          <span className="truncate">{bNote.title || '제목 없음'}</span>
+                          <span className="text-[10px] text-indigo-400 opacity-70 shrink-0 ml-1">이동 ↗</span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 truncate mt-1">
+                          {bNote.content.replace(/[#*`~>-]/g, '').slice(0, 50) || '내용 없음'}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 2. 나가는 링크 (이 메모에서 인용 중인 링크들) */}
+              {outlinks.length > 0 && (
+                <div className="pt-2 border-t border-slate-800/40">
+                  <div className="text-[11px] font-semibold text-slate-400 mb-1.5">
+                    ↗️ 이 메모에서 연결한 링크 ({outlinks.length}개)
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {outlinks.map((link, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          if (link.exists && link.noteId) {
+                            onSelectNote?.(link.noteId);
+                          } else if (onCreateNoteWithTitle) {
+                            if (window.confirm(`'${link.title}' 메모가 아직 없습니다. 새 메모로 생성하시겠습니까?`)) {
+                              onCreateNoteWithTitle(link.title);
+                            }
+                          }
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer ${
+                          link.exists
+                            ? 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-500/25'
+                            : 'bg-slate-800/80 text-slate-400 border border-dashed border-slate-600 hover:text-indigo-300 hover:border-indigo-400'
+                        }`}
+                      >
+                        <span>{link.title}</span>
+                        {!link.exists && <span className="text-[10px] text-indigo-400">+생성</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 3. 본문 내 해시태그 목록 */}
+              {tagsInNote.length > 0 && (
+                <div className="pt-2 border-t border-slate-800/40">
+                  <div className="text-[11px] font-semibold text-emerald-400/90 mb-1.5">
+                    🏷️ 이 메모의 태그 ({tagsInNote.length}개)
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {tagsInNote.map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => onSearchTag?.(`#${t}`)}
+                        className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 transition-colors cursor-pointer"
+                        title={`#${t} 태그로 전체 메모 검색`}
+                      >
+                        #{t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 모바일 보기 모드일 때 우측 하단 빠른 편집 플로팅 버튼 (FAB) */}
       {viewMode === 'preview' && (

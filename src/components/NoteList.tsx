@@ -27,6 +27,8 @@ interface NoteListProps {
   activeProjectId: string;
   activeNoteId: string | null;
   noteCounts?: Record<string, number>;
+  searchQuery?: string;
+  onSearchQueryChange?: (q: string) => void;
   onSelectProject?: (id: string) => void;
   onSelectNote: (id: string) => void;
   onCreateNote: () => void;
@@ -48,6 +50,8 @@ export const NoteList: React.FC<NoteListProps> = ({
   activeProjectId,
   activeNoteId,
   noteCounts = {},
+  searchQuery: externalSearchQuery,
+  onSearchQueryChange,
   onSelectProject,
   onSelectNote,
   onCreateNote,
@@ -62,7 +66,15 @@ export const NoteList: React.FC<NoteListProps> = ({
   onSync,
   isSyncing,
 }) => {
-  const [searchQuery, setSearchQuery] = useState('');
+  const [internalSearchQuery, setInternalSearchQuery] = useState('');
+  const searchQuery = externalSearchQuery !== undefined ? externalSearchQuery : internalSearchQuery;
+  const setSearchQuery = (val: string) => {
+    if (onSearchQueryChange) {
+      onSearchQueryChange(val);
+    } else {
+      setInternalSearchQuery(val);
+    }
+  };
   const [isDragOverList, setIsDragOverList] = useState(false);
   const [sortBy, setSortBy] = useState<'updated' | 'title'>(() => {
     return (localStorage.getItem('mymemo_sort_by') as 'updated' | 'title') || 'updated';
