@@ -18,11 +18,13 @@ import {
   Quote,
   Sparkles,
   Link2,
+  LayoutTemplate,
 } from 'lucide-react';
+import { getNoteTemplates } from '../utils/templates';
 
 export interface SlashCommandItem {
   id: string;
-  category: '특수 블록' | '기본 서식' | '실무 도구';
+  category: '특수 블록' | '실무 템플릿' | '기본 서식' | '실무 도구';
   title: string;
   description: string;
   icon: React.ReactNode;
@@ -118,7 +120,18 @@ export function getSlashCommands(): SlashCommandItem[] {
       snippet: '\n> [!CAUTION]\n> 치명적인 위험이나 중대한 오류 요소를 여기에 작성하세요.\n\n',
     },
 
-    // 2. 기본 서식
+    // 2. 실무 템플릿 서식
+    ...getNoteTemplates().map((tpl) => ({
+      id: `tpl-${tpl.id}`,
+      category: '실무 템플릿' as const,
+      title: `${tpl.title}`,
+      description: tpl.description,
+      icon: <LayoutTemplate size={16} className="text-violet-400" />,
+      keywords: ['템플릿', '서식', tpl.title.toLowerCase(), tpl.id, 'template', 'xpaflt'],
+      snippet: `\n\n${tpl.content}\n\n`,
+    })),
+
+    // 3. 기본 서식
     {
       id: 'todo',
       category: '기본 서식',

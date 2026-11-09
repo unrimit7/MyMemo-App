@@ -24,6 +24,8 @@ import { PptxEditorModal } from './PptxEditorModal';
 import { extractPptxTextAndMarkdown, invalidatePptxCache } from '../utils/pptxViewer';
 import { HexEditorModal } from './HexEditorModal';
 import { SlashCommandMenu, getSlashCommands, type SlashCommandItem } from './SlashCommandMenu';
+import { TemplateModal } from './TemplateModal';
+import { getNoteTemplates, type NoteTemplate } from '../utils/templates';
 import type { AttachmentItem } from '../types';
 import { 
   Lock, 
@@ -68,6 +70,7 @@ import {
   Sparkles,
   FileSpreadsheet,
   Palette,
+  LayoutTemplate,
   Download
 } from 'lucide-react';
 
@@ -112,6 +115,7 @@ interface NoteEditorProps {
   onSelectNote?: (id: string) => void;
   onCreateNoteWithTitle?: (title: string) => void;
   onSearchTag?: (tag: string) => void;
+  onOpenQuickSwitcher?: () => void;
   onUpdateNote: (updated: Partial<Note>) => void;
   onBackToList: () => void;
   onDeleteNote?: (id: string) => void;
@@ -130,6 +134,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   onSelectNote,
   onCreateNoteWithTitle,
   onSearchTag,
+  onOpenQuickSwitcher,
   onUpdateNote,
   onBackToList,
   onDeleteNote,
@@ -285,6 +290,36 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const matches = Array.from(localContent.matchAll(/(?:^|[\s(（\[{<])#([a-zA-Z0-9가-힣_-]{1,30})/g));
     return Array.from(new Set(matches.map((m) => m[1]))).slice(0, 20);
   }, [localContent]);
+
+  // 실무 서식 템플릿 모달 열림 상태
+  const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
+
+  // 실무 템플릿 적용 함수
+  const insertTemplate = (tpl: NoteTemplate) => {
+    const isBlank = !localContent.trim();
+
+    if (isBlank) {
+      // 본문이 비어있으면 제목과 본문을 템플릿 기본값으로 전체 설정
+      const newContent = tpl.content;
+      setLocalContent(newContent);
+      debouncedSyncToParent({ content: newContent });
+      pushHistory(newContent, newContent.length);
+
+      // 제목이 비어있거나 '새 메모'인 경우 템플릿 제목으로 자동 보정
+      if (!localTitle.trim() || localTitle.includes('새 메모')) {
+        const cleanedTitle = tpl.title.replace(/템플릿/g, '').trim();
+        const folderPath = note?.projectId ? getFolderHierarchyPath(note.projectId, projects) : '';
+        const newTitle = folderPath ? `[${folderPath}] ${cleanedTitle}` : cleanedTitle;
+        setLocalTitle(newTitle);
+        debouncedSyncToParent({ title: newTitle });
+      }
+    } else {
+      // 이미 내용이 있으면 커서 위치에 템플릿 삽입
+      insertMarkdown(`\n\n${tpl.content}\n\n`, '');
+    }
+
+    setIsTemplateModalOpen(false);
+  };
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1886,10 +1921,25 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         insertMarkdown('*', '*');
         return;
       }
-      // Ctrl + K: 링크 삽입
+      // Ctrl + P: 초고속 퀵 스위처 열기
+      if (e.key.toLowerCase() === 'p') {
+        if (onOpenQuickSwitcher) {
+          e.preventDefault();
+          onOpenQuickSwitcher();
+          return;
+        }
+      }
+      // Ctrl + K: 텍스트가 선택되어 있으면 링크 삽입, 미선택 시 퀵 스위처 열기
       if (e.key.toLowerCase() === 'k' && !e.shiftKey) {
         e.preventDefault();
-        insertMarkdown('[', '](https://)');
+        const textarea = textareaRef.current;
+        if (textarea && textarea.selectionStart !== textarea.selectionEnd) {
+          insertMarkdown('[', '](https://)');
+        } else if (onOpenQuickSwitcher) {
+          onOpenQuickSwitcher();
+        } else {
+          insertMarkdown('[', '](https://)');
+        }
         return;
       }
       // Ctrl + Shift + K: 인라인 코드
@@ -3433,6 +3483,17 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               <Sparkles size={12} />
               <span>/ 서식</span>
             </button>
+            {/* 실무 서식 템플릿 버튼 */}
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setIsTemplateModalOpen(true)}
+              className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-violet-300 text-violet-400 bg-violet-500/10 border border-violet-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
+              title="실무 서식 템플릿 삽입"
+            >
+              <LayoutTemplate size={12} />
+              <span>템플릿</span>
+            </button>
             {/* 지식 연결망 & 백링크 토글 버튼 */}
             <button
               type="button"
@@ -3636,6 +3697,33 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         />
       </div>
 
+      {/* 빈 메모일 때 원클릭 추천 템플릿 칩 */}
+      {!localContent.trim() && (
+        <div className="px-6 py-1.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-400 select-none animate-fadeIn">
+          <span className="text-[11px] text-slate-500 flex items-center gap-1 mr-1">
+            <Sparkles size={11} className="text-violet-400" />
+            <span>추천 서식:</span>
+          </span>
+          {getNoteTemplates().slice(0, 4).map((tpl) => (
+            <button
+              key={tpl.id}
+              type="button"
+              onClick={() => insertTemplate(tpl)}
+              className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700/80 hover:border-violet-500/50 hover:bg-violet-950/20 text-slate-300 hover:text-violet-300 transition-all text-xs font-medium cursor-pointer shadow-xs active:scale-95"
+            >
+              {tpl.title}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setIsTemplateModalOpen(true)}
+            className="px-2.5 py-1 rounded-lg bg-slate-800/60 hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors text-[11px] cursor-pointer"
+          >
+            + 전체 서식
+          </button>
+        </div>
+      )}
+
       {/* 본문 영역: 편집창 / 미리보기 / 분할(드래그 너비 조절 가능) */}
       <div 
         ref={splitContainerRef}
@@ -3660,7 +3748,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               onClick={(e) => checkSlashCommand(e.currentTarget)}
               onPaste={handlePaste}
               onScroll={handleEditorScroll}
-              placeholder="마크다운 문법으로 자유롭게 작성해 보세요... ('/'를 입력하면 노션 스타일 빠른 서식 메뉴가 열립니다)"
+              placeholder="마크다운 문법으로 자유롭게 작성해 보세요... ('/'를 입력하면 빠른 서식 메뉴가 열립니다)"
               className="w-full flex-1 bg-transparent text-slate-200 text-sm md:text-base leading-relaxed resize-none focus:outline-none font-mono placeholder-slate-600 scrollbar-thin"
               spellCheck={false}
             />
@@ -4485,6 +4573,13 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           </div>
         </div>
       )}
+
+      {/* 실무 서식 템플릿 선택 모달 */}
+      <TemplateModal
+        isOpen={isTemplateModalOpen}
+        onClose={() => setIsTemplateModalOpen(false)}
+        onSelectTemplate={insertTemplate}
+      />
     </div>
   );
 };

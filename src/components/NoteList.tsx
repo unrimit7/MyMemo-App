@@ -29,6 +29,7 @@ interface NoteListProps {
   noteCounts?: Record<string, number>;
   searchQuery?: string;
   onSearchQueryChange?: (q: string) => void;
+  onOpenQuickSwitcher?: () => void;
   onSelectProject?: (id: string) => void;
   onSelectNote: (id: string) => void;
   onCreateNote: () => void;
@@ -52,6 +53,7 @@ export const NoteList: React.FC<NoteListProps> = ({
   noteCounts = {},
   searchQuery: externalSearchQuery,
   onSearchQueryChange,
+  onOpenQuickSwitcher,
   onSelectProject,
   onSelectNote,
   onCreateNote,
@@ -255,15 +257,25 @@ export const NoteList: React.FC<NoteListProps> = ({
 
       {/* 검색창 & 정렬 버튼 */}
       <div className="p-2.5 border-b border-slate-800/60 flex items-center gap-2">
-        <div className="relative flex-1">
+        <div className="relative flex-1 flex items-center">
           <Search size={14} className="absolute left-2.5 top-2.5 text-slate-500" />
           <input
             type="text"
             placeholder="제목 또는 내용 검색..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+            className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-14 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
           />
+          {onOpenQuickSwitcher && (
+            <button
+              type="button"
+              onClick={onOpenQuickSwitcher}
+              className="absolute right-1.5 text-[10px] text-slate-400 bg-slate-900 border border-slate-750 hover:border-indigo-500/50 hover:text-indigo-300 px-1.5 py-0.5 rounded font-mono transition-colors cursor-pointer"
+              title="초고속 퀵 스위처 열기 (Ctrl+K 또는 Ctrl+P)"
+            >
+              Ctrl+K
+            </button>
+          )}
         </div>
         <button
           onClick={handleToggleSort}

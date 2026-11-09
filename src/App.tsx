@@ -22,6 +22,7 @@ import { NoteEditor } from './components/NoteEditor';
 import { SettingsModal } from './components/SettingsModal';
 import { ConfirmModal } from './components/ConfirmModal';
 import { CalendarView } from './components/CalendarView';
+import { QuickSwitcherModal } from './components/QuickSwitcherModal';
 import { processFileForNote } from './utils/file';
 import { getFolderHierarchyPath, updateTitleWithFolderPath, stripFolderPrefixFromTitle } from './utils/folderPath';
 import { Calendar as CalendarIcon, X, FolderTree } from 'lucide-react';
@@ -71,6 +72,7 @@ export function App() {
     return localStorage.getItem('mymemo_notelist_collapsed') === 'true';
   });
   const [noteSearchQuery, setNoteSearchQuery] = useState<string>('');
+  const [isQuickSwitcherOpen, setIsQuickSwitcherOpen] = useState<boolean>(false);
 
   const toggleSidebar = () => {
     setIsSidebarCollapsed((prev) => {
@@ -1402,10 +1404,36 @@ export function App() {
     setTimeout(() => setSyncToast(null), 3500);
   };
 
-  // 전역 단축키 핸들러 (Ctrl + S: 언제 어디서나 GitHub 동기화 실행)
+  // 전역 단축키 핸들러 (Ctrl + S: 동기화, Ctrl + K / Ctrl + P: 퀵 스위처)
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+      // Ctrl + P / Cmd + P: 초고속 퀵 스위처 열기
+      if (isCtrlOrCmd && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        setIsQuickSwitcherOpen(true);
+        return;
+      }
+
+      // Ctrl + K / Cmd + K: 텍스트 미선택 상태 시 퀵 스위처 열기
+      if (isCtrlOrCmd && e.key.toLowerCase() === 'k') {
+        const activeEl = document.activeElement;
+        const isEditingNote = activeEl && activeEl.tagName === 'TEXTAREA';
+        if (!isEditingNote) {
+          e.preventDefault();
+          setIsQuickSwitcherOpen(true);
+          return;
+        } else {
+          const ta = activeEl as HTMLTextAreaElement;
+          if (ta.selectionStart === ta.selectionEnd) {
+            e.preventDefault();
+            setIsQuickSwitcherOpen(true);
+            return;
+          }
+        }
+      }
+
       if (isCtrlOrCmd && e.key.toLowerCase() === 's') {
         e.preventDefault();
         // 메모 에디터(textarea)에 포커스가 있을 때는 NoteEditor 내부 onKeyDown에서 최신 타이핑 버퍼를 즉시 플러시 후 onSync를 부르므로 중복 실행 방지
@@ -1569,6 +1597,7 @@ export function App() {
               noteCounts={noteCounts}
               searchQuery={noteSearchQuery}
               onSearchQueryChange={setNoteSearchQuery}
+              onOpenQuickSwitcher={() => setIsQuickSwitcherOpen(true)}
               onSelectProject={handleSelectProject}
               onSelectNote={handleSelectNote}
               onCreateNote={handleCreateNote}
@@ -1611,6 +1640,7 @@ export function App() {
               onSelectNote={handleSelectNote}
               onCreateNoteWithTitle={handleCreateNoteWithTitle}
               onSearchTag={handleSearchTag}
+              onOpenQuickSwitcher={() => setIsQuickSwitcherOpen(true)}
               onUpdateNote={handleUpdateNote}
               onBackToList={handleBackToList}
               onDeleteNote={requestDeleteNote}
@@ -1714,6 +1744,7 @@ export function App() {
                     setCalendarPreviewNoteId(null);
                     handleSearchTag(tag);
                   }}
+                  onOpenQuickSwitcher={() => setIsQuickSwitcherOpen(true)}
                   onUpdateNote={(updated) => handleUpdateNote(updated, previewNote.id)}
                   onBackToList={() => setCalendarPreviewNoteId(null)}
                   onDeleteNote={(id) => {
@@ -1732,6 +1763,16 @@ export function App() {
           </div>
         );
       })()}
+
+      {/* 초고속 퀵 스위처 모달 (Ctrl + K / Ctrl + P) */}
+      <QuickSwitcherModal
+        isOpen={isQuickSwitcherOpen}
+        onClose={() => setIsQuickSwitcherOpen(false)}
+        notes={notes}
+        projects={projects}
+        onSelectNote={handleSelectNote}
+        onCreateNoteWithTitle={handleCreateNoteWithTitle}
+      />
 
       {/* 삭제 확인 전용 모달 */}
       <ConfirmModal
