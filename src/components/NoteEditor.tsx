@@ -294,6 +294,19 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   // 실무 서식 템플릿 모달 열림 상태
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
 
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+  const hwpInputRef = useRef<HTMLInputElement>(null);
+  const excelInputRef = useRef<HTMLInputElement>(null);
+  const docxInputRef = useRef<HTMLInputElement>(null);
+  const updateTimerRef = useRef<any>(null);
+  const pendingFieldsRef = useRef<Partial<Note>>({});
+  const currentNoteIdRef = useRef(note?.id);
+  const lastSentContentRef = useRef<string | null>(null);
+  const lastSentTitleRef = useRef<string | null>(null);
+  const sentContentsHistoryRef = useRef<Set<string>>(new Set());
+
   // 실무 템플릿 적용 함수
   const insertTemplate = (tpl: NoteTemplate) => {
     const isBlank = !localContent.trim();
@@ -302,17 +315,45 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       // 본문이 비어있으면 제목과 본문을 템플릿 기본값으로 전체 설정
       const newContent = tpl.content;
       setLocalContent(newContent);
-      debouncedSyncToParent({ content: newContent });
       pushHistory(newContent, newContent.length);
 
+      let newTitle: string | undefined = undefined;
       // 제목이 비어있거나 '새 메모'인 경우 템플릿 제목으로 자동 보정
       if (!localTitle.trim() || localTitle.includes('새 메모')) {
         const cleanedTitle = tpl.title.replace(/템플릿/g, '').trim();
         const folderPath = note?.projectId ? getFolderHierarchyPath(note.projectId, projects) : '';
-        const newTitle = folderPath ? `[${folderPath}] ${cleanedTitle}` : cleanedTitle;
+        newTitle = folderPath ? `[${folderPath}] ${cleanedTitle}` : cleanedTitle;
         setLocalTitle(newTitle);
-        debouncedSyncToParent({ title: newTitle });
       }
+
+      // 동기화할 필드 객체 (본문과 제목을 한 번에 동기화!)
+      const fieldsToSync: Partial<Note> = {
+        content: newContent,
+        ...(newTitle !== undefined ? { title: newTitle } : {}),
+      };
+
+      // 상위 에코 덮어쓰기 방지 기록
+      lastSentContentRef.current = newContent;
+      sentContentsHistoryRef.current.add(newContent);
+      if (newTitle !== undefined) {
+        lastSentTitleRef.current = newTitle;
+      }
+
+      // 대기 중이던 디바운스 타이머가 있다면 취소하고 즉시 상위에 저장!
+      if (updateTimerRef.current) {
+        clearTimeout(updateTimerRef.current);
+      }
+      pendingFieldsRef.current = {};
+      onUpdateNote(fieldsToSync);
+
+      // textarea에 포커스
+      setTimeout(() => {
+        const ta = textareaRef.current;
+        if (ta) {
+          ta.focus();
+          ta.setSelectionRange(newContent.length, newContent.length);
+        }
+      }, 50);
     } else {
       // 이미 내용이 있으면 커서 위치에 템플릿 삽입
       insertMarkdown(`\n\n${tpl.content}\n\n`, '');
@@ -320,18 +361,6 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
     setIsTemplateModalOpen(false);
   };
-
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const pdfInputRef = useRef<HTMLInputElement>(null);
-  const hwpInputRef = useRef<HTMLInputElement>(null);
-  const excelInputRef = useRef<HTMLInputElement>(null);
-  const docxInputRef = useRef<HTMLInputElement>(null);
-  const updateTimerRef = useRef<any>(null);
-  const currentNoteIdRef = useRef(note?.id);
-  const lastSentContentRef = useRef<string | null>(null);
-  const lastSentTitleRef = useRef<string | null>(null);
-  const sentContentsHistoryRef = useRef<Set<string>>(new Set());
 
   // 실행 취소(Undo) / 다시 실행(Redo) 전용 히스토리 스택
   const historyRef = useRef<{ content: string; cursorPos?: number }[]>([]);
@@ -403,7 +432,10 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         const isEditingNow = typeof document !== 'undefined' && textareaRef.current === document.activeElement;
         const isSentByMe = sentContentsHistoryRef.current.has(note.content);
 
-        if (note.content !== localContent && !isSentByMe && !isEditingNow) {
+        // 로컬에 이미 작성 중이거나 템플릿이 들어가 내용이 있는데 상위에서 빈 문자열("")이 내려오는 경우 덮어쓰기 방지
+        const isParentEmptyReset = !note.content && localContent.trim().length > 0;
+
+        if (note.content !== localContent && !isSentByMe && !isEditingNow && !isParentEmptyReset) {
           const textarea = textareaRef.current;
           const prevStart = textarea ? textarea.selectionStart : 0;
           const prevEnd = textarea ? textarea.selectionEnd : 0;
@@ -523,8 +555,13 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     };
   }, []);
 
-  // 부모 컴포넌트에 안전하게 디바운스 업데이트 전송
+  // 부모 컴포넌트에 안전하게 디바운스 업데이트 전송 (연속 호출 시 필드 유실 방지 병합)
   const debouncedSyncToParent = (updatedFields: Partial<Note>) => {
+    pendingFieldsRef.current = {
+      ...pendingFieldsRef.current,
+      ...updatedFields,
+    };
+
     if (updatedFields.content !== undefined) {
       lastSentContentRef.current = updatedFields.content;
       sentContentsHistoryRef.current.add(updatedFields.content);
@@ -540,7 +577,11 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       clearTimeout(updateTimerRef.current);
     }
     updateTimerRef.current = setTimeout(() => {
-      onUpdateNote(updatedFields);
+      const toSend = { ...pendingFieldsRef.current };
+      pendingFieldsRef.current = {};
+      if (Object.keys(toSend).length > 0) {
+        onUpdateNote(toSend);
+      }
     }, 250);
   };
 
