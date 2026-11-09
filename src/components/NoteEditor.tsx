@@ -15,7 +15,7 @@ import { HwpEditorModal } from './HwpEditorModal';
 import { loadHwpDocument, renderHwpPageToSvg, extractHwpText, invalidateHwpCache } from '../utils/hwpViewer';
 import { ExcelViewerModal } from './ExcelViewerModal';
 import { ExcelEditorModal } from './ExcelEditorModal';
-import { parseExcelWorkbook, sheetRowsToMarkdownTable, invalidateExcelCache } from '../utils/excelViewer';
+import { parseExcelWorkbook, sheetRowsToMarkdownTable, invalidateExcelCache, generateExcelDataUrl } from '../utils/excelViewer';
 import { DocxViewerModal } from './DocxViewerModal';
 import { DocxEditorModal } from './DocxEditorModal';
 import { renderDocxToContainer, extractDocxTextAndHtml, invalidateDocxCache } from '../utils/docxViewer';
@@ -71,7 +71,8 @@ import {
   FileSpreadsheet,
   Palette,
   LayoutTemplate,
-  Download
+  Download,
+  Plus
 } from 'lucide-react';
 
 // 마크다운 번호 매기기 목록 렌더링 시 사용자가 직접 입력한 번호(예: 1., 2., 3.)와 보기 모드의 번호가 일치하도록 커스텀 렌더러 설정
@@ -635,6 +636,17 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     if (!slashMenuState) return;
     const textarea = textareaRef.current;
     if (!textarea) return;
+
+    if (cmd.id === 'blank-excel') {
+      const text = localContent;
+      const before = text.substring(0, slashMenuState.matchStart);
+      const after = text.substring(slashMenuState.matchEnd);
+      const newBaseContent = before + after;
+      const insertPos = slashMenuState.matchStart;
+      setSlashMenuState(null);
+      handleCreateBlankExcel(newBaseContent, insertPos);
+      return;
+    }
 
     const text = localContent;
     const before = text.substring(0, slashMenuState.matchStart);
@@ -2040,6 +2052,74 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     }
   };
 
+  // 빈 엑셀 스프레드시트 생성 및 즉시 편집 모달 열기
+  const handleCreateBlankExcel = (baseContent?: string, targetPos?: number) => {
+    const now = new Date();
+    const timeStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    const fileName = `스프레드시트_${timeStr}.xlsx`;
+    const defaultSheets: Record<string, (string | number)[][]> = {
+      'Sheet1': [
+        ['항목', '구분', '금액', '비고'],
+        ['', '', '', ''],
+        ['', '', '', ''],
+        ['', '', '', ''],
+      ],
+    };
+    const dataUrl = generateExcelDataUrl(defaultSheets, 'xlsx');
+    const attId = `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+    const updatedAttachments: Record<string, AttachmentItem> = {
+      ...localAttachmentsRef.current,
+      [attId]: {
+        id: attId,
+        name: fileName,
+        type: mimeType,
+        data: dataUrl,
+      },
+    };
+    setLocalAttachments(updatedAttachments);
+    localAttachmentsRef.current = updatedAttachments;
+
+    const insertTag = `\n\n[📊 엑셀: ${fileName}](attachment:${attId})\n\n`;
+    const textarea = textareaRef.current;
+    const content = baseContent !== undefined ? baseContent : localContent;
+
+    let newContent = '';
+    let nextPos = 0;
+
+    if (targetPos !== undefined) {
+      newContent = content.substring(0, targetPos) + insertTag + content.substring(targetPos);
+      nextPos = targetPos + insertTag.length;
+    } else if (textarea) {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      newContent = content.substring(0, start) + insertTag + content.substring(end);
+      nextPos = start + insertTag.length;
+    } else {
+      newContent = `${content}${insertTag}`;
+      nextPos = newContent.length;
+    }
+
+    setLocalContent(newContent);
+    onUpdateNote({ content: newContent, attachments: updatedAttachments });
+    pushHistory(newContent, nextPos);
+
+    if (textarea) {
+      setTimeout(() => {
+        textarea.focus({ preventScroll: true });
+        textarea.setSelectionRange(nextPos, nextPos);
+      }, 0);
+    }
+
+    // 엑셀 웹 스프레드시트 편집기 모달 즉시 열기
+    setActiveExcelEditorModal({
+      attId,
+      data: dataUrl,
+      title: fileName,
+    });
+  };
+
   // 커서 위치에 첨부파일을 깔끔한 단일 줄 태그로 삽입하고 data는 note.attachments에 보관
   const insertAttachmentAtCursor = (
     attName: string,
@@ -2049,7 +2129,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const attId = `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const safeName = attName.replace(/`/g, "'").replace(/[\[\]]/g, '').trim();
     const updatedAttachments: Record<string, AttachmentItem> = {
-      ...localAttachments,
+      ...localAttachmentsRef.current,
       [attId]: {
         id: attId,
         name: attName,
@@ -2059,6 +2139,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     };
 
     setLocalAttachments(updatedAttachments);
+    localAttachmentsRef.current = updatedAttachments;
 
     const isPdf = mimeType === 'application/pdf' || attName.toLowerCase().endsWith('.pdf');
     const isHwp = attName.toLowerCase().endsWith('.hwp') || attName.toLowerCase().endsWith('.hwpx') || mimeType.includes('hwp');
@@ -3606,6 +3687,19 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               <span className="hidden xs:inline">한글</span>
             </button>
 
+            {/* 빈 엑셀 스프레드시트 삽입 및 바로 편집 버튼 */}
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => handleCreateBlankExcel()}
+              className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-emerald-300 text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
+              title="빈 엑셀 스프레드시트 삽입 및 바로 편집"
+            >
+              <Plus size={11} className="text-emerald-400" />
+              <FileSpreadsheet size={12} className="text-emerald-400" />
+              <span className="hidden xs:inline">새 엑셀</span>
+            </button>
+
             {/* 엑셀/CSV 문서 첨부 버튼 */}
             <button
               type="button"
@@ -3613,14 +3707,14 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               onClick={() => excelInputRef.current?.click()}
               disabled={isProcessingExcel}
               className="h-7 px-2 flex items-center gap-1 hover:bg-slate-800 hover:text-emerald-300 text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-md text-[11px] font-medium transition-colors shrink-0 active:scale-90"
-              title="커서 위치에 엑셀/CSV(XLSX, XLS, CSV) 문서 파일 첨부"
+              title="커서 위치에 기존 엑셀/CSV(XLSX, XLS, CSV) 파일 불러오기 첨부"
             >
               {isProcessingExcel ? (
                 <Loader2 size={12} className="animate-spin text-emerald-400" />
               ) : (
                 <FileSpreadsheet size={12} className="text-emerald-400" />
               )}
-              <span className="hidden xs:inline">엑셀</span>
+              <span className="hidden xs:inline">엑셀 첨부</span>
             </button>
 
             {/* 워드(DOCX) 문서 첨부 버튼 */}

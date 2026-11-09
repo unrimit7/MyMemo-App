@@ -19,6 +19,7 @@ import {
   Sparkles,
   Link2,
   LayoutTemplate,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { getNoteTemplates } from '../utils/templates';
 
@@ -64,6 +65,15 @@ export function getSlashCommands(): SlashCommandItem[] {
       icon: <Table size={16} className="text-orange-400" />,
       keywords: ['표', 'table', '스프레드시트', '격자', 'vhy'],
       snippet: '\n\n| 항목 | 내용 | 상태 |\n| :--- | :--- | :---: |\n| 항목 1 | 내용 1 | 완료 |\n| 항목 2 | 내용 2 | 진행중 |\n\n',
+    },
+    {
+      id: 'blank-excel',
+      category: '특수 블록',
+      title: '새 엑셀 스프레드시트 (빈 문서)',
+      description: '메모에 빈 엑셀 문서를 삽입하고 바로 편집기 실행',
+      icon: <FileSpreadsheet size={16} className="text-emerald-400" />,
+      keywords: ['엑셀', '새엑셀', 'excel', '스프레드시트', '시트', '빈문서', '표편집', 'sheet', 'dortpf'],
+      snippet: '',
     },
     {
       id: 'toggle',
