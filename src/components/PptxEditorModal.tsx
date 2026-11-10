@@ -16,6 +16,7 @@ import {
   ImageIcon,
   Maximize2,
   Table as TableIcon,
+  LayoutTemplate,
 } from 'lucide-react';
 import {
   parsePptxPresentation,
@@ -63,8 +64,24 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'split' | 'editOnly' | 'previewOnly'>('split');
   const [previewZoom, setPreviewZoom] = useState<number>(100);
+  const [lockAspectRatio, setLockAspectRatio] = useState<boolean>(true);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const floating = useFloatingWindow({ id: 'pptx-editor', defaultWidth: 940, defaultHeight: 820 });
+
+  // 슬라이드 화면 비율 및 방향(가로/세로) 정보
+  const [presentationAspect, setPresentationAspect] = useState<{
+    slideWidth: number;
+    slideHeight: number;
+    aspectRatio: number;
+    isLandscape: boolean;
+    label: string;
+  }>({
+    slideWidth: 12192000,
+    slideHeight: 6858000,
+    aspectRatio: 16 / 9,
+    isLandscape: true,
+    label: '16:9 와이드 가로',
+  });
 
   // 원본 PPTX 파싱 및 편집용 슬라이드 상태 초기화
   useEffect(() => {
@@ -77,6 +94,37 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
     parsePptxPresentation(data)
       .then((pres: PptxPresentation) => {
         if (!isMounted) return;
+
+        // 프레젠테이션 페이지 속성(가로/세로 및 비율) 분석
+        const w = pres.slideWidth || 12192000;
+        const h = pres.slideHeight || 6858000;
+        const ratio = pres.aspectRatio || (w / h);
+        const isLandscape = pres.isLandscape ?? (ratio >= 1.0);
+
+        let label = isLandscape ? '가로형' : '세로형';
+        if (Math.abs(ratio - 16 / 9) < 0.05) {
+          label = '16:9 와이드 가로';
+        } else if (Math.abs(ratio - 16 / 10) < 0.05) {
+          label = '16:10 와이드 가로';
+        } else if (Math.abs(ratio - 4 / 3) < 0.05) {
+          label = '4:3 일반 가로';
+        } else if (Math.abs(ratio - Math.SQRT2) < 0.05) {
+          label = 'A4 가로';
+        } else if (Math.abs(ratio - (1 / Math.SQRT2)) < 0.05) {
+          label = 'A4 세로';
+        } else if (Math.abs(ratio - 9 / 16) < 0.05) {
+          label = '9:16 와이드 세로';
+        } else {
+          label = ratio >= 1 ? `${ratio.toFixed(2)}:1 가로` : `1:${(1 / ratio).toFixed(2)} 세로`;
+        }
+
+        setPresentationAspect({
+          slideWidth: w,
+          slideHeight: h,
+          aspectRatio: ratio,
+          isLandscape,
+          label,
+        });
 
         const editableList: EditableSlide[] = pres.slides.map((s) => {
           const bodyLines = s.paragraphs
@@ -685,67 +733,110 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
                 </div>
               )}
 
-              {/* 실시간 16:9 슬라이드 프리뷰 영역 */}
-              {viewMode !== 'editOnly' && (
-                <div className={`p-3 sm:p-5 md:p-6 flex flex-col items-center justify-start bg-slate-950 overflow-y-auto ${
-                  viewMode === 'split' ? 'w-full md:w-1/2' : 'w-full'
-                }`}>
-                  {/* 상단 컨트롤 바 (슬라이드 번호, 줌 확대/축소) */}
-                  <div className={`w-full flex items-center justify-between text-xs text-slate-400 mb-2.5 px-1 ${
-                    viewMode === 'previewOnly' ? 'max-w-5xl' : 'max-w-3xl'
-                  }`}>
-                    <span className="flex items-center gap-1.5 font-semibold text-orange-400">
-                      <Eye size={13} />
-                      <span>슬라이드 #{activeSlideIndex + 1} 미리보기</span>
-                    </span>
+              {/* 실시간 슬라이드 프리뷰 영역 (PPTX 페이지 속성: 가로/세로 비율 연동) */}
+              {viewMode !== 'editOnly' && (() => {
+                const slideAspect = presentationAspect.aspectRatio || (16 / 9);
+                const isLandscape = presentationAspect.isLandscape;
+                const previewMaxWidth = viewMode === 'previewOnly' && lockAspectRatio
+                  ? isLandscape
+                    ? `min(94vw, calc(80vh * ${slideAspect}))`
+                    : `min(88vw, calc(82vh * ${slideAspect}))`
+                  : '100%';
 
-                    <div className="flex items-center gap-2">
-                      {/* 줌 조절 버튼 */}
-                      <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-lg p-0.5 text-[11px]">
-                        <button
-                          type="button"
-                          onClick={() => setPreviewZoom((z) => Math.max(50, z - 15))}
-                          className="px-2 py-0.5 hover:bg-slate-800 rounded text-slate-300 cursor-pointer font-bold"
-                          title="축소"
+                return (
+                  <div className={`p-3 sm:p-5 md:p-6 flex flex-col items-center justify-start bg-slate-950 overflow-y-auto ${
+                    viewMode === 'split' ? 'w-full md:w-1/2' : 'w-full'
+                  }`}>
+                    {/* 상단 컨트롤 바 (슬라이드 번호, 페이지 속성 표시, 비율 고정 토글, 줌) */}
+                    <div
+                      style={{ maxWidth: previewMaxWidth }}
+                      className="w-full flex flex-wrap items-center justify-between text-xs text-slate-400 mb-2.5 px-1 gap-2"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="flex items-center gap-1.5 font-semibold text-orange-400">
+                          <Eye size={13} />
+                          <span>슬라이드 #{activeSlideIndex + 1} 미리보기</span>
+                        </span>
+
+                        {/* PPTX 페이지 속성 배지 (가로형/세로형 및 실제 비율) */}
+                        <span
+                          className={`px-2 py-0.5 rounded-md text-[11px] font-mono font-medium flex items-center gap-1 border ${
+                            isLandscape
+                              ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
+                              : 'bg-indigo-950/40 border-indigo-500/40 text-indigo-300'
+                          }`}
+                          title={`파워포인트 원본 페이지 속성: ${presentationAspect.label} (${presentationAspect.slideWidth} × ${presentationAspect.slideHeight} EMU)`}
                         >
-                          -
-                        </button>
-                        <span className="font-mono text-slate-300 px-1 min-w-[36px] text-center">{previewZoom}%</span>
-                        <button
-                          type="button"
-                          onClick={() => setPreviewZoom((z) => Math.min(160, z + 15))}
-                          className="px-2 py-0.5 hover:bg-slate-800 rounded text-slate-300 cursor-pointer font-bold"
-                          title="확대"
-                        >
-                          +
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPreviewZoom(100)}
-                          className="px-2 py-0.5 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 cursor-pointer text-[10px]"
-                          title="100% 기본 크기 복원"
-                        >
-                          100%
-                        </button>
+                          <LayoutTemplate size={11} />
+                          <span>{presentationAspect.label}</span>
+                        </span>
                       </div>
 
-                      <span className="font-mono text-slate-500 hidden sm:inline">16 : 9</span>
-                    </div>
-                  </div>
+                      <div className="flex items-center gap-2">
+                        {/* 비율 고정 vs 전체 펼치기 토글 */}
+                        <button
+                          type="button"
+                          onClick={() => setLockAspectRatio((prev) => !prev)}
+                          className={`px-2 py-1 rounded-lg text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
+                            lockAspectRatio
+                              ? 'bg-orange-500/15 border-orange-500/40 text-orange-300 hover:bg-orange-500/25'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                          }`}
+                          title={lockAspectRatio ? '클릭 시 비율 제한을 풀고 내용 길이에 맞춰 전체를 펼쳐서 봅니다' : '클릭 시 실제 파워포인트 가로 슬라이드 비율(16:9)로 고정합니다'}
+                        >
+                          <span>{lockAspectRatio ? '슬라이드 비율 고정' : '내용 펼쳐보기'}</span>
+                        </button>
 
-                  {/* 16:9 슬라이드 카드 (크기 확장 및 줌 지원) */}
-                  <div
-                    style={{
-                      transform: previewZoom !== 100 ? `scale(${previewZoom / 100})` : undefined,
-                      transformOrigin: 'top center',
-                      transition: 'transform 0.12s ease-out',
-                    }}
-                    className={`w-full bg-white text-slate-900 rounded-2xl shadow-2xl border border-slate-200 flex flex-col shrink-0 mb-8 ${
-                      viewMode === 'previewOnly' ? 'max-w-5xl min-h-[500px]' : 'max-w-3xl min-h-[380px]'
-                    }`}
-                  >
-                    <div className="h-2.5 bg-gradient-to-r from-orange-500 via-amber-500 to-indigo-600 rounded-t-2xl shrink-0" />
-                    <div className="p-6 sm:p-8 flex flex-col justify-between flex-1">
+                        {/* 줌 조절 버튼 */}
+                        <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-lg p-0.5 text-[11px]">
+                          <button
+                            type="button"
+                            onClick={() => setPreviewZoom((z) => Math.max(50, z - 15))}
+                            className="px-2 py-0.5 hover:bg-slate-800 rounded text-slate-300 cursor-pointer font-bold"
+                            title="축소"
+                          >
+                            -
+                          </button>
+                          <span className="font-mono text-slate-300 px-1 min-w-[36px] text-center">{previewZoom}%</span>
+                          <button
+                            type="button"
+                            onClick={() => setPreviewZoom((z) => Math.min(160, z + 15))}
+                            className="px-2 py-0.5 hover:bg-slate-800 rounded text-slate-300 cursor-pointer font-bold"
+                            title="확대"
+                          >
+                            +
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPreviewZoom(100)}
+                            className="px-2 py-0.5 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 cursor-pointer text-[10px]"
+                            title="100% 기본 크기 복원"
+                          >
+                            100%
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 슬라이드 카드 (가로형/세로형 페이지 속성 엄격 준수) */}
+                    <div
+                      style={{
+                        aspectRatio: lockAspectRatio ? `${slideAspect}` : undefined,
+                        maxWidth: previewMaxWidth,
+                        width: lockAspectRatio && !isLandscape ? `calc(82vh * ${slideAspect})` : '100%',
+                        maxHeight: lockAspectRatio
+                          ? isLandscape
+                            ? viewMode === 'previewOnly' ? '80vh' : undefined
+                            : '82vh'
+                          : undefined,
+                        transform: previewZoom !== 100 ? `scale(${previewZoom / 100})` : undefined,
+                        transformOrigin: 'top center',
+                        transition: 'transform 0.12s ease-out',
+                      }}
+                      className="bg-white text-slate-900 rounded-2xl shadow-2xl border border-slate-200 flex flex-col shrink-0 mb-8 overflow-hidden"
+                    >
+                      <div className="h-2.5 bg-gradient-to-r from-orange-500 via-amber-500 to-indigo-600 rounded-t-2xl shrink-0" />
+                      <div className="p-6 sm:p-8 flex flex-col justify-between flex-1 overflow-y-auto">
                       <div>
                         {/* 슬라이드 대제목 */}
                         <h1 className="text-base sm:text-xl md:text-2xl font-extrabold text-slate-900 pb-2.5 mb-3.5 border-b-2 border-orange-500/30 whitespace-pre-wrap leading-snug">
@@ -837,7 +928,8 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
                     </div>
                   </div>
                 </div>
-              )}
+              );
+            })()}
             </div>
           )}
         </div>

@@ -110,6 +110,8 @@ export interface PptxPresentation {
   slideWidth: number;
   slideHeight: number;
   aspectRatio: number; // 16/9 = 1.7777...
+  isLandscape?: boolean;
+  orientation?: 'landscape' | 'portrait';
   slides: PptxSlide[];
   rawZip?: JSZip;
 }
@@ -743,11 +745,24 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
       const presText = await presFile.async('text');
       const presDoc = parseXml(presText);
 
-      // sldSz (슬라이드 크기)
+      // sldSz (슬라이드 크기 및 방향 속성)
       const sldSzList = getElementsByLocalName(presDoc, 'sldSz');
       if (sldSzList.length > 0) {
-        const cx = parseInt(sldSzList[0].getAttribute('cx') || '0', 10);
-        const cy = parseInt(sldSzList[0].getAttribute('cy') || '0', 10);
+        let cx = parseInt(sldSzList[0].getAttribute('cx') || '0', 10);
+        let cy = parseInt(sldSzList[0].getAttribute('cy') || '0', 10);
+        const orient = (sldSzList[0].getAttribute('orient') || '').toLowerCase();
+
+        // orient 속성이 명시된 경우 가로/세로 방향 보정
+        if (orient === 'portrait' && cx > cy) {
+          const tmp = cx;
+          cx = cy;
+          cy = tmp;
+        } else if (orient === 'landscape' && cy > cx) {
+          const tmp = cx;
+          cx = cy;
+          cy = tmp;
+        }
+
         if (cx > 0 && cy > 0) {
           slideWidth = cx;
           slideHeight = cy;
@@ -1261,6 +1276,8 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
     slideWidth,
     slideHeight,
     aspectRatio,
+    isLandscape: slideWidth >= slideHeight,
+    orientation: slideWidth >= slideHeight ? 'landscape' : 'portrait',
     slides,
     rawZip: zip,
   };
