@@ -11,6 +11,7 @@ import {
   ZoomOut 
 } from 'lucide-react';
 import { parseExcelWorkbook, sheetRowsToMarkdownTable, type ParsedWorkbook } from '../utils/excelViewer';
+import { useFloatingWindow } from './useFloatingWindow';
 
 interface ExcelViewerModalProps {
   isOpen: boolean;
@@ -49,6 +50,7 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
   const [copied, setCopied] = useState<boolean>(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const floating = useFloatingWindow({ id: 'excel-viewer', defaultWidth: 920, defaultHeight: 800 });
 
   // 워크북 로드
   useEffect(() => {
@@ -143,11 +145,14 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-2 md:p-4 select-none animate-fadeIn">
+    <div className={floating.modalWrapperClass}>
       {/* 뷰어 메인 팝업 컨테이너 */}
-      <div className="w-full max-w-7xl h-[94vh] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+      <div {...floating.windowContainerProps}>
         {/* 상단 툴바 헤더 */}
-        <div className="px-4 py-3 bg-slate-900/95 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div 
+          {...floating.headerProps}
+          className="px-4 py-3 bg-slate-900/95 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0"
+        >
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
               <FileSpreadsheet size={18} />
@@ -265,6 +270,8 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
               <Download size={15} />
             </button>
 
+            {floating.toggleFloatingButton}
+
             <button
               type="button"
               onClick={onClose}
@@ -372,6 +379,8 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
             마우스 휠이나 터치로 상하좌우 부드럽게 스크롤할 수 있습니다.
           </div>
         </div>
+
+        {floating.resizeHandle}
       </div>
     </div>
   );

@@ -18,7 +18,8 @@ import {
   PanelLeftOpen,
   RefreshCw,
   Clock,
-  ArrowDownAZ
+  ArrowDownAZ,
+  Layers
 } from 'lucide-react';
 
 interface NoteListProps {
@@ -43,6 +44,7 @@ interface NoteListProps {
   pendingCount?: number;
   onSync?: () => void;
   isSyncing?: boolean;
+  onOpenFloatingNote?: (id: string) => void;
 }
 
 export const NoteList: React.FC<NoteListProps> = ({
@@ -67,6 +69,7 @@ export const NoteList: React.FC<NoteListProps> = ({
   pendingCount,
   onSync,
   isSyncing,
+  onOpenFloatingNote,
 }) => {
   const [internalSearchQuery, setInternalSearchQuery] = useState('');
   const searchQuery = externalSearchQuery !== undefined ? externalSearchQuery : internalSearchQuery;
@@ -414,16 +417,32 @@ export const NoteList: React.FC<NoteListProps> = ({
                     {formatDate(note.updatedAt)}
                   </span>
 
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteNote(note.id);
-                    }}
-                    className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 p-1 rounded transition-opacity"
-                    title="메모 삭제"
-                  >
-                    <Trash2 size={12} />
-                  </button>
+                  <div className="flex items-center gap-0.5">
+                    {onOpenFloatingNote && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenFloatingNote(note.id);
+                        }}
+                        className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-indigo-400 p-1 rounded transition-opacity"
+                        title="이 메모를 별도의 플로팅(창 분리) 창으로 열어 동시에 비교하기"
+                      >
+                        <Layers size={12} />
+                      </button>
+                    )}
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteNote(note.id);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 p-1 rounded transition-opacity"
+                      title="메모 삭제"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
                 </div>
               </div>
             );

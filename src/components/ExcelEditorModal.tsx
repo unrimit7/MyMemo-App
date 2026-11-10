@@ -15,6 +15,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { parseExcelWorkbook, generateExcelDataUrl } from '../utils/excelViewer';
+import { useFloatingWindow } from './useFloatingWindow';
 
 interface ExcelEditorModalProps {
   isOpen: boolean;
@@ -48,6 +49,7 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
   const format: 'xlsx' | 'csv' = isCsv ? 'csv' : 'xlsx';
 
   // 시트별 2차원 데이터 상태
+  const floating = useFloatingWindow({ id: 'excel-editor', defaultWidth: 940, defaultHeight: 820 });
   const [sheets, setSheets] = useState<Record<string, (string | number)[][]>>({});
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [activeSheetName, setActiveSheetName] = useState<string>('');
@@ -532,14 +534,17 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-2 md:p-4 select-none animate-fadeIn"
+      className={floating.modalWrapperClass}
       onKeyDown={handleKeyDown}
       tabIndex={0}
     >
       {/* 팝업 컨테이너 */}
-      <div className="w-full max-w-7xl h-[95vh] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+      <div {...floating.windowContainerProps}>
         {/* 상단 1단: 제목 & 저장 / 다운로드 / 닫기 헤더 */}
-        <div className="px-4 py-2.5 bg-slate-900/95 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div 
+          {...floating.headerProps}
+          className="px-4 py-2.5 bg-slate-900/95 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0"
+        >
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
               <FileSpreadsheet size={18} />
@@ -598,6 +603,8 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
             >
               <Download size={15} />
             </button>
+
+            {floating.toggleFloatingButton}
 
             {/* 닫기 버튼 */}
             <button
@@ -914,6 +921,8 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
             <span>💾 [저장 및 반영]을 누르면 메모 본문 뷰어와 동기화됩니다.</span>
           </div>
         </div>
+
+        {floating.resizeHandle}
       </div>
     </div>
   );

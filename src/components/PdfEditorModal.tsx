@@ -25,6 +25,7 @@ import { PDFDocument } from 'pdf-lib';
 import { loadPdfDocument, renderPdfPageToCanvas, invalidatePdfCache } from '../utils/pdfViewer';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { ColorEditModal } from './ColorEditModal';
+import { useFloatingWindow } from './useFloatingWindow';
 
 interface Stroke {
   id: string;
@@ -122,6 +123,7 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
   const [totalPages, setTotalPages] = useState<number>(1);
   const [zoom, setZoom] = useState<number>(1.0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const floating = useFloatingWindow({ id: 'pdf-editor', defaultWidth: 940, defaultHeight: 840 });
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -1341,9 +1343,13 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-md text-slate-100 animate-in fade-in select-none">
-      {/* 상단 툴바: 제목, 도구 선택, 저장 및 닫기 */}
-      <div className="flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-800 gap-2 shrink-0 overflow-x-auto">
+    <div className={floating.modalWrapperClass}>
+      <div {...floating.windowContainerProps}>
+        {/* 상단 툴바: 제목, 도구 선택, 저장 및 닫기 */}
+        <div 
+          {...floating.headerProps}
+          className="flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-800 gap-2 shrink-0 overflow-x-auto"
+        >
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-emerald-400 font-bold text-xs sm:text-sm">✏️ PDF 주석/서명</span>
           <span className="text-xs sm:text-sm font-semibold truncate text-slate-200 max-w-[120px] sm:max-w-[200px]" title={title}>
@@ -1496,6 +1502,8 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
             <Download size={14} />
             <span className="hidden sm:inline">다운로드</span>
           </button>
+
+          {floating.toggleFloatingButton}
 
           <button
             type="button"
@@ -2367,6 +2375,9 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
           onClose={() => setShowColorEditModal(false)}
         />
       )}
+
+      {floating.resizeHandle}
     </div>
-  );
+  </div>
+);
 };

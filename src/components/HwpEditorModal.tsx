@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Save, Download, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
 import { createEditor, type RhwpEditor } from '@rhwp/editor';
+import { useFloatingWindow } from './useFloatingWindow';
 
 interface HwpEditorModalProps {
   isOpen: boolean;
@@ -51,6 +52,7 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
 
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<RhwpEditor | null>(null);
+  const floating = useFloatingWindow({ id: 'hwp-editor', defaultWidth: 920, defaultHeight: 820 });
 
   const isHwpx = title.toLowerCase().endsWith('.hwpx');
   const mimeType = isHwpx ? 'application/vnd.hancom.hwpx' : 'application/x-hwp';
@@ -202,12 +204,16 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col bg-slate-950 animate-in fade-in duration-200"
+      className={floating.modalWrapperClass}
       role="dialog"
       aria-modal="true"
     >
-      {/* 상단 헤더 바 */}
-      <div className="flex items-center justify-between gap-2 px-3 sm:px-5 py-2.5 bg-slate-900 border-b border-slate-800 text-slate-200 shrink-0 shadow-md">
+      <div {...floating.windowContainerProps}>
+        {/* 상단 헤더 바 */}
+        <div 
+          {...floating.headerProps}
+          className="flex items-center justify-between gap-2 px-3 sm:px-5 py-2.5 bg-slate-900 border-b border-slate-800 text-slate-200 shrink-0 shadow-md"
+        >
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-lg">✏️</span>
           <div className="min-w-0">
@@ -263,6 +269,8 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
             <span className="hidden md:inline">다운로드</span>
           </button>
 
+          {floating.toggleFloatingButton}
+
           {/* 닫기 버튼 */}
           <button
             type="button"
@@ -307,6 +315,9 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
         {/* rhwp 에디터가 마운트될 DOM 컨테이너 */}
         <div ref={containerRef} className="w-full h-full" />
       </div>
+
+      {floating.resizeHandle}
     </div>
-  );
+  </div>
+);
 };

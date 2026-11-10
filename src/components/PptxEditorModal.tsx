@@ -22,6 +22,7 @@ import {
   updatePptxSlideTexts,
   type PptxPresentation,
 } from '../utils/pptxViewer';
+import { useFloatingWindow } from './useFloatingWindow';
 
 interface PptxEditorModalProps {
   isOpen: boolean;
@@ -62,6 +63,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'split' | 'editOnly' | 'previewOnly'>('split');
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const floating = useFloatingWindow({ id: 'pptx-editor', defaultWidth: 940, defaultHeight: 820 });
 
   // 원본 PPTX 파싱 및 편집용 슬라이드 상태 초기화
   useEffect(() => {
@@ -307,10 +309,13 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
   const currentSlide: EditableSlide | undefined = slides[activeSlideIndex];
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black/90 backdrop-blur-sm p-2 md:p-4 select-none animate-fadeIn">
-      <div className="w-full h-full max-w-7xl mx-auto flex flex-col bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden text-slate-200">
+    <div className={floating.modalWrapperClass}>
+      <div {...floating.windowContainerProps} className={floating.windowContainerProps.className + ' text-slate-200'}>
         {/* 상단 헤더 바 */}
-        <div className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div 
+          {...floating.headerProps}
+          className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0"
+        >
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="p-1.5 rounded-lg bg-orange-500/15 text-orange-400 border border-orange-500/30">
               <Presentation size={18} />
@@ -395,11 +400,13 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
             <button
               type="button"
               onClick={handleDownload}
-              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition-colors cursor-pointer"
+              className="p-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition-colors cursor-pointer"
               title="수정된 파워포인트 파일 다운로드"
             >
               <Download size={15} />
             </button>
+
+            {floating.toggleFloatingButton}
 
             {/* 닫기 */}
             <button
@@ -775,6 +782,8 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
             </div>
           )}
         </div>
+
+        {floating.resizeHandle}
       </div>
 
       {/* 고해상도 이미지 라이트박스 (클릭 시 원본 확대 모달) */}

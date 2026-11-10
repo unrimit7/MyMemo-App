@@ -30,6 +30,7 @@ import {
   encodeStringToBytes,
   type InspectorData,
 } from '../utils/hexViewer';
+import { useFloatingWindow } from './useFloatingWindow';
 
 // 울트라에디트(UltraEdit)의 상징적인 10/010 16진수 아이콘 (Image 2 & 3)
 export const UltraEditHexIcon: React.FC<{ size?: number; className?: string }> = ({ size = 18, className = '' }) => (
@@ -93,6 +94,7 @@ export const HexEditorModal: React.FC<HexEditorModalProps> = ({
   onSave,
 }) => {
   // 1. 보기 모드: 'hex' (울트라에디트 16진수 모드) | 'text' (일반 텍스트/코드 편집 모드)
+  const floating = useFloatingWindow({ id: 'hex-editor', defaultWidth: 960, defaultHeight: 820 });
   const [viewMode, setViewMode] = useState<'hex' | 'text'>('hex');
   const [textContent, setTextContent] = useState<string>('');
   const [encoding, setEncoding] = useState<'utf-8' | 'euc-kr' | 'latin1'>('utf-8');
@@ -790,14 +792,17 @@ export const HexEditorModal: React.FC<HexEditorModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex flex-col items-center justify-center p-2 md:p-4 select-none animate-fadeIn"
+      className={floating.modalWrapperClass}
       onKeyDown={handleKeyDown}
       tabIndex={0}
     >
       {/* 팝업 컨테이너 (울트라에디트 다크 테마) */}
-      <div className="w-full max-w-7xl h-[95vh] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-slate-200">
+      <div {...floating.windowContainerProps} className={floating.windowContainerProps.className + ' text-slate-200'}>
         {/* 상단 1단: 제목 & 울트라에디트 보기 전환(10 010 <-> 텍스트) & 액션 */}
-        <div className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div 
+          {...floating.headerProps}
+          className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0"
+        >
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
               <Binary size={18} />
@@ -895,11 +900,13 @@ export const HexEditorModal: React.FC<HexEditorModalProps> = ({
             <button
               type="button"
               onClick={handleDownload}
-              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition-colors cursor-pointer"
+              className="p-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition-colors cursor-pointer"
               title="기기로 파일 다운로드"
             >
               <Download size={15} />
             </button>
+
+            {floating.toggleFloatingButton}
 
             {/* 닫기 버튼 */}
             <button
@@ -1433,6 +1440,8 @@ export const HexEditorModal: React.FC<HexEditorModalProps> = ({
             </div>
           </div>
         )}
+
+        {floating.resizeHandle}
       </div>
     </div>
   );

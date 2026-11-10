@@ -21,6 +21,7 @@ import {
   type PptxSlide,
   type PptxSlideElement,
 } from '../utils/pptxViewer';
+import { useFloatingWindow } from './useFloatingWindow';
 
 interface PptxViewerModalProps {
   isOpen: boolean;
@@ -68,6 +69,7 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const floating = useFloatingWindow({ id: 'pptx-viewer', defaultWidth: 940, defaultHeight: 820 });
 
   // PPTX 데이터 로드
   useEffect(() => {
@@ -445,18 +447,18 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
   return (
     <div
       ref={containerRef}
-      className={`fixed inset-0 z-50 flex flex-col bg-black/95 backdrop-blur-sm select-none transition-all ${
-        isSlideShow ? 'p-1 sm:p-2' : 'p-2 md:p-4'
-      }`}
+      className={isSlideShow ? 'fixed inset-0 z-50 flex flex-col bg-black/95 select-none p-1 sm:p-2' : floating.modalWrapperClass}
     >
       <div
-        className={`w-full h-full flex flex-col bg-slate-900 border border-slate-800 shadow-2xl overflow-hidden ${
-          isSlideShow ? 'rounded-none border-none' : 'rounded-2xl max-w-7xl mx-auto'
-        }`}
+        {...(isSlideShow ? {} : floating.windowContainerProps)}
+        className={isSlideShow ? 'w-full h-full flex flex-col bg-slate-900 overflow-hidden' : floating.windowContainerProps.className}
       >
         {/* 상단 툴바 (슬라이드 쇼 모드가 아닐 때) */}
         {!isSlideShow ? (
-          <div className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div 
+            {...floating.headerProps}
+            className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0"
+          >
             {/* 좌측: 타이틀 및 슬라이드 카운터 */}
             <div className="flex items-center gap-3 min-w-0">
               <span className="p-1.5 rounded-lg bg-orange-500/15 text-orange-400 border border-orange-500/30">
@@ -527,6 +529,8 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
               >
                 <Download size={15} />
               </button>
+
+              {floating.toggleFloatingButton}
 
               {/* 닫기 버튼 */}
               <button
@@ -884,6 +888,8 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
             </div>
           </div>
         </div>
+
+        {floating.resizeHandle}
       </div>
 
       {/* 고해상도 이미지 라이트박스 */}

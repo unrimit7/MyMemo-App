@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Download, FileText, Check, RotateCw, Edit3 } from 'lucide-react';
 import { loadHwpDocument, renderHwpPageToSvg, extractHwpText, rotateSvg } from '../utils/hwpViewer';
 import type { HwpDocument } from '@rhwp/core';
+import { useFloatingWindow } from './useFloatingWindow';
 
 interface HwpViewerModalProps {
   isOpen: boolean;
@@ -34,6 +35,7 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
 
   const containerRef = useRef<HTMLDivElement>(null);
   const lastTapRef = useRef<number>(0);
+  const floating = useFloatingWindow({ id: 'hwp-viewer', defaultWidth: 880, defaultHeight: 800 });
 
   // HWP 문서 로드
   useEffect(() => {
@@ -288,12 +290,16 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-md animate-in fade-in duration-200 select-none"
+      className={floating.modalWrapperClass}
       role="dialog"
       aria-modal="true"
     >
-      {/* 상단 툴바 (모바일/PC 컴팩트 구성) */}
-      <div className="flex items-center justify-between gap-1 sm:gap-2 px-2 sm:px-4 py-2 bg-slate-900 border-b border-slate-800 text-slate-200 shrink-0 z-10 shadow-lg">
+      <div {...floating.windowContainerProps}>
+        {/* 상단 툴바 (모바일/PC 컴팩트 구성) */}
+        <div 
+          {...floating.headerProps}
+          className="flex items-center justify-between gap-1 sm:gap-2 px-2 sm:px-4 py-2 bg-slate-900 border-b border-slate-800 text-slate-200 shrink-0 z-10 shadow-lg"
+        >
         {/* 제목 */}
         <div className="flex items-center gap-1.5 min-w-0 max-w-[90px] xs:max-w-[130px] sm:max-w-xs md:max-w-md">
           <span className="text-base sm:text-lg shrink-0">📝</span>
@@ -407,6 +413,8 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
             <span className="hidden md:inline">다운로드</span>
           </button>
 
+          {floating.toggleFloatingButton}
+
           <button
             type="button"
             onClick={onClose}
@@ -461,6 +469,9 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
           )}
         </div>
       </div>
+
+      {floating.resizeHandle}
     </div>
-  );
+  </div>
+);
 };

@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { extractDocxTextAndHtml, generateDocxDataUrl } from '../utils/docxViewer';
 import { marked } from 'marked';
+import { useFloatingWindow } from './useFloatingWindow';
 
 interface DocxEditorModalProps {
   isOpen: boolean;
@@ -48,6 +49,7 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
   const [viewMode, setViewMode] = useState<'edit' | 'preview' | 'split'>('split');
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const floating = useFloatingWindow({ id: 'docx-editor', defaultWidth: 920, defaultHeight: 820 });
 
   // 워드 내용 추출 및 초기화
   useEffect(() => {
@@ -154,11 +156,14 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center p-2 md:p-4 select-none animate-fadeIn">
+    <div className={floating.modalWrapperClass}>
       {/* 팝업 컨테이너 (완전 불투명) */}
-      <div className="w-full max-w-6xl h-[95vh] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+      <div {...floating.windowContainerProps}>
         {/* 상단 1단: 제목 & 저장 / 다운로드 / 닫기 헤더 */}
-        <div className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div 
+          {...floating.headerProps}
+          className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0"
+        >
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="p-1.5 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
               <FileText size={18} />
@@ -258,6 +263,8 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
             >
               <Download size={15} />
             </button>
+
+            {floating.toggleFloatingButton}
 
             {/* 닫기 버튼 */}
             <button
@@ -404,6 +411,8 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
           <span>문서 글자 수: {content.length}자</span>
           <span className="hidden sm:inline">💾 [저장 및 반영]을 클릭하면 워드(.docx) 규격으로 자동 인코딩되어 메모와 동기화됩니다.</span>
         </div>
+
+        {floating.resizeHandle}
       </div>
     </div>
   );

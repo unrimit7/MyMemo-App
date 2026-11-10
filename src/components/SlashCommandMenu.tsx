@@ -85,6 +85,15 @@ export function getSlashCommands(): SlashCommandItem[] {
       snippet: '\n<details>\n<summary>여기를 클릭하여 상세 내용 펼치기</summary>\n\n숨겨둘 상세 내용이나 부가 설명을 여기에 작성하세요.\n- 상세 항목 A\n- 상세 항목 B\n</details>\n\n',
     },
     {
+      id: 'doc-toggle',
+      category: '특수 블록',
+      title: '문서 접이식 토글 (<details>)',
+      description: '문서 미리보기를 제목 아래 접어둘 수 있는 토글 상자',
+      icon: <ChevronRight size={16} className="text-indigo-400" />,
+      keywords: ['문서토글', '파일토글', '문서접기', '토글', 'details', 'anstjxhrmf'],
+      snippet: '\n<details>\n<summary>📄 문서 제목을 입력하세요</summary>\n\n여기에 문서 첨부 링크([📄 워드/엑셀/한글/PDF: ...](attachment:...))를 넣으세요.\n\n</details>\n\n',
+    },
+    {
       id: 'callout-note',
       category: '특수 블록',
       title: '참고 콜아웃 (Note)',

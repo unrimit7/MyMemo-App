@@ -72,7 +72,8 @@ import {
   Palette,
   LayoutTemplate,
   Download,
-  Plus
+  Plus,
+  Layers
 } from 'lucide-react';
 
 // 마크다운 번호 매기기 목록 렌더링 시 사용자가 직접 입력한 번호(예: 1., 2., 3.)와 보기 모드의 번호가 일치하도록 커스텀 렌더러 설정
@@ -126,6 +127,7 @@ interface NoteEditorProps {
   onToggleNoteList?: () => void;
   onSync?: () => void;
   isSyncing?: boolean;
+  onOpenFloatingNote?: (id: string) => void;
 }
 
 export const NoteEditor: React.FC<NoteEditorProps> = ({
@@ -145,6 +147,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   onToggleNoteList,
   onSync,
   isSyncing,
+  onOpenFloatingNote,
 }) => {
   // 모바일/휴대폰 환경 기본 감지 (휴대폰에서는 기본 모드를 '보기 모드'로 제공)
   const isMobileEnvironment = () => {
@@ -727,6 +730,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       let normalizedContent = (content || '').replace(/^(\s*-\s*\[[ xX]\])([^\s\n])/gm, '$1 $2');
       // ==형광펜== 문법 지원
       normalizedContent = normalizedContent.replace(/==([^=\n]+)==/g, '<mark style="background-color: #fef08a; color: #0f172a; padding: 2px 5px; border-radius: 4px;">$1</mark>');
+      // <summary> 태그 뒤에 빈 줄이 없으면 마크다운 파싱을 위해 자동 줄바꿈 보정
+      normalizedContent = normalizedContent.replace(/(<summary>[\s\S]*?<\/summary>)\s*([^\s\n<])/gi, '$1\n\n$2');
       let rawHtml = marked.parse(normalizedContent, { breaks: true, gfm: true }) as string;
 
       // 표(table)를 모바일 가로 스크롤 컨테이너로 감싸 좁은 화면에서 컬럼이 찌그러지는 현상 방지
@@ -1140,6 +1145,31 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         renderInlineDocx.current(attId);
       }
     });
+
+    // <details> 토글 목록이 펼쳐질 때 내부의 워드/한글/PDF 뷰어 자동 재렌더링
+    const handleDetailsToggle = (e: Event) => {
+      const details = e.target as HTMLDetailsElement;
+      if (!details || !details.open) return;
+      const dViewers = details.querySelectorAll<HTMLElement>('.docx-inline-viewer');
+      dViewers.forEach((v) => {
+        const attId = v.getAttribute('data-att-id');
+        if (attId) renderInlineDocx.current(attId);
+      });
+      const hViewers = details.querySelectorAll<HTMLElement>('.hwp-inline-viewer');
+      hViewers.forEach((v) => {
+        const attId = v.getAttribute('data-att-id');
+        if (attId) renderInlineHwp.current(attId);
+      });
+      const pViewers = details.querySelectorAll<HTMLElement>('.pdf-inline-viewer');
+      pViewers.forEach((v) => {
+        const attId = v.getAttribute('data-att-id');
+        if (attId) renderInlinePdf.current(attId);
+      });
+    };
+    preview.addEventListener('toggle', handleDetailsToggle, true);
+    return () => {
+      preview.removeEventListener('toggle', handleDetailsToggle, true);
+    };
   }, [renderedPreviewHtml, viewMode, localAttachments]);
 
   // 글자 색상 및 형광펜 팔레트 팝업 상태 (훅은 조건문 위에 위치)
@@ -2988,6 +3018,49 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       return;
     }
 
+    // 7-14. 첨부파일 [📁 접기 / 📂 접기 해제] 원클릭 토글 변환
+    const toggleAttBtn = target.closest<HTMLElement>('.att-btn-toggle');
+    if (toggleAttBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = toggleAttBtn.getAttribute('data-att-id');
+      const fileName = toggleAttBtn.getAttribute('data-file-name') || '문서';
+      if (!attId) return;
+
+      const content = localContent;
+      // 1. 이미 <details> 안에 감싸져 있는지 확인
+      const wrappedRegex = new RegExp(
+        `[\\r\\n]*<details[^>]*>\\s*<summary>[\\s\\S]*?<\\/summary>\\s*([\\s\\S]*?(!?\\[[^\\]]*\\]\\((?:attachment:)?${attId}\\))[\\s\\S]*?)\\s*<\\/details>[\\r\\n]*`,
+        'i'
+      );
+      const match = content.match(wrappedRegex);
+
+      if (match) {
+        // 이미 토글 상태 -> 토글 해제 (내부 첨부 태그만 유지)
+        const innerContent = match[1].trim();
+        const newContent = content.replace(wrappedRegex, `\n\n${innerContent}\n\n`);
+        setLocalContent(newContent);
+        debouncedSyncToParent({ content: newContent });
+        pushHistory(newContent);
+      } else {
+        // 일반 상태 -> <details><summary>... 로 감싸기
+        const plainAttRegex = new RegExp(
+          `[\\r\\n]*(!?\\[[^\\]]*\\]\\((?:attachment:)?${attId}\\))[\\r\\n]*`,
+          'i'
+        );
+        const plainMatch = content.match(plainAttRegex);
+        if (plainMatch) {
+          const rawTag = plainMatch[1].trim();
+          const wrappedBlock = `\n\n<details>\n<summary>📄 ${fileName}</summary>\n\n${rawTag}\n\n</details>\n\n`;
+          const newContent = content.replace(plainAttRegex, wrappedBlock);
+          setLocalContent(newContent);
+          debouncedSyncToParent({ content: newContent });
+          pushHistory(newContent);
+        }
+      }
+      return;
+    }
+
     // 8. 링크(<a>) 클릭 처리: PWA 및 모바일/PC 어디서나 확실하게 새 창(새 브라우저 탭)으로 열기
     const anchor = target.closest('a');
     if (anchor && anchor.href) {
@@ -3265,6 +3338,19 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               <Columns size={13} />
             </button>
           </div>
+
+          {/* 플로팅 창으로 열기 (창 분리) 버튼 */}
+          {onOpenFloatingNote && note && (
+            <button
+              type="button"
+              onClick={() => onOpenFloatingNote(note.id)}
+              className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-indigo-300 border border-slate-800 rounded-lg text-xs font-medium transition-all shadow-sm active:scale-95 shrink-0 flex items-center gap-1"
+              title="이 메모를 별도의 플로팅(창 분리) 창으로 열어 다른 메모와 함께 보기"
+            >
+              <Layers size={13} className="text-indigo-400" />
+              <span className="hidden sm:inline text-[11px]">창 분리</span>
+            </button>
+          )}
 
           {/* 📄 PDF 내보내기 / 인쇄 버튼 */}
           <button

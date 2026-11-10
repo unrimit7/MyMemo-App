@@ -12,6 +12,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { renderDocxToContainer, extractDocxTextAndHtml } from '../utils/docxViewer';
+import { useFloatingWindow } from './useFloatingWindow';
 
 interface DocxViewerModalProps {
   isOpen: boolean;
@@ -37,6 +38,7 @@ export const DocxViewerModal: React.FC<DocxViewerModalProps> = ({
   const [copied, setCopied] = useState<boolean>(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const floating = useFloatingWindow({ id: 'docx-viewer', defaultWidth: 880, defaultHeight: 800 });
 
   // 워드 문서 렌더링
   useEffect(() => {
@@ -117,11 +119,14 @@ export const DocxViewerModal: React.FC<DocxViewerModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center p-2 md:p-4 select-none animate-fadeIn">
+    <div className={floating.modalWrapperClass}>
       {/* 팝업 컨테이너 */}
-      <div className="w-full max-w-6xl h-[95vh] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+      <div {...floating.windowContainerProps}>
         {/* 상단 툴바 헤더 */}
-        <div className="px-4 py-3 bg-slate-900/95 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div 
+          {...floating.headerProps}
+          className="px-4 py-3 bg-slate-900/95 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0"
+        >
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="p-1.5 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
               <FileText size={18} />
@@ -216,6 +221,8 @@ export const DocxViewerModal: React.FC<DocxViewerModalProps> = ({
               <Download size={15} />
             </button>
 
+            {floating.toggleFloatingButton}
+
             <button
               type="button"
               onClick={onClose}
@@ -263,6 +270,8 @@ export const DocxViewerModal: React.FC<DocxViewerModalProps> = ({
           <span>워드 문서 레이아웃, 표, 이미지 및 서식이 원본 규격으로 렌더링됩니다.</span>
           <span className="hidden sm:inline">문서 내용 전체를 메모에 넣으려면 [📝 메모로 가져오기]를 누르세요.</span>
         </div>
+
+        {floating.resizeHandle}
       </div>
     </div>
   );

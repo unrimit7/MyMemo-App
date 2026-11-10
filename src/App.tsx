@@ -23,6 +23,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { ConfirmModal } from './components/ConfirmModal';
 import { CalendarView } from './components/CalendarView';
 import { QuickSwitcherModal } from './components/QuickSwitcherModal';
+import { FloatingNoteWindow } from './components/FloatingNoteWindow';
 import { processFileForNote } from './utils/file';
 import { getFolderHierarchyPath, updateTitleWithFolderPath, stripFolderPrefixFromTitle } from './utils/folderPath';
 import { Calendar as CalendarIcon, X, FolderTree } from 'lucide-react';
@@ -73,6 +74,15 @@ export function App() {
   });
   const [noteSearchQuery, setNoteSearchQuery] = useState<string>('');
   const [isQuickSwitcherOpen, setIsQuickSwitcherOpen] = useState<boolean>(false);
+  const [floatingNoteIds, setFloatingNoteIds] = useState<string[]>([]);
+
+  const handleOpenFloatingNote = (id: string) => {
+    setFloatingNoteIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  };
+
+  const handleCloseFloatingNote = (id: string) => {
+    setFloatingNoteIds((prev) => prev.filter((i) => i !== id));
+  };
 
   const toggleSidebar = () => {
     setIsSidebarCollapsed((prev) => {
@@ -1602,6 +1612,7 @@ export function App() {
               onSelectNote={handleSelectNote}
               onCreateNote={handleCreateNote}
               onDeleteNote={requestDeleteNote}
+              onOpenFloatingNote={handleOpenFloatingNote}
               onOpenSidebar={() => setIsSidebarOpenMobile(true)}
               onRequestCreateSubfolder={(parentId) => {
                 setExternalAddTarget({ parentId, key: Date.now() });
@@ -1641,6 +1652,7 @@ export function App() {
               onCreateNoteWithTitle={handleCreateNoteWithTitle}
               onSearchTag={handleSearchTag}
               onOpenQuickSwitcher={() => setIsQuickSwitcherOpen(true)}
+              onOpenFloatingNote={handleOpenFloatingNote}
               onUpdateNote={handleUpdateNote}
               onBackToList={handleBackToList}
               onDeleteNote={requestDeleteNote}
@@ -1783,6 +1795,25 @@ export function App() {
         onConfirm={handleConfirmDelete}
         onCancel={() => setDeleteConfirm((prev) => ({ ...prev, isOpen: false }))}
       />
+
+      {/* 플로팅 독립 메모 창 (다중 메모 분리/비교/동시 편집) */}
+      {floatingNoteIds.map((id, index) => {
+        const fNote = notes.find((n) => n.id === id);
+        if (!fNote) return null;
+        return (
+          <FloatingNoteWindow
+            key={fNote.id}
+            note={fNote}
+            allNotes={notes}
+            projects={projects}
+            initialX={typeof window !== 'undefined' ? Math.min(Math.max(20, window.innerWidth - 680), 80 + (index % 6) * 36) : 100}
+            initialY={typeof window !== 'undefined' ? Math.min(Math.max(20, window.innerHeight - 560), 60 + (index % 6) * 36) : 80}
+            zIndex={70 + index}
+            onClose={() => handleCloseFloatingNote(fNote.id)}
+            onUpdateNote={handleUpdateNote}
+          />
+        );
+      })}
     </div>
   );
 }

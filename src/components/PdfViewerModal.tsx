@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Download, RotateCw, Edit3 } from 'lucide-react';
 import { loadPdfDocument, renderPdfPageToCanvas } from '../utils/pdfViewer';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { useFloatingWindow } from './useFloatingWindow';
 
 interface PdfViewerModalProps {
   isOpen: boolean;
@@ -33,6 +34,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTapRef = useRef<number>(0);
+  const floating = useFloatingWindow({ id: 'pdf-viewer', defaultWidth: 880, defaultHeight: 800 });
 
   // PDF 문서 로딩
   useEffect(() => {
@@ -284,12 +286,16 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
 
   return (
     <div 
-      className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-md animate-in fade-in duration-200 select-none"
+      className={floating.modalWrapperClass}
       role="dialog"
       aria-modal="true"
     >
-      {/* 상단 툴바 (모바일/PC 모두 터치 친화적 컴팩트 배치) */}
-      <div className="flex items-center justify-between gap-1 sm:gap-2 px-2 sm:px-4 py-2 bg-slate-900 border-b border-slate-800 text-slate-200 shrink-0 z-10 shadow-lg">
+      <div {...floating.windowContainerProps}>
+        {/* 상단 툴바 (모바일/PC 모두 터치 친화적 컴팩트 배치) */}
+        <div 
+          {...floating.headerProps}
+          className="flex items-center justify-between gap-1 sm:gap-2 px-2 sm:px-4 py-2 bg-slate-900 border-b border-slate-800 text-slate-200 shrink-0 z-10 shadow-lg"
+        >
         {/* 제목 */}
         <div className="flex items-center gap-1.5 min-w-0 max-w-[100px] xs:max-w-[140px] sm:max-w-xs md:max-w-md">
           <span className="text-base sm:text-lg shrink-0">📄</span>
@@ -390,6 +396,8 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
             <span className="hidden md:inline">다운로드</span>
           </button>
 
+          {floating.toggleFloatingButton}
+
           <button
             type="button"
             onClick={onClose}
@@ -447,6 +455,9 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
           </div>
         </div>
       </div>
+
+      {floating.resizeHandle}
     </div>
-  );
+  </div>
+);
 };

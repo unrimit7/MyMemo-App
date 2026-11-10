@@ -87,7 +87,11 @@ export function getAttachmentBlobUrl(att: AttachmentItem): string {
  * 이미지인 경우: <img> 태그
  * 일반 파일인 경우: 다운로드 카드
  */
-export function createAttachmentCardHtml(att: AttachmentItem, labelText: string = ''): string {
+export function createAttachmentCardHtml(
+  att: AttachmentItem, 
+  labelText: string = '',
+  isInsideToggle: boolean = false
+): string {
   const isPdf =
     att.type === 'application/pdf' ||
     att.name.toLowerCase().endsWith('.pdf') ||
@@ -154,6 +158,13 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
     : displayName;
   const targetUrl = (isPdf || isHwp) ? getAttachmentBlobUrl(att) : att.data;
 
+  const toggleBtnHtml = `
+      <!-- 접이식 토글로 감싸기 / 해제 버튼 -->
+      <button type="button" class="att-btn-toggle px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:text-amber-200 rounded-lg text-xs font-semibold border border-amber-500/30 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="${isInsideToggle ? '접이식 토글을 해제하고 일반 문서 카드로 복원' : '문서를 접이식 토글 상자로 접기'}">
+        <span>${isInsideToggle ? '📂 접기 해제' : '📁 접기'}</span>
+      </button>
+  `.trim();
+
   if (isPptx) {
     return `
 <div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl pptx-inline-viewer" data-att-id="${att.id}" data-file-name="${displayName}">
@@ -182,6 +193,8 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
       <button type="button" class="pptx-btn-fullscreen px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-indigo-300 rounded-lg text-xs font-semibold border border-indigo-500/30 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="전면 뷰어 및 슬라이드 쇼 열기">
         <span>🔍 크게 보기</span>
       </button>
+
+      ${toggleBtnHtml}
 
       <!-- 다운로드 버튼 -->
       <a href="${att.data}" download="${downloadName}" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-slate-700 flex items-center gap-1 active:scale-95 transition-all no-underline" title="기기에 파일로 다운로드">
@@ -246,6 +259,8 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
       <button type="button" class="docx-btn-fullscreen px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-indigo-300 rounded-lg text-xs font-semibold border border-indigo-500/30 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="전면 뷰어로 크게 보기">
         <span>🔍 크게 보기</span>
       </button>
+
+      ${toggleBtnHtml}
 
       <!-- 다운로드 버튼 -->
       <a href="${att.data}" download="${downloadName}" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-slate-700 flex items-center gap-1 active:scale-95 transition-all no-underline" title="기기에 파일로 다운로드">
@@ -338,6 +353,8 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
         <span>🔍 크게 보기</span>
       </button>
 
+      ${toggleBtnHtml}
+
       <!-- 다운로드 버튼 -->
       <a href="${att.data}" download="${displayName}" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-slate-700 flex items-center gap-1 active:scale-95 transition-all no-underline" title="기기에 파일로 다운로드">
         <span>⬇️ 저장</span>
@@ -402,6 +419,8 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
         <span>🔍 크게 보기</span>
       </button>
 
+      ${toggleBtnHtml}
+
       <!-- 다운로드 버튼 -->
       <a href="${targetUrl}" download="${downloadName}" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-slate-700 flex items-center gap-1 active:scale-95 transition-all no-underline" title="기기에 파일로 다운로드">
         <span>⬇️ 저장</span>
@@ -453,6 +472,8 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
       <button type="button" class="pdf-btn-fullscreen px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-indigo-300 rounded-lg text-xs font-semibold border border-indigo-500/30 flex items-center gap-1 active:scale-95 transition-all" data-att-id="${att.id}" data-file-name="${displayName}" title="전면 뷰어로 크게 보기">
         <span>🔍 크게 보기</span>
       </button>
+
+      ${toggleBtnHtml}
 
       <!-- 다운로드 버튼 (명시적으로 저장을 원하는 경우에만) -->
       <a href="${targetUrl}" download="${downloadName}" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-slate-700 flex items-center gap-1 active:scale-95 transition-all no-underline" title="기기에 파일로 다운로드">
@@ -544,6 +565,7 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
       <button type="button" class="hex-btn-edit px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white rounded-lg text-xs font-semibold border border-indigo-500/40 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="울트라에디트 스타일 16진수(HEX) 뷰어 및 바이트 직접 편집">
         <span>🔍 헥스 편집기 열기</span>
       </button>
+      ${toggleBtnHtml}
       <a href="${att.data}" download="${displayName}" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-slate-700 flex items-center gap-1 active:scale-95 transition-all no-underline" title="기기에 파일로 다운로드">
         <span>⬇️ 저장</span>
       </a>
@@ -577,6 +599,7 @@ export function createAttachmentCardHtml(att: AttachmentItem, labelText: string 
     <button type="button" class="hex-btn-edit px-2.5 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-semibold flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="울트라에디트 스타일 16진수(HEX) 뷰어 및 바이트 직접 편집">
       <span>🔍 헥스 편집</span>
     </button>
+    ${toggleBtnHtml}
     <a href="${att.data}" download="${displayName}" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-semibold no-underline border border-slate-700 transition-all">
       다운로드
     </a>
@@ -788,12 +811,14 @@ export function renderAttachmentsInHtml(
   // 2. <a href="attachment:att-xxx"> 치환
   result = result.replace(
     /<a\s+[^>]*href=["']attachment:([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
-    (_match, attId, labelText) => {
+    (_match, attId, labelText, offset) => {
       const att = attachments[attId];
       if (!att) {
         return `<span class="inline-block p-2 rounded bg-rose-950/40 text-rose-400 text-xs border border-rose-800">⚠️ 첨부 파일(${attId})을 찾을 수 없습니다.</span>`;
       }
-      return createAttachmentCardHtml(att, labelText);
+      const beforeText = result.substring(0, offset);
+      const isInsideToggle = beforeText.lastIndexOf('<details') > beforeText.lastIndexOf('</details>');
+      return createAttachmentCardHtml(att, labelText, isInsideToggle);
     }
   );
 
@@ -801,12 +826,14 @@ export function renderAttachmentsInHtml(
   // 예: <p>[📄 PDF: ...](attachment:att-xxx)</p>
   result = result.replace(
     /(?:<p>)?\s*!?\[([\s\S]*?)\]\((?:attachment:)?(att-[a-zA-Z0-9_-]+)\)\s*(?:<\/p>)?/gi,
-    (_match, labelText, attId) => {
+    (_match, labelText, attId, offset) => {
       const att = attachments[attId];
       if (!att) {
         return `<span class="inline-block p-2 rounded bg-rose-950/40 text-rose-400 text-xs border border-rose-800">⚠️ 첨부 파일(${attId})을 찾을 수 없습니다.</span>`;
       }
-      return createAttachmentCardHtml(att, labelText);
+      const beforeText = result.substring(0, offset);
+      const isInsideToggle = beforeText.lastIndexOf('<details') > beforeText.lastIndexOf('</details>');
+      return createAttachmentCardHtml(att, labelText, isInsideToggle);
     }
   );
 
