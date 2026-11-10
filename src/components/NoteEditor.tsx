@@ -5,7 +5,7 @@ import { compressImageToDataUrl } from '../utils/image';
 import { processFileForNote } from '../utils/file';
 import { cleanLegacyAttachments, renderAttachmentsInHtml, invalidateAttachmentBlobUrl } from '../utils/attachment';
 import { exportNoteToPdf } from '../utils/exportPdf';
-import { getFolderHierarchyPath, updateTitleWithFolderPath } from '../utils/folderPath';
+import { getFolderHierarchyPath, updateTitleWithFolderPath, stripFolderPrefixFromTitle } from '../utils/folderPath';
 import { PdfViewerModal } from './PdfViewerModal';
 import { PdfEditorModal } from './PdfEditorModal';
 import { ImageEditorModal } from './ImageEditorModal';
@@ -273,8 +273,10 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     if (!note || !allNotes) return [];
     const currentTitle = (note.title || '').trim();
     if (!currentTitle) return [];
+    const strippedCurrent = stripFolderPrefixFromTitle(currentTitle);
     const escaped = currentTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const wikiRegex = new RegExp(`\\[\\[${escaped}(?:\\|[^\\]]*)?\\]\\]`, 'i');
+    const escapedStripped = strippedCurrent.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const wikiRegex = new RegExp(`\\[\\[(?:${escaped}|${escapedStripped})(?:\\|[^\\]]*)?\\]\\]`, 'i');
     return allNotes.filter((n) => n.id !== note.id && wikiRegex.test(n.content));
   }, [note, allNotes]);
 
@@ -284,7 +286,12 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const matches = Array.from(localContent.matchAll(/\[\[([^\[\]\n\r]+)\]\]/g));
     const titles = Array.from(new Set(matches.map((m) => m[1].split('|')[0].trim()))).filter(Boolean);
     return titles.map((title) => {
-      const found = allNotes.find((n) => n.title.trim().toLowerCase() === title.toLowerCase());
+      const cleanTarget = title.toLowerCase();
+      const found = allNotes.find((n) => {
+        const rawTitle = n.title.trim().toLowerCase();
+        const strippedTitle = stripFolderPrefixFromTitle(n.title).toLowerCase();
+        return rawTitle === cleanTarget || strippedTitle === cleanTarget;
+      });
       return { title, noteId: found?.id, exists: !!found };
     });
   }, [localContent, allNotes]);
@@ -829,12 +836,18 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         let processed = token;
 
         // 1. 위키링크 변환: [[문서명]] 또는 [[문서명|별칭]]
-        processed = processed.replace(/\[\[([^\[\]\n\r]+)\]\]/g, (_m, inner) => {
+        processed = processed.replace(/\[\[([^\[\]\n\r]+)\]\]/g, (match, inner) => {
           const parts = inner.split('|');
           const targetTitle = parts[0].trim();
+          if (!targetTitle) return match;
+
           const alias = (parts[1] !== undefined ? parts[1].trim() : targetTitle) || targetTitle;
           const cleanTarget = targetTitle.toLowerCase();
-          const targetNote = allNotes.find((n) => n.title.trim().toLowerCase() === cleanTarget);
+          const targetNote = allNotes.find((n) => {
+            const rawTitle = n.title.trim().toLowerCase();
+            const strippedTitle = stripFolderPrefixFromTitle(n.title).toLowerCase();
+            return rawTitle === cleanTarget || strippedTitle === cleanTarget;
+          });
 
           const safeTarget = targetTitle.replace(/"/g, '&quot;');
           const safeAlias = alias.replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -842,7 +855,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           if (targetNote) {
             return `<button type="button" class="wikilink-pill wikilink-exists" data-wikilink-id="${targetNote.id}" data-wikilink-title="${safeTarget}" title="메모 바로가기: ${safeTarget}">🔗 ${safeAlias}</button>`;
           } else {
-            return `<button type="button" class="wikilink-pill wikilink-missing" data-wikilink-create="true" data-wikilink-title="${safeTarget}" title="클릭 시 새 메모 생성: ${safeTarget}">📄 ${safeAlias} <span style="font-size: 10px; color: #818cf8; opacity: 0.9; margin-left: 2px;">+생성</span></button>`;
+            return `<button type="button" class="wikilink-pill wikilink-missing" data-wikilink-create="true" data-wikilink-title="${safeTarget}" title="클릭 시 새 메모 생성: ${safeTarget}">📄 ${safeAlias} <span class="text-[10px] text-indigo-400 opacity-90 ml-0.5 font-normal">+생성</span></button>`;
           }
         });
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import type { Note, Project } from '../types';
 import { marked } from 'marked';
 import { renderAttachmentsInHtml } from '../utils/attachment';
+import { stripFolderPrefixFromTitle } from '../utils/folderPath';
 import { PopoutWindow } from './PopoutWindow';
 import {
   X,
@@ -32,6 +33,7 @@ export interface FloatingNoteWindowProps {
 
 export const FloatingNoteWindow: React.FC<FloatingNoteWindowProps> = ({
   note,
+  allNotes = [],
   onClose,
   onUpdateNote,
   initialX = 80,
@@ -169,11 +171,33 @@ export const FloatingNoteWindow: React.FC<FloatingNoteWindowProps> = ({
       normalized = normalized.replace(/==([^=\n]+)==/g, '<mark style="background-color: #fef08a; color: #0f172a; padding: 2px 5px; border-radius: 4px;">$1</mark>');
       normalized = normalized.replace(/(<summary>[\s\S]*?<\/summary>)\s*([^\s\n<])/gi, '$1\n\n$2');
       let raw = marked.parse(normalized, { breaks: true, gfm: true }) as string;
+
+      // 위키링크 치환
+      raw = raw.replace(/\[\[([^\[\]\n\r]+)\]\]/g, (match, inner) => {
+        const parts = inner.split('|');
+        const targetTitle = parts[0].trim();
+        if (!targetTitle) return match;
+        const alias = (parts[1] !== undefined ? parts[1].trim() : targetTitle) || targetTitle;
+        const cleanTarget = targetTitle.toLowerCase();
+        const targetNote = allNotes.find((n) => {
+          const rawTitle = n.title.trim().toLowerCase();
+          const strippedTitle = stripFolderPrefixFromTitle(n.title).toLowerCase();
+          return rawTitle === cleanTarget || strippedTitle === cleanTarget;
+        });
+        const safeTarget = targetTitle.replace(/"/g, '&quot;');
+        const safeAlias = alias.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        if (targetNote) {
+          return `<button type="button" class="wikilink-pill wikilink-exists" data-wikilink-id="${targetNote.id}" data-wikilink-title="${safeTarget}" title="메모 바로가기: ${safeTarget}">🔗 ${safeAlias}</button>`;
+        } else {
+          return `<button type="button" class="wikilink-pill wikilink-missing" data-wikilink-create="true" data-wikilink-title="${safeTarget}" title="새 메모: ${safeTarget}">📄 ${safeAlias} <span class="text-[10px] text-indigo-400 opacity-90 ml-0.5 font-normal">+생성</span></button>`;
+        }
+      });
+
       return renderAttachmentsInHtml(raw, note.attachments || {});
     } catch {
       return '<p class="text-rose-400">마크다운을 렌더링할 수 없습니다.</p>';
     }
-  }, [localContent, note.attachments]);
+  }, [localContent, note.attachments, allNotes]);
 
   // 미리보기 내 체크박스 원클릭 토글
   const handlePreviewClick = (e: React.MouseEvent<HTMLDivElement>) => {
