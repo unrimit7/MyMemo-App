@@ -283,7 +283,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   // 현재 노트에서 [[...]] 형태로 연결한 나가는 링크들 계산
   const outlinks = useMemo(() => {
     if (!localContent) return [];
-    const matches = Array.from(localContent.matchAll(/\[\[([^\[\]\n\r]+)\]\]/g));
+    const matches = Array.from(localContent.matchAll(/\[\[((?:(?!\[\[|\]\])[^\n\r])+?)\]\]/g));
     const titles = Array.from(new Set(matches.map((m) => m[1].split('|')[0].trim()))).filter(Boolean);
     return titles.map((title) => {
       const cleanTarget = title.toLowerCase();
@@ -835,8 +835,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
         let processed = token;
 
-        // 1. 위키링크 변환: [[문서명]] 또는 [[문서명|별칭]]
-        processed = processed.replace(/\[\[([^\[\]\n\r]+)\]\]/g, (match, inner) => {
+        // 1. 위키링크 변환: [[문서명]] 또는 [[문서명|별칭]] (내부 [폴더명] 대괄호 지원)
+        processed = processed.replace(/\[\[((?:(?!\[\[|\]\])[^\n\r])+?)\]\]/g, (match, inner) => {
           const parts = inner.split('|');
           const targetTitle = parts[0].trim();
           if (!targetTitle) return match;

@@ -172,8 +172,8 @@ export const FloatingNoteWindow: React.FC<FloatingNoteWindowProps> = ({
       normalized = normalized.replace(/(<summary>[\s\S]*?<\/summary>)\s*([^\s\n<])/gi, '$1\n\n$2');
       let raw = marked.parse(normalized, { breaks: true, gfm: true }) as string;
 
-      // 위키링크 치환
-      raw = raw.replace(/\[\[([^\[\]\n\r]+)\]\]/g, (match, inner) => {
+      // 위키링크 치환 (내부 [폴더명] 대괄호 지원)
+      raw = raw.replace(/\[\[((?:(?!\[\[|\]\])[^\n\r])+?)\]\]/g, (match, inner) => {
         const parts = inner.split('|');
         const targetTitle = parts[0].trim();
         if (!targetTitle) return match;
