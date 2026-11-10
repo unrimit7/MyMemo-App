@@ -74,14 +74,20 @@ export function App() {
   });
   const [noteSearchQuery, setNoteSearchQuery] = useState<string>('');
   const [isQuickSwitcherOpen, setIsQuickSwitcherOpen] = useState<boolean>(false);
-  const [floatingNoteIds, setFloatingNoteIds] = useState<string[]>([]);
+  const [floatingNotes, setFloatingNotes] = useState<{ id: string; isPopout: boolean }[]>([]);
 
-  const handleOpenFloatingNote = (id: string) => {
-    setFloatingNoteIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  const handleOpenFloatingNote = (id: string, isPopout: boolean = false) => {
+    setFloatingNotes((prev) => {
+      const existing = prev.find((n) => n.id === id);
+      if (existing) {
+        return prev.map((n) => (n.id === id ? { ...n, isPopout } : n));
+      }
+      return [...prev, { id, isPopout }];
+    });
   };
 
   const handleCloseFloatingNote = (id: string) => {
-    setFloatingNoteIds((prev) => prev.filter((i) => i !== id));
+    setFloatingNotes((prev) => prev.filter((n) => n.id !== id));
   };
 
   const toggleSidebar = () => {
@@ -1796,9 +1802,9 @@ export function App() {
         onCancel={() => setDeleteConfirm((prev) => ({ ...prev, isOpen: false }))}
       />
 
-      {/* 플로팅 독립 메모 창 (다중 메모 분리/비교/동시 편집) */}
-      {floatingNoteIds.map((id, index) => {
-        const fNote = notes.find((n) => n.id === id);
+      {/* 플로팅 독립 메모 창 (다중 메모 분리/비교/동시 편집 및 OS 새 창 팝업) */}
+      {floatingNotes.map((item, index) => {
+        const fNote = notes.find((n) => n.id === item.id);
         if (!fNote) return null;
         return (
           <FloatingNoteWindow
@@ -1806,6 +1812,7 @@ export function App() {
             note={fNote}
             allNotes={notes}
             projects={projects}
+            initialPopout={item.isPopout}
             initialX={typeof window !== 'undefined' ? Math.min(Math.max(20, window.innerWidth - 680), 80 + (index % 6) * 36) : 100}
             initialY={typeof window !== 'undefined' ? Math.min(Math.max(20, window.innerHeight - 560), 60 + (index % 6) * 36) : 80}
             zIndex={70 + index}

@@ -73,7 +73,8 @@ import {
   LayoutTemplate,
   Download,
   Plus,
-  Layers
+  Layers,
+  ExternalLink
 } from 'lucide-react';
 
 // 마크다운 번호 매기기 목록 렌더링 시 사용자가 직접 입력한 번호(예: 1., 2., 3.)와 보기 모드의 번호가 일치하도록 커스텀 렌더러 설정
@@ -127,7 +128,7 @@ interface NoteEditorProps {
   onToggleNoteList?: () => void;
   onSync?: () => void;
   isSyncing?: boolean;
-  onOpenFloatingNote?: (id: string) => void;
+  onOpenFloatingNote?: (id: string, isPopout?: boolean) => void;
 }
 
 export const NoteEditor: React.FC<NoteEditorProps> = ({
@@ -3339,17 +3340,28 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             </button>
           </div>
 
-          {/* 플로팅 창으로 열기 (창 분리) 버튼 */}
+          {/* 플로팅 창으로 열기 (창 분리 / 새 창 팝업) 버튼 */}
           {onOpenFloatingNote && note && (
-            <button
-              type="button"
-              onClick={() => onOpenFloatingNote(note.id)}
-              className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-indigo-300 border border-slate-800 rounded-lg text-xs font-medium transition-all shadow-sm active:scale-95 shrink-0 flex items-center gap-1"
-              title="이 메모를 별도의 플로팅(창 분리) 창으로 열어 다른 메모와 함께 보기"
-            >
-              <Layers size={13} className="text-indigo-400" />
-              <span className="hidden sm:inline text-[11px]">창 분리</span>
-            </button>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => onOpenFloatingNote(note.id, false)}
+                className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-indigo-300 border border-slate-800 rounded-lg text-xs font-medium transition-all shadow-sm active:scale-95 shrink-0 flex items-center gap-1"
+                title="이 메모를 화면 내 플로팅(창 분리) 창으로 열기"
+              >
+                <Layers size={13} className="text-indigo-400" />
+                <span className="hidden sm:inline text-[11px]">창 분리</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenFloatingNote(note.id, true)}
+                className="p-1.5 bg-slate-900 hover:bg-slate-800 text-indigo-300 hover:text-white border border-indigo-500/30 rounded-lg text-xs font-medium transition-all shadow-sm active:scale-95 shrink-0 flex items-center gap-1"
+                title="이 메모를 브라우저 밖 독립 새 창(OS 팝업)으로 분리 (바탕화면/다른 모니터로 이동)"
+              >
+                <ExternalLink size={13} className="text-indigo-400" />
+                <span className="hidden sm:inline text-[11px]">새 창</span>
+              </button>
+            </div>
           )}
 
           {/* 📄 PDF 내보내기 / 인쇄 버튼 */}

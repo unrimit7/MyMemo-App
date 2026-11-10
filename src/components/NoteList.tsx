@@ -19,7 +19,8 @@ import {
   RefreshCw,
   Clock,
   ArrowDownAZ,
-  Layers
+  Layers,
+  ExternalLink
 } from 'lucide-react';
 
 interface NoteListProps {
@@ -44,7 +45,7 @@ interface NoteListProps {
   pendingCount?: number;
   onSync?: () => void;
   isSyncing?: boolean;
-  onOpenFloatingNote?: (id: string) => void;
+  onOpenFloatingNote?: (id: string, isPopout?: boolean) => void;
 }
 
 export const NoteList: React.FC<NoteListProps> = ({
@@ -419,17 +420,30 @@ export const NoteList: React.FC<NoteListProps> = ({
 
                   <div className="flex items-center gap-0.5">
                     {onOpenFloatingNote && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onOpenFloatingNote(note.id);
-                        }}
-                        className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-indigo-400 p-1 rounded transition-opacity"
-                        title="이 메모를 별도의 플로팅(창 분리) 창으로 열어 동시에 비교하기"
-                      >
-                        <Layers size={12} />
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenFloatingNote(note.id, false);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-indigo-400 p-1 rounded transition-opacity"
+                          title="이 메모를 화면 내 플로팅 창으로 열기"
+                        >
+                          <Layers size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenFloatingNote(note.id, true);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-indigo-300 p-1 rounded transition-opacity"
+                          title="이 메모를 브라우저 밖 독립 새 창(OS 팝업)으로 분리 (바탕화면/다른 모니터로 이동)"
+                        >
+                          <ExternalLink size={12} />
+                        </button>
+                      </>
                     )}
 
                     <button
