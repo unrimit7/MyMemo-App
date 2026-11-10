@@ -62,6 +62,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
   const [saveToast, setSaveToast] = useState<string | null>(null);
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'split' | 'editOnly' | 'previewOnly'>('split');
+  const [previewZoom, setPreviewZoom] = useState<number>(100);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const floating = useFloatingWindow({ id: 'pptx-editor', defaultWidth: 940, defaultHeight: 820 });
 
@@ -314,24 +315,25 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
         {/* 상단 헤더 바 */}
         <div 
           {...floating.headerProps}
-          className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0"
+          className="px-3 sm:px-4 py-2 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-2 sm:gap-3 shrink-0 select-none"
         >
-          <div className="flex items-center gap-2.5 min-w-0">
-            <span className="p-1.5 rounded-lg bg-orange-500/15 text-orange-400 border border-orange-500/30">
-              <Presentation size={18} />
+          {/* 좌측: 파일 제목 & 상태 배지 */}
+          <div className="flex items-center gap-2 min-w-0 max-w-[32%] sm:max-w-[42%] md:max-w-md">
+            <span className="p-1.5 rounded-lg bg-orange-500/15 text-orange-400 border border-orange-500/30 shrink-0">
+              <Presentation size={17} />
             </span>
-            <div className="truncate">
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm md:text-base font-bold text-slate-100 truncate" title={title}>
+            <div className="truncate min-w-0">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <h2 className="text-xs sm:text-sm font-bold text-slate-100 truncate" title={title}>
                   {title}
                 </h2>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 border border-orange-500/40 font-bold uppercase shrink-0">
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 border border-orange-500/40 font-bold uppercase shrink-0 hidden xs:inline-block">
                   PPTX 에디터
                 </span>
                 {hasChanges && (
-                  <span className="text-[11px] text-amber-400 flex items-center gap-1 font-medium">
+                  <span className="text-[11px] text-amber-400 flex items-center gap-1 font-medium shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
-                    수정됨
+                    <span className="hidden sm:inline">수정됨</span>
                   </span>
                 )}
               </div>
@@ -339,46 +341,49 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
           </div>
 
           {/* 중앙 뷰 분할 모드 토글 */}
-          <div className="hidden sm:flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs gap-1">
+          <div className="flex items-center bg-slate-950 p-0.5 sm:p-1 rounded-xl border border-slate-800 text-xs gap-0.5 sm:gap-1 shrink-0">
             <button
               type="button"
               onClick={() => setViewMode('split')}
-              className={`px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+              className={`px-2 sm:px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
                 viewMode === 'split' ? 'bg-orange-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              편집 + 미리보기
+              <span className="hidden sm:inline">편집 + 미리보기</span>
+              <span className="sm:hidden">분할</span>
             </button>
             <button
               type="button"
               onClick={() => setViewMode('editOnly')}
-              className={`px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+              className={`px-2 sm:px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
                 viewMode === 'editOnly' ? 'bg-orange-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              편집창만
+              <span className="hidden sm:inline">편집창만</span>
+              <span className="sm:hidden">편집</span>
             </button>
             <button
               type="button"
               onClick={() => setViewMode('previewOnly')}
-              className={`px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+              className={`px-2 sm:px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
                 viewMode === 'previewOnly' ? 'bg-orange-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              미리보기만
+              <span className="hidden sm:inline">미리보기만</span>
+              <span className="sm:hidden">미리보기</span>
             </button>
           </div>
 
-          {/* 우측 상단 액션 */}
-          <div className="flex items-center gap-2 shrink-0">
+          {/* 우측 상단 액션 (항상 우측 최상단 끝에 고정) */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 ml-auto">
             {saveToast && (
-              <div className="hidden sm:flex items-center gap-1.5 text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-lg">
+              <div className="hidden lg:flex items-center gap-1.5 text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-lg">
                 <CheckCircle size={13} />
                 <span>{saveToast}</span>
               </div>
             )}
             {errorToast && (
-              <div className="hidden sm:flex items-center gap-1.5 text-xs text-rose-300 bg-rose-950/40 border border-rose-500/30 px-2.5 py-1 rounded-lg">
+              <div className="hidden lg:flex items-center gap-1.5 text-xs text-rose-300 bg-rose-950/40 border border-rose-500/30 px-2.5 py-1 rounded-lg">
                 <AlertCircle size={13} />
                 <span>{errorToast}</span>
               </div>
@@ -389,11 +394,12 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
               type="button"
               onClick={handleSave}
               disabled={isSaving}
-              className="px-3.5 py-1.5 bg-orange-600 hover:bg-orange-500 text-white rounded-lg text-xs font-semibold shadow-md flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+              className="px-2.5 sm:px-3.5 py-1.5 bg-orange-600 hover:bg-orange-500 text-white rounded-lg text-xs font-semibold shadow-md flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
               title="수정한 슬라이드를 메모 첨부파일에 저장 (Ctrl + S)"
             >
               {isSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-              <span>{isSaving ? '저장 중...' : '💾 저장 및 반영'}</span>
+              <span className="hidden sm:inline">{isSaving ? '저장 중...' : '저장 및 반영'}</span>
+              <span className="sm:hidden">저장</span>
             </button>
 
             {/* 다운로드 */}
@@ -408,11 +414,11 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
 
             {floating.toggleFloatingButton}
 
-            {/* 닫기 */}
+            {/* 닫기 (우측 최상단 모서리 배치) */}
             <button
               type="button"
               onClick={handleClose}
-              className="p-1.5 bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-300 rounded-lg border border-slate-700 transition-colors cursor-pointer"
+              className="p-1.5 bg-slate-800 hover:bg-rose-900/50 text-slate-400 hover:text-rose-200 rounded-lg border border-slate-700 hover:border-rose-500/50 transition-colors cursor-pointer"
               title="닫기 (Esc)"
             >
               <X size={16} />
@@ -681,66 +687,118 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
 
               {/* 실시간 16:9 슬라이드 프리뷰 영역 */}
               {viewMode !== 'editOnly' && (
-                <div className={`p-4 md:p-6 flex flex-col items-center justify-center bg-slate-950 overflow-y-auto ${
+                <div className={`p-3 sm:p-5 md:p-6 flex flex-col items-center justify-start bg-slate-950 overflow-y-auto ${
                   viewMode === 'split' ? 'w-full md:w-1/2' : 'w-full'
                 }`}>
-                  <div className="w-full max-w-xl flex items-center justify-between text-xs text-slate-400 mb-2">
-                    <span className="flex items-center gap-1 font-semibold text-orange-400">
+                  {/* 상단 컨트롤 바 (슬라이드 번호, 줌 확대/축소) */}
+                  <div className={`w-full flex items-center justify-between text-xs text-slate-400 mb-2.5 px-1 ${
+                    viewMode === 'previewOnly' ? 'max-w-5xl' : 'max-w-3xl'
+                  }`}>
+                    <span className="flex items-center gap-1.5 font-semibold text-orange-400">
                       <Eye size={13} />
-                      <span>실시간 슬라이드 미리보기 (이미지 클릭 시 원본 확대)</span>
+                      <span>슬라이드 #{activeSlideIndex + 1} 미리보기</span>
                     </span>
-                    <span className="font-mono">16 : 9</span>
+
+                    <div className="flex items-center gap-2">
+                      {/* 줌 조절 버튼 */}
+                      <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-lg p-0.5 text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewZoom((z) => Math.max(50, z - 15))}
+                          className="px-2 py-0.5 hover:bg-slate-800 rounded text-slate-300 cursor-pointer font-bold"
+                          title="축소"
+                        >
+                          -
+                        </button>
+                        <span className="font-mono text-slate-300 px-1 min-w-[36px] text-center">{previewZoom}%</span>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewZoom((z) => Math.min(160, z + 15))}
+                          className="px-2 py-0.5 hover:bg-slate-800 rounded text-slate-300 cursor-pointer font-bold"
+                          title="확대"
+                        >
+                          +
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewZoom(100)}
+                          className="px-2 py-0.5 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 cursor-pointer text-[10px]"
+                          title="100% 기본 크기 복원"
+                        >
+                          100%
+                        </button>
+                      </div>
+
+                      <span className="font-mono text-slate-500 hidden sm:inline">16 : 9</span>
+                    </div>
                   </div>
 
-                  {/* 16:9 슬라이드 카드 */}
-                  <div className="w-full max-w-xl aspect-video bg-white text-slate-900 rounded-2xl shadow-2xl overflow-hidden flex flex-col border border-slate-200">
-                    <div className="h-2 bg-gradient-to-r from-orange-500 via-amber-500 to-indigo-600 shrink-0" />
-                    <div className="flex-1 p-5 sm:p-6 flex flex-col justify-between overflow-y-auto">
+                  {/* 16:9 슬라이드 카드 (크기 확장 및 줌 지원) */}
+                  <div
+                    style={{
+                      transform: previewZoom !== 100 ? `scale(${previewZoom / 100})` : undefined,
+                      transformOrigin: 'top center',
+                      transition: 'transform 0.12s ease-out',
+                    }}
+                    className={`w-full bg-white text-slate-900 rounded-2xl shadow-2xl border border-slate-200 flex flex-col shrink-0 mb-8 ${
+                      viewMode === 'previewOnly' ? 'max-w-5xl min-h-[500px]' : 'max-w-3xl min-h-[380px]'
+                    }`}
+                  >
+                    <div className="h-2.5 bg-gradient-to-r from-orange-500 via-amber-500 to-indigo-600 rounded-t-2xl shrink-0" />
+                    <div className="p-6 sm:p-8 flex flex-col justify-between flex-1">
                       <div>
-                        <h1 className="text-base sm:text-lg font-extrabold text-slate-900 pb-2 mb-2.5 border-b border-orange-500/30 whitespace-pre-wrap leading-tight">
+                        {/* 슬라이드 대제목 */}
+                        <h1 className="text-base sm:text-xl md:text-2xl font-extrabold text-slate-900 pb-2.5 mb-3.5 border-b-2 border-orange-500/30 whitespace-pre-wrap leading-snug">
                           {currentSlide.title || '(제목 없음)'}
                         </h1>
 
-                        {/* 본문 텍스트 (글머리 기호) */}
+                        {/* 본문 텍스트 (글머리 기호 및 순번 자동 정리) */}
                         {currentSlide.bodyText.trim().length > 0 && (
-                          <div className="space-y-1.5 mb-3">
+                          <div className="space-y-2 mb-5">
                             {currentSlide.bodyText
                               .split('\n')
-                              .filter((l) => l.trim().length > 0)
-                              .map((line, lIdx) => (
-                                <div key={lIdx} className="flex items-start gap-2 text-xs leading-relaxed text-slate-800">
-                                  <span className="text-orange-500 font-bold select-none">•</span>
-                                  <span className="whitespace-pre-wrap">{line.replace(/^[-*•]\s*/, '')}</span>
-                                </div>
-                              ))}
+                              .map((l) => l.trim())
+                              .filter((l) => l.length > 0)
+                              .map((line, lIdx) => {
+                                const isNumbered = /^\d+[\.\)]\s*/.test(line);
+                                const cleanLine = line.replace(/^([-*•\u2022\u25E6\u25AA\u25CF]+\s*)+/, '');
+                                return (
+                                  <div key={lIdx} className="flex items-start gap-2.5 text-xs sm:text-sm leading-relaxed text-slate-800">
+                                    {!isNumbered && (
+                                      <span className="text-orange-500 font-bold select-none shrink-0">•</span>
+                                    )}
+                                    <span className="whitespace-pre-wrap">{cleanLine}</span>
+                                  </div>
+                                );
+                              })}
                           </div>
                         )}
 
-                        {/* 표(Table) 실시간 렌더링 */}
+                        {/* 표(Table) 실시간 렌더링 (넓은 폭 & 깔끔한 셀 패딩 & 가로 잘림 방지) */}
                         {currentSlide.tables.length > 0 && (
-                          <div className="space-y-3 my-3">
+                          <div className="space-y-4 my-4">
                             {currentSlide.tables.map((tbl, tblIdx) => (
                               <div
                                 key={tbl.id || tblIdx}
-                                className="overflow-x-auto rounded-lg border border-slate-300 shadow-xs max-h-60 overflow-y-auto"
+                                className="overflow-x-auto rounded-xl border border-slate-300 shadow-xs bg-white"
                               >
-                                <table className="w-full text-[10px] sm:text-xs border-collapse">
+                                <table className="w-full text-xs sm:text-sm border-collapse min-w-[500px]">
                                   <tbody>
                                     {tbl.rows.map((row, rIdx) => (
                                       <tr
                                         key={rIdx}
                                         className={
                                           rIdx === 0
-                                            ? 'bg-slate-100 font-bold text-slate-900 sticky top-0 z-10 shadow-xs'
+                                            ? 'bg-slate-100 font-bold text-slate-900 border-b-2 border-slate-300'
                                             : rIdx % 2 === 1
-                                            ? 'bg-white text-slate-800'
-                                            : 'bg-slate-50/70 text-slate-800'
+                                            ? 'bg-white text-slate-800 border-b border-slate-200'
+                                            : 'bg-slate-50/70 text-slate-800 border-b border-slate-200'
                                         }
                                       >
                                         {row.map((cellText, cIdx) => (
                                           <td
                                             key={cIdx}
-                                            className="border border-slate-300 px-2 py-1 whitespace-pre-wrap align-top"
+                                            className="border-r border-slate-200 last:border-r-0 px-3 py-2 sm:px-4 sm:py-2.5 whitespace-pre-wrap align-top leading-relaxed min-w-[90px]"
                                           >
                                             {cellText || <span className="text-slate-300 italic">-</span>}
                                           </td>
@@ -756,14 +814,14 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
 
                         {/* 슬라이드 이미지 목록 */}
                         {currentSlide.images.length > 0 && (
-                          <div className="mt-3 flex flex-wrap gap-2.5 items-center justify-center">
+                          <div className="mt-4 flex flex-wrap gap-3 items-center justify-center">
                             {currentSlide.images.map((img, imgIdx) => (
                               <img
                                 key={img.id || imgIdx}
                                 src={img.dataUrl}
                                 alt="Slide image"
                                 onClick={() => setLightboxImage(img.dataUrl)}
-                                className="max-h-28 sm:max-h-32 rounded-lg border border-slate-300 shadow-sm object-contain cursor-zoom-in hover:scale-105 transition-transform"
+                                className="max-h-36 sm:max-h-48 rounded-lg border border-slate-300 shadow-sm object-contain cursor-zoom-in hover:scale-105 transition-transform"
                                 title="클릭하여 원본 고해상도로 확대 보기"
                               />
                             ))}
@@ -771,9 +829,10 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
                         )}
                       </div>
 
-                      <div className="mt-auto pt-2 flex items-center justify-between text-[10px] text-slate-400 select-none">
-                        <span>{title}</span>
-                        <span>Slide {currentSlide.slideNumber}</span>
+                      {/* 하단 슬라이드 정보 바 */}
+                      <div className="pt-3 border-t border-slate-200/80 flex items-center justify-between text-[11px] text-slate-400 font-mono mt-6 select-none">
+                        <span className="truncate max-w-[280px]">{title}</span>
+                        <span className="font-semibold text-slate-500">#{activeSlideIndex + 1} / {slides.length}</span>
                       </div>
                     </div>
                   </div>
