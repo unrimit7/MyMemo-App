@@ -437,6 +437,69 @@
 }
 
 /* ========================================================
+   엑셀 인라인 뷰어(excel-inline-viewer) 전용 스타일 격리
+   - 마크다운 전역 테이블(#cbd5e1 글자색, tr:nth-child(even) 어두운 배경) 오염 완벽 차단
+   - 마이크로소프트 엑셀 순정 화이트 캔버스 및 짙은 블랙 글자(#0f172a) 적용
+   ======================================================== */
+.excel-inline-viewer table {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-collapse: collapse !important;
+  width: 100% !important;
+  margin: 0 !important;
+}
+
+.excel-inline-viewer thead {
+  background-color: #f1f5f9 !important;
+}
+
+.excel-inline-viewer thead th {
+  background-color: #f1f5f9 !important;
+  color: #334155 !important;
+  border: 1px solid #cbd5e1 !important;
+  font-weight: 600 !important;
+  padding: 0.35rem 0.65rem !important;
+  text-align: center !important;
+  opacity: 1 !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+}
+
+.excel-inline-viewer thead th:first-child {
+  background-color: #e2e8f0 !important;
+  color: #64748b !important;
+}
+
+.excel-inline-viewer tbody tr,
+.excel-inline-viewer tbody tr:nth-child(even),
+.excel-inline-viewer tbody tr:nth-child(odd) {
+  background-color: #ffffff !important; /* 얼룩덜룩한 줄무늬 배경 완벽 제거! */
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+
+.excel-inline-viewer tbody tr:hover {
+  background-color: #ecfdf5 !important;
+}
+
+.excel-inline-viewer tbody td {
+  background-color: transparent !important;
+  color: #0f172a !important; /* 흐릿한 회색을 짙고 또렷한 잉크 블랙(#0f172a)으로 강제! */
+  border: 1px solid #e2e8f0 !important;
+  font-weight: 500 !important;
+  padding: 0.4rem 0.75rem !important;
+  opacity: 1 !important;
+  font-size: 0.75rem !important;
+  line-height: 1.45 !important;
+  word-break: break-word !important;
+}
+
+.excel-inline-viewer tbody td:first-child {
+  background-color: #f8fafc !important;
+  color: #64748b !important;
+  font-weight: 600 !important;
+  text-align: center !important;
+}
+
+/* ========================================================
    노션 스타일 접이식 토글(Toggle List) & 콜아웃(Callout) 서식
    ======================================================== */
 .markdown-preview details {

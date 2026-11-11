@@ -11,6 +11,8 @@ import { PdfViewerModal } from './PdfViewerModal';
 import { HwpViewerModal } from './HwpViewerModal';
 import { DocxViewerModal } from './DocxViewerModal';
 import { ExcelViewerModal } from './ExcelViewerModal';
+import { ExcelEditorModal } from './ExcelEditorModal';
+import { invalidateExcelCache } from '../utils/excelViewer';
 import {
   X,
   Maximize2,
@@ -55,11 +57,12 @@ export const FloatingNoteWindow: React.FC<FloatingNoteWindowProps> = ({
   const [isMaximized, setIsMaximized] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // 모달 상태 (PDF, HWP, 워드, 엑셀 크게 보기)
+  // 모달 상태 (PDF, HWP, 워드, 엑셀 크게 보기 및 직접 편집)
   const [activePdfModal, setActivePdfModal] = useState<{ data: string; title: string; initialPage?: number } | null>(null);
   const [activeHwpModal, setActiveHwpModal] = useState<{ data: string; title: string; initialPage?: number } | null>(null);
   const [activeDocxModal, setActiveDocxModal] = useState<{ data: string; title: string } | null>(null);
   const [activeExcelModal, setActiveExcelModal] = useState<{ data: string; title: string; attId?: string } | null>(null);
+  const [activeExcelEditorModal, setActiveExcelEditorModal] = useState<{ data: string; title: string; attId?: string } | null>(null);
 
   // 미리보기 컨테이너 및 문서 페이지 번호 관리
   const previewContainerRef = useRef<HTMLDivElement>(null);
@@ -576,15 +579,49 @@ export const FloatingNoteWindow: React.FC<FloatingNoteWindowProps> = ({
       return;
     }
 
+    // 엑셀 [✏️ 직접 편집] 버튼 클릭 처리
+    const editExcelBtn = target.closest<HTMLElement>('.excel-btn-edit');
+    if (editExcelBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const attId = editExcelBtn.getAttribute('data-att-id') || '';
+      const title = editExcelBtn.getAttribute('data-file-name') || '엑셀 문서';
+      const atts = note.attachments || {};
+      const targetAtt = (attId && atts[attId])
+        || Object.values(atts).find((a) => a.name === title)
+        || Object.values(atts).find((a) => {
+          const n = (a.name || '').toLowerCase();
+          return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv');
+        });
+
+      if (targetAtt && targetAtt.data) {
+        const resolvedAttId = targetAtt.id || attId || Object.keys(atts).find((k) => atts[k] === targetAtt) || '';
+        setActiveExcelEditorModal({
+          data: targetAtt.data,
+          title: targetAtt.name || title,
+          attId: resolvedAttId,
+        });
+      }
+      return;
+    }
+
     const fullscreenExcelBtn = target.closest<HTMLElement>('.excel-btn-fullscreen');
     if (fullscreenExcelBtn) {
       e.preventDefault();
       e.stopPropagation();
-      const attId = fullscreenExcelBtn.getAttribute('data-att-id');
+      const attId = fullscreenExcelBtn.getAttribute('data-att-id') || '';
       const title = fullscreenExcelBtn.getAttribute('data-file-name') || '스프레드시트';
-      const att = attId ? note.attachments?.[attId] : null;
-      if (att && att.data) {
-        setActiveExcelModal({ data: att.data, title, attId: attId || undefined });
+      const atts = note.attachments || {};
+      const targetAtt = (attId && atts[attId])
+        || Object.values(atts).find((a) => a.name === title)
+        || Object.values(atts).find((a) => {
+          const n = (a.name || '').toLowerCase();
+          return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv');
+        });
+
+      if (targetAtt && targetAtt.data) {
+        const resolvedAttId = targetAtt.id || attId || Object.keys(atts).find((k) => atts[k] === targetAtt) || '';
+        setActiveExcelModal({ data: targetAtt.data, title: targetAtt.name || title, attId: resolvedAttId });
       }
       return;
     }
@@ -664,6 +701,48 @@ export const FloatingNoteWindow: React.FC<FloatingNoteWindowProps> = ({
           title={activeExcelModal.title}
           attId={activeExcelModal.attId || undefined}
           onClose={() => setActiveExcelModal(null)}
+          onOpenEditor={() => {
+            setActiveExcelEditorModal({
+              data: activeExcelModal.data,
+              title: activeExcelModal.title,
+              attId: activeExcelModal.attId,
+            });
+            setActiveExcelModal(null);
+          }}
+        />
+      )}
+      {activeExcelEditorModal && (
+        <ExcelEditorModal
+          isOpen={true}
+          data={activeExcelEditorModal.data}
+          title={activeExcelEditorModal.title}
+          attId={activeExcelEditorModal.attId}
+          onClose={() => setActiveExcelEditorModal(null)}
+          onSave={async (updatedDataUrl) => {
+            let attId = activeExcelEditorModal.attId;
+            const atts = note.attachments || {};
+            if (!attId || !atts[attId]) {
+              attId = Object.keys(atts).find((id) => atts[id].name === activeExcelEditorModal.title)
+                || Object.keys(atts).find((id) => {
+                  const n = (atts[id].name || '').toLowerCase();
+                  return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv');
+                }) || '';
+            }
+            if (attId) {
+              invalidateExcelCache(attId);
+              invalidateExcelCache();
+              const updatedAtts = {
+                ...atts,
+                [attId]: {
+                  ...(atts[attId] || {}),
+                  data: updatedDataUrl,
+                },
+              };
+              onUpdateNote({ attachments: updatedAtts }, note.id);
+              setActiveExcelEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
+              setActiveExcelModal((prev) => prev && (prev.attId === attId || prev.title === activeExcelEditorModal.title) ? { ...prev, data: updatedDataUrl } : prev);
+            }
+          }}
         />
       )}
     </>

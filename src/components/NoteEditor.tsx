@@ -2798,13 +2798,26 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     if (editExcelBtn) {
       e.preventDefault();
       e.stopPropagation();
-      const attId = editExcelBtn.getAttribute('data-att-id');
+      const attId = editExcelBtn.getAttribute('data-att-id') || '';
       const title = editExcelBtn.getAttribute('data-file-name') || '엑셀 문서';
-      if (attId && localAttachments[attId]) {
+
+      const attachmentsMap = localAttachmentsRef.current || localAttachments;
+      const targetAtt = 
+        (attId && attachmentsMap[attId])
+        || (attId && localAttachments[attId])
+        || Object.values(attachmentsMap).find((a) => a.name === title)
+        || Object.values(localAttachments).find((a) => a.name === title)
+        || Object.values(attachmentsMap).find((a) => {
+          const n = (a.name || '').toLowerCase();
+          return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv');
+        });
+
+      if (targetAtt && targetAtt.data) {
+        const resolvedAttId = targetAtt.id || attId || Object.keys(attachmentsMap).find(k => attachmentsMap[k] === targetAtt) || '';
         setActiveExcelEditorModal({
-          attId,
-          data: localAttachments[attId].data,
-          title,
+          attId: resolvedAttId,
+          data: targetAtt.data,
+          title: targetAtt.name || title,
         });
       }
       return;
@@ -2815,13 +2828,26 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     if (fullscreenExcelBtn) {
       e.preventDefault();
       e.stopPropagation();
-      const attId = fullscreenExcelBtn.getAttribute('data-att-id');
+      const attId = fullscreenExcelBtn.getAttribute('data-att-id') || '';
       const title = fullscreenExcelBtn.getAttribute('data-file-name') || '엑셀 문서';
-      if (attId && localAttachments[attId]) {
+
+      const attachmentsMap = localAttachmentsRef.current || localAttachments;
+      const targetAtt = 
+        (attId && attachmentsMap[attId])
+        || (attId && localAttachments[attId])
+        || Object.values(attachmentsMap).find((a) => a.name === title)
+        || Object.values(localAttachments).find((a) => a.name === title)
+        || Object.values(attachmentsMap).find((a) => {
+          const n = (a.name || '').toLowerCase();
+          return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv');
+        });
+
+      if (targetAtt && targetAtt.data) {
+        const resolvedAttId = targetAtt.id || attId || Object.keys(attachmentsMap).find(k => attachmentsMap[k] === targetAtt) || '';
         setActiveExcelModal({
-          attId,
-          data: localAttachments[attId].data,
-          title,
+          attId: resolvedAttId,
+          data: targetAtt.data,
+          title: targetAtt.name || title,
         });
       }
       return;
