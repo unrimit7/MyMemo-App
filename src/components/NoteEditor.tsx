@@ -4572,53 +4572,95 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       )}
 
       {/* 엑셀/CSV 웹 직접 편집기 모달 */}
-      {activeExcelEditorModal && (
-        <ExcelEditorModal
-          isOpen={true}
-          onClose={() => setActiveExcelEditorModal(null)}
-          data={activeExcelEditorModal.data}
-          title={activeExcelEditorModal.title}
-          attId={activeExcelEditorModal.attId}
-          onSave={async (updatedDataUrl) => {
-            let attId = activeExcelEditorModal.attId;
-            if (!attId || !localAttachmentsRef.current[attId]) {
-              attId = Object.keys(localAttachmentsRef.current).find(
-                (id) => localAttachmentsRef.current[id].name === activeExcelEditorModal.title
-              ) || Object.keys(localAttachmentsRef.current).find(
-                (id) => {
-                  const name = (localAttachmentsRef.current[id].name || '').toLowerCase();
-                  return name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv');
-                }
-              ) || '';
-            }
+      {/* 엑셀/CSV 웹 직접 편집기 모달 */}
+      {activeExcelEditorModal && (() => {
+        const targetAtt = localAttachments[activeExcelEditorModal.attId] || Object.values(localAttachments).find(a => a.name === activeExcelEditorModal.title);
+        return (
+          <ExcelEditorModal
+            isOpen={true}
+            onClose={() => setActiveExcelEditorModal(null)}
+            data={activeExcelEditorModal.data}
+            title={activeExcelEditorModal.title}
+            attId={activeExcelEditorModal.attId}
+            originalData={targetAtt?.originalData}
+            originalDate={targetAtt?.originalDate}
+            initialEngine={targetAtt?.editorEngine || 'exceljs'}
+            onSave={async (updatedDataUrl, chosenEngine) => {
+              let attId = activeExcelEditorModal.attId;
+              if (!attId || !localAttachmentsRef.current[attId]) {
+                attId = Object.keys(localAttachmentsRef.current).find(
+                  (id) => localAttachmentsRef.current[id].name === activeExcelEditorModal.title
+                ) || Object.keys(localAttachmentsRef.current).find(
+                  (id) => {
+                    const name = (localAttachmentsRef.current[id].name || '').toLowerCase();
+                    return name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv');
+                  }
+                ) || '';
+              }
 
-            if (attId) {
-              // 1. 엑셀 캐시(전체 및 ID별) 및 Blob URL 캐시 즉시 무효화 (새 파일 재로드 100% 보장)
-              invalidateExcelCache(attId);
-              invalidateExcelCache();
-              invalidateAttachmentBlobUrl(attId);
+              if (attId) {
+                // 1. 엑셀 캐시 및 Blob URL 캐시 즉시 무효화 (새 파일 재로드 100% 보장)
+                invalidateExcelCache(attId);
+                invalidateExcelCache();
+                invalidateAttachmentBlobUrl(attId);
 
-              // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장
-              const updatedAtts = {
-                ...localAttachmentsRef.current,
-                [attId]: {
-                  ...(localAttachmentsRef.current[attId] || {}),
-                  data: updatedDataUrl,
-                },
-              };
-              setLocalAttachments({ ...updatedAtts });
-              localAttachmentsRef.current = updatedAtts;
-              onUpdateNote({ attachments: updatedAtts });
+                const existingAtt = localAttachmentsRef.current[attId];
+                // 최초 1회 저장 시 원본 첨부파일을 기기 내부 원본 백업으로 보관
+                const originalData = existingAtt?.originalData || existingAtt?.data || activeExcelEditorModal.data;
+                const originalDate = existingAtt?.originalDate || new Date().toISOString();
 
-              // 3. 편집 모달 내부 데이터 동기화
-              setActiveExcelEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
+                // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장
+                const updatedAtts = {
+                  ...localAttachmentsRef.current,
+                  [attId]: {
+                    ...(localAttachmentsRef.current[attId] || {}),
+                    data: updatedDataUrl,
+                    originalData,
+                    originalDate,
+                    editorEngine: chosenEngine,
+                  },
+                };
+                setLocalAttachments({ ...updatedAtts });
+                localAttachmentsRef.current = updatedAtts;
+                onUpdateNote({ attachments: updatedAtts });
 
-              // 4. 전면 뷰어 모달(activeExcelModal)이 열려있다면 최신 데이터 동기화
-              setActiveExcelModal((prev) => prev && (prev.attId === attId || prev.title === activeExcelEditorModal.title) ? { ...prev, data: updatedDataUrl } : prev);
-            }
-          }}
-        />
-      )}
+                // 3. 편집 모달 내부 데이터 동기화
+                setActiveExcelEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
+
+                // 4. 전면 뷰어 모달(activeExcelModal)이 열려있다면 최신 데이터 동기화
+                setActiveExcelModal((prev) => prev && (prev.attId === attId || prev.title === activeExcelEditorModal.title) ? { ...prev, data: updatedDataUrl } : prev);
+              }
+            }}
+            onRestoreOriginal={async () => {
+              let attId = activeExcelEditorModal.attId;
+              const existingAtt = localAttachmentsRef.current[attId];
+              if (existingAtt && existingAtt.originalData) {
+                invalidateExcelCache(attId);
+                invalidateExcelCache();
+                invalidateAttachmentBlobUrl(attId);
+
+                const restoredData = existingAtt.originalData;
+                const updatedAtts = {
+                  ...localAttachmentsRef.current,
+                  [attId]: {
+                    ...existingAtt,
+                    data: restoredData,
+                    originalData: undefined,
+                    originalDate: undefined,
+                  },
+                };
+                setLocalAttachments({ ...updatedAtts });
+                localAttachmentsRef.current = updatedAtts;
+                onUpdateNote({ attachments: updatedAtts });
+
+                setActiveExcelEditorModal((prev) => prev ? { ...prev, data: restoredData } : null);
+                setActiveExcelModal((prev) => prev && (prev.attId === attId || prev.title === activeExcelEditorModal.title) ? { ...prev, data: restoredData } : prev);
+                alert('최초 원본 버전으로 성공적으로 복원되었습니다.');
+              }
+            }}
+          />
+        );
+      })()}
 
       {/* 워드(DOCX) 전면 뷰어 모달 */}
       {activeDocxModal && (

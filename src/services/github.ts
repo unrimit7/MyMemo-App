@@ -89,7 +89,11 @@ export function getProjectFolderPath(projectId: string, projects: Project[]): st
 }
 
 // 마크다운 Frontmatter 파서/시리얼라이저
-export function serializeNoteToMarkdown(note: Note, folderPath: string): string {
+export function serializeNoteToMarkdown(
+  note: Note, 
+  folderPath: string, 
+  syncOriginalBackup: boolean = false
+): string {
   const frontmatter = `---
 id: "${note.id}"
 title: "${note.title.replace(/"/g, '\\"')}"
@@ -101,7 +105,16 @@ updatedAt: "${note.updatedAt}"
 `;
   let body = note.content;
   if (note.attachments && Object.keys(note.attachments).length > 0) {
-    const serializedAtts = JSON.stringify(note.attachments);
+    let attsToSerialize = note.attachments;
+    if (!syncOriginalBackup) {
+      attsToSerialize = {};
+      Object.entries(note.attachments).forEach(([id, att]) => {
+        // 원본 백업은 기본적으로 기기 내부에만 보관하고 GitHub 동기화 시에는 제외하여 크기 낭비 방지
+        const { originalData, originalDate, ...rest } = att;
+        attsToSerialize[id] = rest as AttachmentItem;
+      });
+    }
+    const serializedAtts = JSON.stringify(attsToSerialize);
     body += `\n\n<!-- MYMEMO_ATTACHMENTS:\n${serializedAtts}\n:MYMEMO_ATTACHMENTS -->\n`;
   }
   return frontmatter + body;
@@ -171,6 +184,24 @@ export async function uploadFileToGitHub(
   sha?: string
 ): Promise<{ success: boolean; sha?: string; error?: string }> {
   try {
+    const sizeBytes = new Blob([content]).size;
+    const sizeMb = sizeBytes / (1024 * 1024);
+
+    // 100MB 초과: GitHub 단일 파일 업로드 하드 리밋에 걸리므로 동기화 차단 및 원인 표시
+    if (sizeMb >= 100) {
+      const errorMsg = `메모 크기가 ${sizeMb.toFixed(1)}MB로 GitHub 단일 파일 한도(100MB)를 초과하여 동기화가 차단되었습니다. 첨부파일 크기를 줄여주세요. (경로: ${path})`;
+      console.error(`[GitHub Sync] ${errorMsg}`);
+      return {
+        success: false,
+        error: errorMsg,
+      };
+    }
+
+    // 50MB 초과: 대용량 경고
+    if (sizeMb >= 50) {
+      console.warn(`[GitHub Sync] 대용량 파일 경고 (50MB 초과): ${sizeMb.toFixed(1)}MB, 경로: ${path}`);
+    }
+
     const url = getContentsUrl(config, path);
     const body: any = {
       message: commitMessage,
@@ -437,7 +468,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
       remotePath = legacyPath;
     }
 
-    const serializedContent = serializeNoteToMarkdown(note, folderPath);
+    const serializedContent = serializeNoteToMarkdown(note, folderPath, config.syncOriginalBackup);
 
     if (remoteFile) {
       // 3단계의 '신규 파일 다운로드'에서 중복 처리되지 않도록 맵에서 제거

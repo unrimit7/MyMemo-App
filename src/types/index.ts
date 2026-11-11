@@ -16,6 +16,9 @@ export interface AttachmentItem {
   name: string; // 파일 이름 (예: '문서.pdf', '캡처.png')
   type: string; // MIME 타입 (예: 'application/pdf', 'image/webp')
   data: string; // Base64 data URL
+  originalData?: string; // 최초 웹 수정 전 원본 백업 데이터 URL
+  originalDate?: string; // 최초 백업 일시 (ISO 문자열)
+  editorEngine?: 'exceljs' | 'sheetjs'; // 선호 편집/저장 엔진 (기본: exceljs)
 }
 
 export interface Note {
@@ -42,6 +45,7 @@ export interface GitHubConfig {
   isConnected: boolean;
   autoSync?: boolean; // false면 수동 동기화 모드(권장), true면 변경 3.5초 후 자동 업로드
   syncOnStartup?: boolean; // true면 앱 시작(기동) 시 최신 메모 자동 1회 동기화
+  syncOriginalBackup?: boolean; // true면 첨부파일의 원본 백업 버전도 GitHub에 함께 동기화 (기본값: false, 기기 내부 보존)
   lastSyncedAt?: string;
 }
 

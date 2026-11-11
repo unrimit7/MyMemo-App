@@ -711,40 +711,81 @@ export const FloatingNoteWindow: React.FC<FloatingNoteWindowProps> = ({
           }}
         />
       )}
-      {activeExcelEditorModal && (
-        <ExcelEditorModal
-          isOpen={true}
-          data={activeExcelEditorModal.data}
-          title={activeExcelEditorModal.title}
-          attId={activeExcelEditorModal.attId}
-          onClose={() => setActiveExcelEditorModal(null)}
-          onSave={async (updatedDataUrl) => {
-            let attId = activeExcelEditorModal.attId;
-            const atts = note.attachments || {};
-            if (!attId || !atts[attId]) {
-              attId = Object.keys(atts).find((id) => atts[id].name === activeExcelEditorModal.title)
-                || Object.keys(atts).find((id) => {
-                  const n = (atts[id].name || '').toLowerCase();
-                  return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv');
-                }) || '';
-            }
-            if (attId) {
-              invalidateExcelCache(attId);
-              invalidateExcelCache();
-              const updatedAtts = {
-                ...atts,
-                [attId]: {
-                  ...(atts[attId] || {}),
-                  data: updatedDataUrl,
-                },
-              };
-              onUpdateNote({ attachments: updatedAtts }, note.id);
-              setActiveExcelEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
-              setActiveExcelModal((prev) => prev && (prev.attId === attId || prev.title === activeExcelEditorModal.title) ? { ...prev, data: updatedDataUrl } : prev);
-            }
-          }}
-        />
-      )}
+      {activeExcelEditorModal && (() => {
+        const atts = note.attachments || {};
+        const targetAtt = (activeExcelEditorModal.attId && atts[activeExcelEditorModal.attId]) || Object.values(atts).find(a => a.name === activeExcelEditorModal.title);
+        return (
+          <ExcelEditorModal
+            isOpen={true}
+            data={activeExcelEditorModal.data}
+            title={activeExcelEditorModal.title}
+            attId={activeExcelEditorModal.attId}
+            originalData={targetAtt?.originalData}
+            originalDate={targetAtt?.originalDate}
+            initialEngine={targetAtt?.editorEngine || 'exceljs'}
+            onClose={() => setActiveExcelEditorModal(null)}
+            onSave={async (updatedDataUrl, chosenEngine) => {
+              let attId = activeExcelEditorModal.attId;
+              const currentAtts = note.attachments || {};
+              if (!attId || !currentAtts[attId]) {
+                attId = Object.keys(currentAtts).find((id) => currentAtts[id].name === activeExcelEditorModal.title)
+                  || Object.keys(currentAtts).find((id) => {
+                    const n = (currentAtts[id].name || '').toLowerCase();
+                    return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv');
+                  }) || '';
+              }
+              if (attId) {
+                invalidateExcelCache(attId);
+                invalidateExcelCache();
+
+                const existingAtt = currentAtts[attId];
+                const originalData = existingAtt?.originalData || existingAtt?.data || activeExcelEditorModal.data;
+                const originalDate = existingAtt?.originalDate || new Date().toISOString();
+
+                const updatedAtts = {
+                  ...currentAtts,
+                  [attId]: {
+                    ...(currentAtts[attId] || {}),
+                    data: updatedDataUrl,
+                    originalData,
+                    originalDate,
+                    editorEngine: chosenEngine,
+                  },
+                };
+                onUpdateNote({ attachments: updatedAtts }, note.id);
+                setActiveExcelEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
+                setActiveExcelModal((prev) => prev && (prev.attId === attId || prev.title === activeExcelEditorModal.title) ? { ...prev, data: updatedDataUrl } : prev);
+              }
+            }}
+            onRestoreOriginal={async () => {
+              const attId = activeExcelEditorModal.attId;
+              const currentAtts = note.attachments || {};
+              if (attId && currentAtts[attId]) {
+                const existingAtt = currentAtts[attId];
+                if (existingAtt && existingAtt.originalData) {
+                  invalidateExcelCache(attId);
+                  invalidateExcelCache();
+
+                  const restoredData = existingAtt.originalData;
+                  const updatedAtts = {
+                    ...currentAtts,
+                    [attId]: {
+                      ...existingAtt,
+                      data: restoredData,
+                      originalData: undefined,
+                      originalDate: undefined,
+                    },
+                  };
+                  onUpdateNote({ attachments: updatedAtts }, note.id);
+                  setActiveExcelEditorModal((prev) => prev ? { ...prev, data: restoredData } : null);
+                  setActiveExcelModal((prev) => prev && (prev.attId === attId || prev.title === activeExcelEditorModal.title) ? { ...prev, data: restoredData } : prev);
+                  alert('최초 원본 버전으로 성공적으로 복원되었습니다.');
+                }
+              }
+            }}
+          />
+        );
+      })()}
     </>
   );
 

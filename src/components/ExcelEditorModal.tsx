@@ -6,6 +6,8 @@ import {
   FileSpreadsheet,
   CheckCircle,
   AlertCircle,
+  AlertTriangle,
+  RotateCcw,
   Loader2,
 } from 'lucide-react';
 import { createUniver, defaultTheme, LocaleType } from '@univerjs/presets';
@@ -15,6 +17,7 @@ import '@univerjs/preset-sheets-core/lib/index.css';
 
 import { dataUrlToUniverWorkbook, univerSnapshotToDataUrl } from '../utils/univerAdapter';
 import { invalidateExcelCache } from '../utils/excelViewer';
+import { detectExcelUnsupportedFeatures, type UnsupportedFeatureReport } from '../utils/excelLossDetector';
 import { useFloatingWindow } from './useFloatingWindow';
 
 interface ExcelEditorModalProps {
@@ -23,7 +26,11 @@ interface ExcelEditorModalProps {
   data: string;
   title: string;
   attId?: string;
-  onSave?: (updatedDataUrl: string) => Promise<void> | void;
+  originalData?: string;
+  originalDate?: string;
+  initialEngine?: 'exceljs' | 'sheetjs';
+  onSave?: (updatedDataUrl: string, engine: 'exceljs' | 'sheetjs') => Promise<void> | void;
+  onRestoreOriginal?: () => Promise<void> | void;
 }
 
 export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
@@ -32,7 +39,11 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
   data,
   title,
   attId,
+  originalData,
+  originalDate,
+  initialEngine = 'exceljs',
   onSave,
+  onRestoreOriginal,
 }) => {
   const isCsv = title.toLowerCase().endsWith('.csv');
   const format: 'xlsx' | 'csv' = isCsv ? 'csv' : 'xlsx';
@@ -44,10 +55,30 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
   const [saveToast, setSaveToast] = useState<string | null>(null);
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const [showExitConfirm, setShowExitConfirm] = useState<boolean>(false);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState<boolean>(false);
+  const [showLossWarningModal, setShowLossWarningModal] = useState<boolean>(false);
+  const [lossReport, setLossReport] = useState<UnsupportedFeatureReport | null>(null);
+
+  // 저장 엔진 선택: 'exceljs' (서식 보존 권장) vs 'sheetjs' (기존 경량 모드)
+  const [engine, setEngine] = useState<'exceljs' | 'sheetjs'>(initialEngine);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const univerRef = useRef<any>(null);
   const univerAPIRef = useRef<any>(null);
+
+  // 원본 문서의 미보존 고급 요소(차트, 피벗 등) 사전 검사
+  useEffect(() => {
+    if (!isOpen || !data) return;
+    let isCancelled = false;
+    detectExcelUnsupportedFeatures(data).then((report) => {
+      if (!isCancelled) {
+        setLossReport(report);
+      }
+    });
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOpen, data]);
 
   // 저장되지 않은 변경사항이 있을 때 브라우저 닫기/새로고침 방지
   useEffect(() => {
@@ -69,7 +100,7 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
     let univerInstance: any = null;
 
     // 약간의 지연 후 렌더링 컨테이너가 안정화되었을 때 Univer 초기화
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       if (isDisposed || !containerRef.current) return;
 
       try {
@@ -80,7 +111,8 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
           univerAPIRef.current = null;
         }
 
-        const workbookData = dataUrlToUniverWorkbook(data, title);
+        const workbookData = await dataUrlToUniverWorkbook(data, title);
+        if (isDisposed || !containerRef.current) return;
 
         const { univer, univerAPI } = createUniver({
           locale: LocaleType.KO_KR,
@@ -153,8 +185,8 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
     };
   }, [isOpen, data, title]);
 
-  // 저장 처리
-  const handleSave = async () => {
+  // 실제 저장 실행 함수
+  const executeSave = async () => {
     if (!univerAPIRef.current || isSaving) return;
 
     try {
@@ -163,17 +195,17 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
       if (!activeWb) throw new Error('활성 워크북을 찾을 수 없습니다.');
 
       const snapshot = activeWb.save();
-      const updatedDataUrl = univerSnapshotToDataUrl(snapshot, format);
+      const updatedDataUrl = await univerSnapshotToDataUrl(snapshot, format, engine);
 
       invalidateExcelCache(attId);
 
       if (onSave) {
-        await onSave(updatedDataUrl);
+        await onSave(updatedDataUrl, engine);
       }
 
       setHasChanges(false);
-      setSaveToast('메모에 엑셀이 저장되었습니다!');
-      setTimeout(() => setSaveToast(null), 2500);
+      setSaveToast(`메모에 엑셀이 저장되었습니다 (${engine === 'exceljs' ? 'ExcelJS 서식보존' : 'SheetJS 경량'})`);
+      setTimeout(() => setSaveToast(null), 3000);
     } catch (err) {
       console.error('엑셀 저장 실패:', err);
       setErrorToast('저장에 실패했습니다.');
@@ -183,15 +215,24 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
     }
   };
 
+  // 저장 버튼 클릭 (미보존 요소 감지 시 경고 다이얼로그 띄움)
+  const handleSave = async () => {
+    if (lossReport && lossReport.unsupportedList.length > 0) {
+      setShowLossWarningModal(true);
+      return;
+    }
+    await executeSave();
+  };
+
   // 다운로드 처리
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!univerAPIRef.current) return;
     try {
       const activeWb = univerAPIRef.current.getActiveWorkbook();
       if (!activeWb) return;
 
       const snapshot = activeWb.save();
-      const dataUrl = univerSnapshotToDataUrl(snapshot, format);
+      const dataUrl = await univerSnapshotToDataUrl(snapshot, format, engine);
 
       const a = document.createElement('a');
       a.href = dataUrl;
@@ -227,6 +268,14 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
     onClose();
   };
 
+  // 원본 복원 실행
+  const handleConfirmRestore = async () => {
+    setShowRestoreConfirm(false);
+    if (onRestoreOriginal) {
+      await onRestoreOriginal();
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -234,7 +283,15 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
       className={floating.modalWrapperClass}
       tabIndex={0}
       onKeyDown={(e) => {
-        if (e.key === 'Escape' && !showExitConfirm) {
+        // Ctrl+S 또는 Cmd+S 누르면 브라우저 저장 대신 메모 저장 실행
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+          e.preventDefault();
+          e.stopPropagation();
+          handleSave();
+          return;
+        }
+
+        if (e.key === 'Escape' && !showExitConfirm && !showLossWarningModal && !showRestoreConfirm) {
           handleRequestClose();
         }
       }}
@@ -259,7 +316,7 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
                   {format} 엑셀 편집기
                 </span>
                 {hasChanges && (
-                  <span className="text-[11px] text-amber-400 flex items-center gap-1 font-medium">
+                  <span className="text-[11px] text-amber-400 flex items-center gap-1 font-medium shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
                     수정됨
                   </span>
@@ -283,6 +340,47 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
               </div>
             )}
 
+            {/* 원본으로 되돌리기 버튼 (원본 백업이 존재하는 경우) */}
+            {originalData && onRestoreOriginal && (
+              <button
+                type="button"
+                onClick={() => setShowRestoreConfirm(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold transition-colors cursor-pointer"
+                title={`웹 수정 이전 최초 원본 버전으로 복원합니다 (${originalDate ? new Date(originalDate).toLocaleString() : '최초 버전'})`}
+              >
+                <RotateCcw size={13} />
+                <span className="hidden md:inline">원본으로 되돌리기</span>
+              </button>
+            )}
+
+            {/* 저장 엔진 선택 (ExcelJS vs SheetJS) */}
+            <div className="hidden lg:flex items-center gap-1 bg-slate-950 border border-slate-800 rounded-lg p-0.5 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setEngine('exceljs')}
+                className={`px-2 py-0.5 rounded font-semibold transition-all cursor-pointer ${
+                  engine === 'exceljs'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="ExcelJS: 글꼴, 배경색, 테두리, 열너비, 행높이, 수식, 병합을 보존하는 고품질 엔진"
+              >
+                ExcelJS (서식보존)
+              </button>
+              <button
+                type="button"
+                onClick={() => setEngine('sheetjs')}
+                className={`px-2 py-0.5 rounded font-semibold transition-all cursor-pointer ${
+                  engine === 'sheetjs'
+                    ? 'bg-slate-700 text-white shadow-xs'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="SheetJS: 순수 표 데이터 중심의 기존 경량 엔진"
+              >
+                SheetJS (경량)
+              </button>
+            </div>
+
             {/* 저장 및 반영 버튼 */}
             <button
               type="button"
@@ -293,7 +391,7 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
                   ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/30 animate-pulse'
                   : 'bg-emerald-700/80 hover:bg-emerald-600 text-white'
               } disabled:opacity-50`}
-              title="편집한 내용을 메모에 즉시 저장합니다 (Ctrl+S)"
+              title="편집한 내용을 메모에 즉시 저장합니다 (단축키: Ctrl+S)"
             >
               {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
               <span>{isSaving ? '저장 중...' : '저장 및 반영'}</span>
@@ -338,6 +436,96 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
         {floating.resizeHandle}
       </div>
 
+      {/* 미보존 요소(차트, 피벗 등) 손실 경고 다이얼로그 */}
+      {showLossWarningModal && lossReport && (
+        <div className="fixed inset-0 z-70 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-amber-500/40 rounded-2xl shadow-2xl max-w-md w-full p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/30 shrink-0">
+                <AlertTriangle size={24} />
+              </div>
+              <div className="space-y-1.5">
+                <h3 className="text-sm font-bold text-slate-100">고급 서식 보존 주의 안내</h3>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  현재 열려 있는 엑셀 문서에 웹 편집기(ExcelJS)에서 완벽히 보존되지 않는 다음 요소가 포함되어 있습니다:
+                </p>
+                <div className="bg-slate-950 border border-slate-800 rounded-lg p-2.5 mt-2 space-y-1">
+                  {lossReport.unsupportedList.map((item, idx) => (
+                    <div key={idx} className="flex items-center gap-1.5 text-xs text-amber-300 font-medium">
+                      <span>•</span>
+                      <span>{item}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
+                  * 셀 데이터, 수식, 병합, 폰트, 배경색, 열 너비는 정상 보존되나, 위 고급 요소는 저장 시 누락될 수 있습니다. (첫 저장 시 원본 파일은 자동으로 백업 보관됩니다)
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowLossWarningModal(false)}
+                className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors cursor-pointer"
+              >
+                취소 (저장 안 함)
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setShowLossWarningModal(false);
+                  await executeSave();
+                }}
+                className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              >
+                그래도 저장
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 원본 복원 확인 모달 */}
+      {showRestoreConfirm && (
+        <div className="fixed inset-0 z-70 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl max-w-sm w-full p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0">
+                <RotateCcw size={22} />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-100">최초 원본 버전으로 되돌리시겠습니까?</h3>
+                <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                  웹에서 수정한 모든 내용이 취소되고, 처음 업로드했던 원본 엑셀 문서 상태로 완전히 복원됩니다.
+                </p>
+                {originalDate && (
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    (백업 시점: {new Date(originalDate).toLocaleString()})
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowRestoreConfirm(false)}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors cursor-pointer"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRestore}
+                className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              >
+                원본으로 되돌리기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 저장되지 않은 변경사항 닫기 확인 모달 */}
       {showExitConfirm && (
         <div className="fixed inset-0 z-60 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
@@ -357,21 +545,21 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
               <button
                 type="button"
                 onClick={() => setShowExitConfirm(false)}
-                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors"
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors cursor-pointer"
               >
                 취소
               </button>
               <button
                 type="button"
                 onClick={handleDiscardAndExit}
-                className="px-3 py-1.5 rounded-lg bg-rose-900/40 hover:bg-rose-900/60 text-rose-300 border border-rose-700/40 text-xs font-medium transition-colors"
+                className="px-3 py-1.5 rounded-lg bg-rose-900/40 hover:bg-rose-900/60 text-rose-300 border border-rose-700/40 text-xs font-medium transition-colors cursor-pointer"
               >
                 저장하지 않고 닫기
               </button>
               <button
                 type="button"
                 onClick={handleSaveAndExit}
-                className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-xs transition-colors"
+                className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"
               >
                 저장하고 닫기
               </button>
@@ -382,4 +570,3 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
     </div>
   );
 };
-
