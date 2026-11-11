@@ -397,17 +397,245 @@ function fallbackSheetJsToUniver(dataOrUrl: string, defaultName: string): IWorkb
  * Univer의 스냅샷(IWorkbookData)을 다시 XLSX 또는 CSV Data URL 문자열로 생성합니다.
  * engine: 'exceljs' (기본값, 서식/열너비/행높이 보존) | 'sheetjs' (기존 가벼운 데이터 모드)
  */
+export interface StructuralOperation {
+  type: 'insertRow' | 'removeRow' | 'insertCol' | 'removeCol';
+  sheetName?: string;
+  subUnitId?: string;
+  sheetIndex?: number;
+  start: number; // 1-based index
+  count: number;
+}
+
+// 엑셀 열 문자(A, B, ..., Z, AA, ...)와 1-based 인덱스 변환
+function colToNum(colStr: string): number {
+  let num = 0;
+  for (let i = 0; i < colStr.length; i++) {
+    num = num * 26 + (colStr.charCodeAt(i) - 64);
+  }
+  return num;
+}
+
+function numToCol(num: number): string {
+  let s = '';
+  while (num > 0) {
+    const m = (num - 1) % 26;
+    s = String.fromCharCode(65 + m) + s;
+    num = Math.floor((num - m) / 26);
+  }
+  return s;
+}
+
+// 조건부 서식 참조 범위('A2:B5' 등) 행 번호 시프트
+function shiftRangeRows(ref: string, startRow: number, count: number): string {
+  try {
+    const parts = ref.split(':');
+    const shiftedParts = parts.map((cellStr) => {
+      const match = cellStr.match(/^([A-Za-z]+)(\d+)$/);
+      if (!match) return cellStr;
+      const col = match[1];
+      const row = parseInt(match[2], 10);
+      if (row >= startRow) {
+        const newRow = Math.max(1, row + count);
+        return `${col}${newRow}`;
+      }
+      return cellStr;
+    });
+    return shiftedParts.join(':');
+  } catch {
+    return ref;
+  }
+}
+
+// 조건부 서식 참조 범위('A2:B5' 등) 열 번호 시프트
+function shiftRangeCols(ref: string, startCol: number, count: number): string {
+  try {
+    const parts = ref.split(':');
+    const shiftedParts = parts.map((cellStr) => {
+      const match = cellStr.match(/^([A-Za-z]+)(\d+)$/);
+      if (!match) return cellStr;
+      const colLetter = match[1].toUpperCase();
+      const rowNum = match[2];
+      const colNum = colToNum(colLetter);
+      if (colNum >= startCol) {
+        const newColNum = Math.max(1, colNum + count);
+        return `${numToCol(newColNum)}${rowNum}`;
+      }
+      return cellStr;
+    });
+    return shiftedParts.join(':');
+  } catch {
+    return ref;
+  }
+}
+
+// 셀 메모, 데이터 유효성 검사, 조건부 서식 위치를 함께 보존·이동시키는 행 삽입/삭제 함수
+function safeSpliceRows(ws: ExcelJS.Worksheet, start: number, count: number, ...inserts: any[]) {
+  const nInserts = inserts.length;
+  const nExpand = nInserts - count;
+  const nKeep = start + count;
+  const nEnd = (ws as any)._rows?.length || ws.rowCount;
+
+  if (nExpand > 0) {
+    const rowMeta: Array<{ fromRow: number; toRow: number; cells: any[] }> = [];
+    for (let i = nKeep; i <= nEnd; i++) {
+      const r = (ws as any)._rows?.[i - 1];
+      if (r) {
+        const cells: any[] = [];
+        r.eachCell({ includeEmpty: true }, (cell: any, cNum: number) => {
+          if (cell.note || cell.dataValidation) {
+            cells.push({
+              cNum,
+              note: cell.note,
+              dataValidation: cell.dataValidation,
+            });
+            cell.note = undefined;
+            cell.dataValidation = undefined;
+          }
+        });
+        rowMeta.push({ fromRow: i, toRow: i + nExpand, cells });
+      }
+    }
+
+    ws.spliceRows(start, count, ...inserts);
+
+    rowMeta.forEach(({ toRow, cells }) => {
+      const dstRow = ws.getRow(toRow);
+      cells.forEach(({ cNum, note, dataValidation }) => {
+        if (note) dstRow.getCell(cNum).note = note;
+        if (dataValidation) dstRow.getCell(cNum).dataValidation = dataValidation;
+      });
+    });
+
+    if ((ws as any).conditionalFormattings) {
+      (ws as any).conditionalFormattings.forEach((cf: any) => {
+        if (cf.ref) cf.ref = shiftRangeRows(cf.ref, start, nExpand);
+      });
+    }
+  } else if (nExpand < 0) {
+    const delCount = -nExpand;
+    const rowMeta: Array<{ fromRow: number; toRow: number; cells: any[] }> = [];
+    for (let i = nKeep; i <= nEnd; i++) {
+      const r = (ws as any)._rows?.[i - 1];
+      if (r) {
+        const cells: any[] = [];
+        r.eachCell({ includeEmpty: true }, (cell: any, cNum: number) => {
+          if (cell.note || cell.dataValidation) {
+            cells.push({
+              cNum,
+              note: cell.note,
+              dataValidation: cell.dataValidation,
+            });
+          }
+        });
+        rowMeta.push({ fromRow: i, toRow: i - delCount, cells });
+      }
+    }
+
+    ws.spliceRows(start, count, ...inserts);
+
+    rowMeta.forEach(({ toRow, cells }) => {
+      const dstRow = ws.getRow(toRow);
+      cells.forEach(({ cNum, note, dataValidation }) => {
+        if (note) dstRow.getCell(cNum).note = note;
+        if (dataValidation) dstRow.getCell(cNum).dataValidation = dataValidation;
+      });
+    });
+
+    if ((ws as any).conditionalFormattings) {
+      (ws as any).conditionalFormattings.forEach((cf: any) => {
+        if (cf.ref) cf.ref = shiftRangeRows(cf.ref, start, -delCount);
+      });
+    }
+  } else {
+    ws.spliceRows(start, count, ...inserts);
+  }
+}
+
+// 셀 메모, 데이터 유효성 검사, 조건부 서식 위치를 함께 보존·이동시키는 열 삽입/삭제 함수
+function safeSpliceColumns(ws: ExcelJS.Worksheet, start: number, count: number, ...inserts: any[]) {
+  const nInserts = inserts.length;
+  const nExpand = nInserts - count;
+  const nKeep = start + count;
+
+  if (nExpand > 0) {
+    const colMeta: any[] = [];
+    ws.eachRow({ includeEmpty: true }, (row, rNum) => {
+      row.eachCell({ includeEmpty: true }, (cell: any, cNum: number) => {
+        if (cNum >= start && (cell.note || cell.dataValidation)) {
+          colMeta.push({
+            rNum,
+            fromCol: cNum,
+            toCol: cNum + nExpand,
+            note: cell.note,
+            dataValidation: cell.dataValidation,
+          });
+          cell.note = undefined;
+          cell.dataValidation = undefined;
+        }
+      });
+    });
+
+    ws.spliceColumns(start, count, ...inserts);
+
+    colMeta.forEach(({ rNum, toCol, note, dataValidation }) => {
+      const cell = ws.getCell(rNum, toCol);
+      if (note) cell.note = note;
+      if (dataValidation) cell.dataValidation = dataValidation;
+    });
+
+    if ((ws as any).conditionalFormattings) {
+      (ws as any).conditionalFormattings.forEach((cf: any) => {
+        if (cf.ref) cf.ref = shiftRangeCols(cf.ref, start, nExpand);
+      });
+    }
+  } else if (nExpand < 0) {
+    const delCount = -nExpand;
+    const colMeta: any[] = [];
+    ws.eachRow({ includeEmpty: true }, (row, rNum) => {
+      row.eachCell({ includeEmpty: true }, (cell: any, cNum: number) => {
+        if (cNum >= nKeep && (cell.note || cell.dataValidation)) {
+          colMeta.push({
+            rNum,
+            fromCol: cNum,
+            toCol: cNum - delCount,
+            note: cell.note,
+            dataValidation: cell.dataValidation,
+          });
+        }
+      });
+    });
+
+    ws.spliceColumns(start, count, ...inserts);
+
+    colMeta.forEach(({ rNum, toCol, note, dataValidation }) => {
+      const cell = ws.getCell(rNum, toCol);
+      if (note) cell.note = note;
+      if (dataValidation) cell.dataValidation = dataValidation;
+    });
+
+    if ((ws as any).conditionalFormattings) {
+      (ws as any).conditionalFormattings.forEach((cf: any) => {
+        if (cf.ref) cf.ref = shiftRangeCols(cf.ref, start, -delCount);
+      });
+    }
+  } else {
+    ws.spliceColumns(start, count, ...inserts);
+  }
+}
+
 /**
  * Univer의 스냅샷(IWorkbookData)을 다시 XLSX 또는 CSV Data URL 문자열로 생성합니다.
  * engine: 'exceljs' (기본값, 서식/열너비/행높이 보존) | 'sheetjs' (기존 가벼운 데이터 모드)
  * originalDataOrUrl: 원본 파일 바이트(Data URL). 제공 시 원본 워크북을 로드하여 바뀐 셀/수식/서식/병합/크기만
  * in-place로 패치하므로 ExcelJS가 지원하는 조건부 서식, 데이터 유효성 검사, 셀 메모, 인쇄 설정, 틀 고정이 100% 보존됩니다.
+ * structuralOperations: 행/열 삽입·삭제 명령 목록.
  */
 export async function univerSnapshotToDataUrl(
   snapshot: IWorkbookData,
   format: 'xlsx' | 'csv' = 'xlsx',
   engine: 'exceljs' | 'sheetjs' = 'exceljs',
-  originalDataOrUrl?: string
+  originalDataOrUrl?: string,
+  structuralOperations?: StructuralOperation[]
 ): Promise<string> {
   if (engine === 'sheetjs' || format === 'csv') {
     return univerSnapshotToDataUrlWithSheetJS(snapshot, format);
@@ -498,6 +726,45 @@ export async function univerSnapshotToDataUrl(
       const sheetName = (uSheet.name || `Sheet${sIdx + 1}`).slice(0, 31);
       const ws = (uSheet as any)._matchedWs || wb.getWorksheet(sheetName) || wb.worksheets[sIdx] || wb.addWorksheet(sheetName);
 
+      // 0. 행/열 구조 변경(삽입/삭제) In-Place 적용 (메모/유효성검사/조건부서식 함께 시프트)
+      const sheetOps = (structuralOperations || []).filter(
+        (op) =>
+          (!op.subUnitId && !op.sheetName && op.sheetIndex === undefined) ||
+          op.subUnitId === sheetId ||
+          op.sheetName === ws.name ||
+          op.sheetIndex === sIdx
+      );
+
+      sheetOps.forEach((op) => {
+        if (op.type === 'insertRow') {
+          safeSpliceRows(ws, op.start, 0, ...Array(op.count).fill([]));
+        } else if (op.type === 'removeRow') {
+          safeSpliceRows(ws, op.start, op.count);
+        } else if (op.type === 'insertCol') {
+          safeSpliceColumns(ws, op.start, 0, ...Array(op.count).fill([]));
+        } else if (op.type === 'removeCol') {
+          safeSpliceColumns(ws, op.start, op.count);
+        }
+      });
+
+      const cellData = uSheet.cellData || {};
+
+      // 0-1. 원본 셀 값 비우기: 원본 워크시트 셀 중 Univer 스냅샷에 없거나 비어있는 셀의 값을 null로 초기화
+      ws.eachRow({ includeEmpty: false }, (row: any, rowNumber: number) => {
+        const rIdx = rowNumber - 1; // 0-based
+        row.eachCell({ includeEmpty: false }, (excelCell: any, colNumber: number) => {
+          const cIdx = colNumber - 1; // 0-based
+          const uCell = cellData[rIdx]?.[cIdx];
+          const isUniverEmpty =
+            !uCell ||
+            ((uCell.v === undefined || uCell.v === null || uCell.v === '') && !uCell.f);
+
+          if (isUniverEmpty) {
+            excelCell.value = null;
+          }
+        });
+      });
+
       // 1. 열 너비 복원
       const colData = uSheet.columnData;
       if (colData) {
@@ -512,7 +779,6 @@ export async function univerSnapshotToDataUrl(
       }
 
       // 2. 행 높이 및 셀 데이터/스타일 복원
-      const cellData = uSheet.cellData || {};
       const rowKeys = Object.keys(cellData);
 
       for (let i = 0; i < rowKeys.length; i++) {

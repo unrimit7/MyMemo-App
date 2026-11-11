@@ -15,7 +15,7 @@ import { UniverSheetsCorePreset } from '@univerjs/preset-sheets-core';
 import UniverPresetSheetsCoreKoKR from '@univerjs/preset-sheets-core/locales/ko-KR';
 import '@univerjs/preset-sheets-core/lib/index.css';
 
-import { dataUrlToUniverWorkbook, univerSnapshotToDataUrl } from '../utils/univerAdapter';
+import { dataUrlToUniverWorkbook, univerSnapshotToDataUrl, type StructuralOperation } from '../utils/univerAdapter';
 import { invalidateExcelCache } from '../utils/excelViewer';
 import { detectExcelUnsupportedFeatures, type UnsupportedFeatureReport } from '../utils/excelLossDetector';
 import { useFloatingWindow } from './useFloatingWindow';
@@ -66,6 +66,7 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
   const univerRef = useRef<any>(null);
   const univerAPIRef = useRef<any>(null);
   const currentDataRef = useRef<string>(data);
+  const structuralOpsRef = useRef<StructuralOperation[]>([]);
 
   useEffect(() => {
     currentDataRef.current = data;
@@ -162,9 +163,42 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
         const commandService = (univerAPI as any)._commandService;
         let disposable: any = null;
         if (commandService && typeof commandService.onCommandExecuted === 'function') {
-          disposable = commandService.onCommandExecuted(() => {
+          disposable = commandService.onCommandExecuted((cmd: any) => {
             if (!isInitial && !isDisposed) {
               setHasChanges(true);
+
+              // 행/열 삽입 및 삭제 명령 감지하여 In-Place 패치용 큐에 기록
+              const id = cmd?.id || '';
+              const range = cmd?.params?.range;
+              if ((id === 'sheet.mutation.insert-row' || id.includes('insert-row')) && range) {
+                structuralOpsRef.current.push({
+                  type: 'insertRow',
+                  subUnitId: cmd.params?.subUnitId,
+                  start: range.startRow + 1,
+                  count: range.endRow - range.startRow + 1,
+                });
+              } else if ((id === 'sheet.mutation.remove-rows' || id.includes('remove-row')) && range) {
+                structuralOpsRef.current.push({
+                  type: 'removeRow',
+                  subUnitId: cmd.params?.subUnitId,
+                  start: range.startRow + 1,
+                  count: range.endRow - range.startRow + 1,
+                });
+              } else if ((id === 'sheet.mutation.insert-col' || id.includes('insert-col')) && range) {
+                structuralOpsRef.current.push({
+                  type: 'insertCol',
+                  subUnitId: cmd.params?.subUnitId,
+                  start: range.startColumn + 1,
+                  count: range.endColumn - range.startColumn + 1,
+                });
+              } else if ((id === 'sheet.mutation.remove-col' || id.includes('remove-col')) && range) {
+                structuralOpsRef.current.push({
+                  type: 'removeCol',
+                  subUnitId: cmd.params?.subUnitId,
+                  start: range.startColumn + 1,
+                  count: range.endColumn - range.startColumn + 1,
+                });
+              }
             }
           });
         }
@@ -200,9 +234,11 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
       if (!activeWb) throw new Error('활성 워크북을 찾을 수 없습니다.');
 
       const snapshot = activeWb.save();
-      // 원본 데이터(currentDataRef.current)를 전달하여 바뀐 셀/서식만 in-place로 업데이트
-      const updatedDataUrl = await univerSnapshotToDataUrl(snapshot, format, engine, currentDataRef.current);
+      // 원본 데이터(currentDataRef.current) 및 구조 변경 연산(structuralOpsRef.current)을 전달하여 in-place 패치
+      const ops = [...structuralOpsRef.current];
+      const updatedDataUrl = await univerSnapshotToDataUrl(snapshot, format, engine, currentDataRef.current, ops);
       currentDataRef.current = updatedDataUrl;
+      structuralOpsRef.current = [];
 
       invalidateExcelCache(attId);
 
@@ -239,7 +275,8 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
       if (!activeWb) return;
 
       const snapshot = activeWb.save();
-      const dataUrl = await univerSnapshotToDataUrl(snapshot, format, engine, currentDataRef.current);
+      const ops = [...structuralOpsRef.current];
+      const dataUrl = await univerSnapshotToDataUrl(snapshot, format, engine, currentDataRef.current, ops);
 
       const a = document.createElement('a');
       a.href = dataUrl;

@@ -3,7 +3,7 @@
 - **작성일자**: 2026-11-11
 - **적용 엔진**: ExcelJS 4.4.0 + Univer 1.4.0 (In-Place 양방향 어댑터) + JSZip 3.10.2 (사전 감지)
 - **보조 엔진**: SheetJS CE 0.18.5 (기존 경량 데이터 모드 토글 유지)
-- **검증 방식**: Vitest 자동화 단위/통합 테스트 (`tests/excelRoundtrip.test.ts`, 6개 테스트 전수 통과)
+- **검증 방식**: Vitest 자동화 단위/통합 테스트 (`tests/excelRoundtrip.test.ts`, 10개 테스트 전수 통과)
 
 ---
 
@@ -15,7 +15,9 @@
 1. `univerSnapshotToDataUrl(snapshot, format, engine, originalDataOrUrl)` 호출 시 원본 Data URL 바이트를 `wb.xlsx.load(origBytes)`로 먼저 로드합니다.
 2. **시트 동기화**: 원본 워크북의 시트 목록과 Univer `sheetOrder`를 대조하여, 삭제된 시트는 `wb.removeWorksheet()`로 제거하고, 신규 시트는 `wb.addWorksheet()`로 추가하며, 이름 변경은 `ws.name`에 반영합니다.
 3. **스타일/데이터 패치**: 수정된 셀의 값, 수식, 폰트, 배경색, 정렬, 표시 형식, 행 높이, 열 너비만 기존 워크시트 객체 위에 덮어씁니다.
-4. **고급 메타데이터 보존**: 워크시트 객체를 새로 생성하지 않고 원본 객체를 유지하므로, ExcelJS 코어가 유지하는 **조건부 서식, 데이터 유효성 검사(드롭다운), 셀 메모(Notes), 틀 고정(Freeze Panes), 인쇄/페이지 설정(Page Setup)**이 100% 보존됩니다.
+4. **고급 메타데이터 보존**: 워크시트 객체를 새로 생성하지 않고 원본 객체를 유지하므로, ExcelJS 코어가 유지하는 **조건부 서식, 데이터 유효성 검사(드롭다운), 셀 메모(Notes), 틀 고정(Freeze Panes), 인쇄/페이지 설정(Page Setup)**이 보존됩니다.
+5. **셀 내용 지우기 (Omission to Null)**: Univer 스냅샷에서 사용자가 값을 지워 빈 셀이 된 경우(`v === ''` 또는 미정의/생략), 원본 워크시트의 대응 셀을 `null`로 초기화하여 원본 값이 유령 데이터로 잔여하는 현상을 완벽 방지합니다.
+6. **행/열 구조 변경 In-Place 시프트 (`safeSpliceRows`, `safeSpliceColumns`)**: Univer의 행/열 삽입·삭제 명령을 트래킹하여 원본 워크북에 순서대로 적용하며, ExcelJS 기본 splice 동작에서 누락되는 **셀 메모(`cell.note`), 데이터 유효성 드롭다운(`cell.dataValidation`), 조건부 서식 참조 범위(`conditionalFormattings[].ref`)**를 데이터와 함께 안전하게 한 칸씩 시프트 이동시킵니다.
 
 | 분류 | 항목 | 보존 여부 | In-Place 라운드트립 실측 상세 및 동작 방식 |
 | :--- | :--- | :---: | :--- |
@@ -55,8 +57,12 @@
 | **sample4_chart_loss_test.xlsx** | • 데이터 테이블 (분기별 실적)<br>• **xl/drawings/drawing1.xml**<br>• **xl/charts/chart1.xml (정식 OOXML 바 차트)** | 8,489B → 6,614B<br>(-1,875B) | • 차트 사전 감지기 작동(`hasCharts: true`): **O**<br>• 저장 전 손실 경고 다이얼로그 정상 노출: **O**<br>• 데이터 테이블(`A1:B5` 값): **O**<br>• 차트 개체: **ExcelJS 미지원으로 누락(X)** | **통과 (PASS)** |
 | **sample5_conditional_and_validation.xlsx** | • 부서 선택 드롭다운(유효성검사)<br>• 조건부 서식 규칙 1개<br>• C2 셀 메모 ("인사평가 최고 등급")<br>• 1행 틀 고정 (Freeze Panes)<br>• 인쇄 가로방향 (landscape) | 7,120B → 7,156B<br>(+36B) | • 조건부 서식 규칙 수 보존: **O**<br>• 데이터 유효성 목록(`type: 'list'`): **O**<br>• 셀 메모(`note` 포함): **O**<br>• 틀 고정(`views[0].state: 'frozen'`): **O**<br>• 페이지 인쇄 설정(`orientation: 'landscape'`): **O**<br>• 수정 셀(`A2='이몽룡'`): **O** | **통과 (PASS)** |
 | **In-Place 시트 동기화 테스트** | • 시트 삭제 ('비용현황')<br>• 시트 이름 변경 ('요약보고' ➔ '경영종합보고')<br>• 신규 시트 추가 ('신규시트') | - | • 삭제 시트 미포함 확인: **O**<br>• 이름 변경 시트 반영 확인: **O**<br>• 신규 시트 및 데이터 반영 확인: **O** | **통과 (PASS)** |
+| **셀 내용 지우기 테스트** | • B2 값 삭제 (빈 셀화) 후 저장 | - | • 저장 파일의 B2 셀 값 `null` 검증: **O** | **통과 (PASS)** |
+| **행 삭제 테스트** | • 3행 삭제 후 저장 | - | • 마지막 행 중복 방지 및 총 행 수 1행 감소: **O** | **통과 (PASS)** |
+| **행 삽입 테스트** | • 2행 위에 행 삽입 후 저장 | - | • 데이터, 조건부 서식, 드롭다운, 메모, 병합 1행씩 안전 하향 이동: **O** | **통과 (PASS)** |
+| **열 삭제/삽입 테스트** | • 2열 앞 열 삽입 및 열 삭제 후 저장 | - | • 데이터, 메모, 드롭다운 C열 우측 이동 및 삭제 시 원위치 복구: **O** | **통과 (PASS)** |
 
-- **테스트 실행 결과 요약**: `6 passed / 0 failed (100% 통과, 소요시간 104ms)`
+- **테스트 실행 결과 요약**: `10 passed / 0 failed (100% 전수 통과, 소요시간 약 200ms)`
 
 ---
 
