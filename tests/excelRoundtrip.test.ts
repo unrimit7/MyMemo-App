@@ -578,8 +578,13 @@ describe('ExcelJS Roundtrip Automation Tests (Sample 1 ~ 5)', () => {
     expect(ws.pageSetup?.fitToPage).toBe(true);
   });
 
-  test('실파일B_견적서_MS엑셀.xlsx 라운드트립: 셀 수정, 셀 지우기 및 수식/조건부서식/다중시트 보존 검증', async () => {
+  test('실파일B_견적서_MS엑셀.xlsx 라운드트립: 숨긴 H열(원가), richText, 하이퍼링크, 자동필터, 병합 11개(B2:H2), 데이터막대/색조 보존 검증', async () => {
     const origDataUrl = readSampleDataUrl('real/실파일B_견적서_MS엑셀.xlsx');
+
+    // 1. 차트 사전 감지 검증
+    const lossReport = await detectExcelUnsupportedFeatures(origDataUrl);
+    expect(lossReport.hasCharts).toBe(true);
+
     const snapshot = await dataUrlToUniverWorkbook(origDataUrl, '실파일B_MS');
     expect(snapshot.sheetOrder.length).toBe(2);
 
@@ -587,11 +592,11 @@ describe('ExcelJS Roundtrip Automation Tests (Sample 1 ~ 5)', () => {
     const sheet = snapshot.sheets[sheetId];
     expect(sheet.name).toBe('견적서');
 
-    // 1. 셀 수정 (A1 수정)
+    // 2. 셀 수정 (A1 수정)
     if (!sheet.cellData[0]) sheet.cellData[0] = {};
     sheet.cellData[0][0] = { v: '견적서 (수정본)' };
 
-    // In-Place 라운드트립 저장
+    // 3. In-Place 라운드트립 저장
     const savedDataUrl = await univerSnapshotToDataUrl(snapshot, 'xlsx', 'exceljs', origDataUrl);
     const savedBuf = dataUrlToBuffer(savedDataUrl);
 
@@ -602,18 +607,54 @@ describe('ExcelJS Roundtrip Automation Tests (Sample 1 ~ 5)', () => {
     const ws = reloadedWb.getWorksheet('견적서')!;
     expect(ws.getCell('A1').value).toBe('견적서 (수정본)');
 
-    // 병합 및 조건부 서식 확인
-    const merges = (ws as any).model?.merges || [];
-    expect(merges.length).toBeGreaterThan(0);
-    expect((ws as any).conditionalFormattings?.length).toBeGreaterThanOrEqual(1);
+    // 1) 숨긴 H열(원가) 보존 검증 (견적서 원가 노출 방지 - 최우선)
+    expect(ws.getColumn('H').hidden).toBe(true);
 
-    // 월별매출 시트 조건부 서식 확인
+    // 2) B8 셀 서식 있는 텍스트(richText) 및 빨간색 굵은 글씨 보존 검증
+    const b8Val = ws.getCell('B8').value as any;
+    expect(b8Val).toBeDefined();
+    expect(b8Val.richText).toBeDefined();
+    expect(Array.isArray(b8Val.richText)).toBe(true);
+    const redBoldPart = b8Val.richText.find((t: any) => t.text === '부가세 포함');
+    expect(redBoldPart).toBeDefined();
+    expect(redBoldPart.font?.bold).toBe(true);
+    const redColor = redBoldPart.font?.color?.argb?.toUpperCase();
+    expect(redColor).toContain('FF0000');
+
+    // 3) G6 하이퍼링크 보존 검증
+    const g6Val = ws.getCell('G6').value as any;
+    expect(g6Val).toBeDefined();
+    expect(g6Val.hyperlink).toContain('https://example.com');
+
+    // 4) 자동 필터(B10:H15) 보존 검증
+    expect(ws.autoFilter).toBe('B10:H15');
+
+    // 5) 병합 정확한 범위 11개 유지 및 제목(B2:H2) 검증
+    const merges = (ws as any).model?.merges || [];
+    expect(merges.length).toBe(11);
+    expect(merges.includes('B2:H2')).toBe(true);
+
+    // 6) 데이터 막대(dataBar) 조건부 서식 보존 검증 (G11:G15)
+    expect((ws as any).conditionalFormattings?.length).toBeGreaterThanOrEqual(1);
+    const dataBarCf = (ws as any).conditionalFormattings.find((cf: any) => cf.ref === 'G11:G15');
+    expect(dataBarCf).toBeDefined();
+    expect(dataBarCf.rules?.[0]?.type).toBe('dataBar');
+
+    // 7) 월별매출 시트 색조(colorScale) 조건부 서식 보존 검증 (D2:D13)
     const ws2 = reloadedWb.getWorksheet('월별매출')!;
     expect((ws2 as any).conditionalFormattings?.length).toBeGreaterThanOrEqual(1);
+    const colorScaleCf = (ws2 as any).conditionalFormattings.find((cf: any) => cf.ref === 'D2:D13');
+    expect(colorScaleCf).toBeDefined();
+    expect(colorScaleCf.rules?.[0]?.type).toBe('colorScale');
   });
 
-  test('실파일B_견적서_한셀.xlsx 라운드트립: XML 정규화 후 수식, 서식, 조건부서식 보존 검증', async () => {
+  test('실파일B_견적서_한셀.xlsx 라운드트립: XML 정규화 후 숨긴 H열, richText, 하이퍼링크, 자동필터, 병합 11개(B2:H2), 데이터막대/색조 보존 검증', async () => {
     const origDataUrl = readSampleDataUrl('real/실파일B_견적서_한셀.xlsx');
+
+    // 1. 차트 사전 감지 검증
+    const lossReport = await detectExcelUnsupportedFeatures(origDataUrl);
+    expect(lossReport.hasCharts).toBe(true);
+
     const snapshot = await dataUrlToUniverWorkbook(origDataUrl, '실파일B_한셀');
     expect(snapshot.sheetOrder.length).toBe(2);
 
@@ -621,11 +662,11 @@ describe('ExcelJS Roundtrip Automation Tests (Sample 1 ~ 5)', () => {
     const sheet = snapshot.sheets[sheetId];
     expect(sheet.name).toBe('견적서');
 
-    // 1. 셀 수정 (A1 수정)
+    // 2. 셀 수정 (A1 수정)
     if (!sheet.cellData[0]) sheet.cellData[0] = {};
     sheet.cellData[0][0] = { v: '한셀 견적서 (수정본)' };
 
-    // In-Place 라운드트립 저장
+    // 3. In-Place 라운드트립 저장
     const savedDataUrl = await univerSnapshotToDataUrl(snapshot, 'xlsx', 'exceljs', origDataUrl);
     const savedBuf = dataUrlToBuffer(savedDataUrl);
 
@@ -636,13 +677,45 @@ describe('ExcelJS Roundtrip Automation Tests (Sample 1 ~ 5)', () => {
     const ws = reloadedWb.getWorksheet('견적서')!;
     expect(ws.getCell('A1').value).toBe('한셀 견적서 (수정본)');
 
-    // 병합 및 조건부 서식 확인
-    const merges = (ws as any).model?.merges || [];
-    expect(merges.length).toBeGreaterThan(0);
-    expect((ws as any).conditionalFormattings?.length).toBeGreaterThanOrEqual(1);
+    // 1) 숨긴 H열(원가) 보존 검증
+    expect(ws.getColumn('H').hidden).toBe(true);
 
+    // 2) B8 셀 서식 있는 텍스트(richText) 및 빨간색 굵은 글씨 보존 검증
+    const b8Val = ws.getCell('B8').value as any;
+    expect(b8Val).toBeDefined();
+    expect(b8Val.richText).toBeDefined();
+    expect(Array.isArray(b8Val.richText)).toBe(true);
+    const redBoldPart = b8Val.richText.find((t: any) => t.text === '부가세 포함');
+    expect(redBoldPart).toBeDefined();
+    expect(redBoldPart.font?.bold).toBe(true);
+    const redColor = redBoldPart.font?.color?.argb?.toUpperCase();
+    expect(redColor).toContain('FF0000');
+
+    // 3) G6 하이퍼링크 보존 검증
+    const g6Val = ws.getCell('G6').value as any;
+    expect(g6Val).toBeDefined();
+    expect(g6Val.hyperlink).toContain('https://example.com');
+
+    // 4) 자동 필터(B10:H15) 보존 검증
+    expect(ws.autoFilter).toBe('B10:H15');
+
+    // 5) 병합 정확한 범위 11개 유지 및 제목(B2:H2) 검증
+    const merges = (ws as any).model?.merges || [];
+    expect(merges.length).toBe(11);
+    expect(merges.includes('B2:H2')).toBe(true);
+
+    // 6) 데이터 막대(dataBar) 조건부 서식 보존 검증 (G11:G15)
+    expect((ws as any).conditionalFormattings?.length).toBeGreaterThanOrEqual(1);
+    const dataBarCf = (ws as any).conditionalFormattings.find((cf: any) => cf.ref === 'G11:G15');
+    expect(dataBarCf).toBeDefined();
+    expect(dataBarCf.rules?.[0]?.type).toBe('dataBar');
+
+    // 7) 월별매출 시트 색조(colorScale) 조건부 서식 보존 검증 (D2:D13)
     const ws2 = reloadedWb.getWorksheet('월별매출')!;
     expect((ws2 as any).conditionalFormattings?.length).toBeGreaterThanOrEqual(1);
+    const colorScaleCf = (ws2 as any).conditionalFormattings.find((cf: any) => cf.ref === 'D2:D13');
+    expect(colorScaleCf).toBeDefined();
+    expect(colorScaleCf.rules?.[0]?.type).toBe('colorScale');
   });
 
   test('Univer 구조 변경 기록: mutation ID 정확 일치 필터링 및 Undo 시 상쇄 검증', () => {

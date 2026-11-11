@@ -224,6 +224,9 @@ export async function dataUrlToUniverWorkbook(
             if (typeof cell.value === 'object' && 'richText' in (cell.value as any)) {
               // 리치 텍스트는 일반 텍스트로 합산
               cItem.v = (cell.value as any).richText.map((t: any) => t.text).join('');
+            } else if (typeof cell.value === 'object' && 'hyperlink' in (cell.value as any)) {
+              // 하이퍼링크 객체는 표시 텍스트 또는 링크 URL 추출
+              cItem.v = (cell.value as any).text || (cell.value as any).hyperlink;
             } else if (cell.value instanceof Date) {
               cItem.v = cell.value.toISOString().slice(0, 10);
             } else if (typeof cell.value === 'number' || typeof cell.value === 'string' || typeof cell.value === 'boolean') {
@@ -924,7 +927,25 @@ export async function univerSnapshotToDataUrl(
               result: (cell.v !== undefined && cell.v !== null ? cell.v : 0) as any,
             };
           } else if (cell.v !== undefined && cell.v !== null && cell.v !== '') {
-            excelCell.value = cell.v as any;
+            // 원본 셀이 richText 또는 hyperlink 객체이고 내용이 변경되지 않은 경우: 원본 richText/hyperlink 유지
+            const origVal = excelCell.value;
+            if (origVal && typeof origVal === 'object' && 'richText' in (origVal as any)) {
+              const origText = (origVal as any).richText.map((t: any) => t.text).join('');
+              if (origText === cell.v) {
+                // 텍스트 미변경 -> 원본 richText 서식 유지
+              } else {
+                excelCell.value = cell.v as any;
+              }
+            } else if (origVal && typeof origVal === 'object' && 'hyperlink' in (origVal as any)) {
+              const origText = (origVal as any).text || (origVal as any).hyperlink;
+              if (origText === cell.v) {
+                // 하이퍼링크 미변경 -> 원본 hyperlink 객체 유지
+              } else {
+                excelCell.value = cell.v as any;
+              }
+            } else {
+              excelCell.value = cell.v as any;
+            }
           } else if (cell.v === '') {
             excelCell.value = null;
           }
