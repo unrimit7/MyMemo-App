@@ -2938,9 +2938,9 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
             viewer.querySelectorAll('.excel-sheet-pill').forEach((pill) => {
               if (pill.getAttribute('data-sheet-name') === sheetName) {
-                pill.className = 'excel-sheet-pill px-2 py-0.5 text-[11px] font-semibold rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 cursor-pointer';
+                pill.className = 'excel-sheet-pill px-2.5 py-1 text-[11px] font-semibold rounded-md shrink-0 whitespace-nowrap transition-all cursor-pointer bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-xs';
               } else {
-                pill.className = 'excel-sheet-pill px-2 py-0.5 text-[11px] font-semibold rounded bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/60 cursor-pointer';
+                pill.className = 'excel-sheet-pill px-2.5 py-1 text-[11px] font-semibold rounded-md shrink-0 whitespace-nowrap transition-all cursor-pointer bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/60';
               }
             });
           }

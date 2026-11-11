@@ -300,9 +300,10 @@ export function createAttachmentCardHtml(
     const previewRows = rows.slice(0, 12);
 
     const sheetTabsHtml = sheetNames.length > 1
-      ? `<div class="flex items-center gap-1 overflow-x-auto max-w-xs py-0.5">
+      ? `<div class="px-3.5 py-1.5 bg-slate-950/80 border-b border-slate-800 flex items-center gap-1.5 overflow-x-auto scrollbar-thin select-none" onwheel="if(!event.shiftKey){event.preventDefault();this.scrollLeft+=event.deltaY;}">
+          <span class="text-[11px] font-bold text-slate-400 shrink-0">시트 (${sheetNames.length}):</span>
           ${sheetNames.map((sName, sIdx) => `
-            <button type="button" class="excel-sheet-pill px-2 py-0.5 text-[11px] font-semibold rounded ${sIdx === 0 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/60'}" data-att-id="${att.id}" data-sheet-name="${sName}">${sName}</button>
+            <button type="button" class="excel-sheet-pill px-2.5 py-1 text-[11px] font-semibold rounded-md shrink-0 whitespace-nowrap transition-all cursor-pointer ${sIdx === 0 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-xs' : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/60'}" data-att-id="${att.id}" data-sheet-name="${sName}">${sName}</button>
           `).join('')}
         </div>`
       : '';
@@ -349,7 +350,7 @@ export function createAttachmentCardHtml(
 
     return `
 <div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl excel-inline-viewer" data-att-id="${att.id}" data-file-name="${displayName}">
-  <!-- 상단 헤더: 문서명, 시트 탭, 직접 편집, 메모로 가져오기, 전면 뷰어, 다운로드 버튼 -->
+  <!-- 상단 헤더: 문서명, 직접 편집, 메모로 가져오기, 전면 뷰어, 다운로드 버튼 -->
   <div class="px-3.5 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
     <div class="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-100 min-w-0">
       <span class="text-base md:text-lg">📊</span>
@@ -357,7 +358,7 @@ export function createAttachmentCardHtml(
       <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-bold shrink-0 uppercase">
         ${isCsv ? 'CSV' : 'XLSX'}
       </span>
-      ${sheetTabsHtml}
+      ${sheetNames.length > 1 ? `<span class="text-[11px] text-slate-400 font-normal shrink-0 hidden sm:inline">(${sheetNames.length}개 시트)</span>` : ''}
     </div>
 
     <div class="flex items-center gap-1.5 shrink-0">
@@ -383,6 +384,10 @@ export function createAttachmentCardHtml(
         <span>⬇️ 저장</span>
       </a>
     </div>
+  </div>
+
+  <!-- 시트가 여러 개일 때 표시되는 독립된 시트 탭 바 (가로 휠 스크롤 지원) -->
+  ${sheetTabsHtml}
   </div>
 
   <!-- 인라인 표 그리드 뷰어 (편집기와 일치하는 진짜 엑셀 시트 룩앤필) -->

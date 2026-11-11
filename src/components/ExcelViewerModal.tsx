@@ -375,15 +375,24 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
         </div>
 
         {/* 하단 시트 탭 바 */}
-        <div className="px-3 py-2 bg-slate-900 border-t border-slate-800 flex items-center justify-between gap-2 shrink-0">
-          <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
-            <span className="text-[11px] font-bold text-slate-400 px-1 shrink-0">시트:</span>
+        <div className="px-3 py-2 bg-slate-900 border-t border-slate-800 flex items-center justify-between gap-2 shrink-0 select-none">
+          <div
+            className="flex items-center gap-1.5 overflow-x-auto py-0.5 scrollbar-thin"
+            onWheel={(e) => {
+              if (!e.shiftKey) {
+                e.currentTarget.scrollLeft += e.deltaY;
+              }
+            }}
+          >
+            <span className="text-[11px] font-bold text-slate-400 px-1 shrink-0">
+              시트 ({workbook?.sheetNames.length || 0}):
+            </span>
             {workbook?.sheetNames.map((sheetName) => (
               <button
                 key={sheetName}
                 type="button"
                 onClick={() => setActiveSheetName(sheetName)}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold shrink-0 transition-all ${
+                className={`px-3 py-1 rounded-lg text-xs font-semibold shrink-0 whitespace-nowrap transition-all ${
                   activeSheetName === sheetName
                     ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-xs'
                     : 'bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-slate-200 border border-slate-700/60'
