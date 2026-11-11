@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 
 export interface UseWheelPageNavigationOptions {
   containerRef: React.RefObject<HTMLDivElement | null>;
@@ -17,9 +17,6 @@ export function useWheelPageNavigation({
   enabled = true,
   threshold = 180,
 }: UseWheelPageNavigationOptions) {
-  const [pageToast, setPageToast] = useState<string | null>(null);
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const accRef = useRef<{
     delta: number;
     dir: 'up' | 'down' | null;
@@ -33,16 +30,6 @@ export function useWheelPageNavigation({
   });
 
   const pendingScrollRef = useRef<'top' | 'bottom' | null>(null);
-
-  const showPageToast = (newPage: number, total: number) => {
-    if (toastTimerRef.current) {
-      clearTimeout(toastTimerRef.current);
-    }
-    setPageToast(`📄 ${newPage} / ${total} 페이지`);
-    toastTimerRef.current = setTimeout(() => {
-      setPageToast(null);
-    }, 1200);
-  };
 
   useEffect(() => {
     const container = containerRef.current;
@@ -99,7 +86,6 @@ export function useWheelPageNavigation({
 
             const targetPage = currentPage - 1;
             pendingScrollRef.current = 'bottom';
-            showPageToast(targetPage, totalPages);
             onPageChange(targetPage);
           }
         } else {
@@ -132,7 +118,6 @@ export function useWheelPageNavigation({
 
             const targetPage = currentPage + 1;
             pendingScrollRef.current = 'top';
-            showPageToast(targetPage, totalPages);
             onPageChange(targetPage);
           }
         } else {
@@ -146,9 +131,8 @@ export function useWheelPageNavigation({
     container.addEventListener('wheel', handleWheel, { passive: true });
     return () => {
       container.removeEventListener('wheel', handleWheel);
-      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     };
   }, [containerRef, currentPage, totalPages, enabled, threshold, onPageChange]);
 
-  return { pendingScrollRef, pageToast };
+  return { pendingScrollRef };
 }

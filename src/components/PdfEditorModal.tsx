@@ -172,7 +172,7 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
   const signCanvasRef = useRef<HTMLCanvasElement>(null);
 
   // 상/하단 마우스 휠 페이지 이동 (상단에서 휠 올리면 이전 페이지, 하단에서 휠 내리면 다음 페이지)
-  const { pendingScrollRef, pageToast } = useWheelPageNavigation({
+  const { pendingScrollRef } = useWheelPageNavigation({
     containerRef,
     currentPage,
     totalPages,
@@ -2038,13 +2038,6 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
             )}
           </div>
         </div>
-
-        {/* 마우스 휠 페이지 이동 안내 토스트 */}
-        {pageToast && (
-          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 text-indigo-300 border border-indigo-500/40 px-3.5 py-1.5 rounded-full text-xs font-mono font-semibold shadow-2xl backdrop-blur-sm pointer-events-none transition-all animate-in fade-in duration-150">
-            {pageToast}
-          </div>
-        )}
       </div>
 
       {/* 텍스트 및 사각형 박스 삽입 모달 */}
