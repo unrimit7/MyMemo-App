@@ -49,6 +49,7 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState<boolean>(false);
+  const [showExitConfirm, setShowExitConfirm] = useState<boolean>(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<RhwpEditor | null>(null);
@@ -56,6 +57,22 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
 
   const isHwpx = title.toLowerCase().endsWith('.hwpx');
   const mimeType = isHwpx ? 'application/vnd.hancom.hwpx' : 'application/x-hwp';
+
+  // 브라우저 탭/창 종료 시 미저장 경고
+  useEffect(() => {
+    if (!isOpen || !hasChanges) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isOpen, hasChanges]);
 
   useEffect(() => {
     if (!isOpen || !data || !containerRef.current) return;
@@ -195,10 +212,29 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
 
   const handleClose = () => {
     if (hasChanges) {
-      if (!window.confirm('저장하지 않은 변경사항이 있습니다. 그래도 닫으시겠습니까?')) {
-        return;
-      }
+      setShowExitConfirm(true);
+      return;
     }
+    onClose();
+  };
+
+  const handleSaveAndExit = async () => {
+    await handleSave();
+    setShowExitConfirm(false);
+    onClose();
+  };
+
+  const handleDiscardAndExit = async () => {
+    try {
+      if (editorRef.current) {
+        // notifySaved()를 호출하면 rhwp 스튜디오 내부의 자동 복구 임시본(draft)이 완전히 삭제되어 다음 번 실행 시 '문서 복구' 안내창이 뜨지 않습니다.
+        await editorRef.current.notifySaved(title);
+      }
+    } catch (err) {
+      console.warn('rhwp notifySaved 호출 중 오류(무시 가능):', err);
+    }
+    setHasChanges(false);
+    setShowExitConfirm(false);
     onClose();
   };
 
@@ -315,6 +351,53 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
         {/* rhwp 에디터가 마운트될 DOM 컨테이너 */}
         <div ref={containerRef} className="w-full h-full" />
       </div>
+
+      {/* 저장되지 않은 변경사항 확인 모달 */}
+      {showExitConfirm && (
+        <div className="fixed inset-0 z-100 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-amber-400">
+              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20">
+                <AlertCircle size={24} />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-slate-100">저장되지 않은 변경사항</h3>
+                <p className="text-xs text-slate-400">한글 문서 수정 내용이 아직 메모에 저장되지 않았습니다.</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed bg-slate-800/60 p-3 rounded-xl border border-slate-700/50">
+              <strong>[저장하지 않고 닫기]</strong>를 누르면 수정한 내용이 취소되며, 브라우저에 남은 임시 복구본도 깨끗하게 삭제되어 다음에 열 때 '문서 복구' 안내창이 뜨지 않습니다.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleSaveAndExit}
+                disabled={isSaving}
+                className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                <span>저장하고 닫기</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleDiscardAndExit}
+                className="py-2.5 px-3 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 rounded-xl text-xs font-bold transition-all active:scale-95"
+              >
+                저장하지 않고 닫기
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowExitConfirm(false)}
+                className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition-all"
+              >
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {floating.resizeHandle}
     </div>

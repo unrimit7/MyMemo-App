@@ -15,6 +15,7 @@ import {
   ZoomOut, 
   Loader2, 
   CheckCircle,
+  AlertCircle,
   Move,
   Crop,
   Pipette,
@@ -165,6 +166,30 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
 
   // 페이지별 주석 데이터 (1-based page index)
   const [annotations, setAnnotations] = useState<Record<number, PageAnnotations>>({});
+  const [showExitConfirm, setShowExitConfirm] = useState<boolean>(false);
+
+  const hasChanges = Object.values(annotations).some(
+    (page) =>
+      (page.strokes && page.strokes.length > 0) ||
+      (page.texts && page.texts.length > 0) ||
+      (page.stamps && page.stamps.length > 0)
+  );
+
+  // 브라우저 탭/창 종료 시 미저장 경고
+  useEffect(() => {
+    if (!isOpen || !hasChanges) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isOpen, hasChanges]);
 
   const baseCanvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -1360,6 +1385,27 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     }
   };
 
+  // 닫기
+  const handleClose = () => {
+    if (hasChanges) {
+      setShowExitConfirm(true);
+      return;
+    }
+    onClose();
+  };
+
+  const handleSaveAndExit = async () => {
+    await handleSave();
+    setShowExitConfirm(false);
+    onClose();
+  };
+
+  const handleDiscardAndExit = () => {
+    setAnnotations({});
+    setShowExitConfirm(false);
+    onClose();
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -1527,7 +1573,7 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
 
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="p-1.5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 rounded-lg transition-colors"
             title="닫기"
           >
@@ -2373,30 +2419,77 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
         </div>
       )}
 
-      {/* 그림판 스타일 색 편집 모달 */}
-      {showColorEditModal && (
-        <ColorEditModal
-          isOpen={showColorEditModal}
-          initialColor={
-            colorEditTarget === 'pen'
-              ? penColor
-              : colorEditTarget === 'highlighter'
-              ? highlighterColor
-              : colorEditTarget === 'text'
-              ? textColor
-              : textBoxBorderColor
-          }
-          onSelectColor={(hex) => {
-            if (colorEditTarget === 'pen') setPenColor(hex);
-            else if (colorEditTarget === 'highlighter') setHighlighterColor(hex);
-            else if (colorEditTarget === 'text') setTextColor(hex);
-            else if (colorEditTarget === 'boxBorder') setTextBoxBorderColor(hex);
-          }}
-          onClose={() => setShowColorEditModal(false)}
-        />
-      )}
+        {/* 그림판 스타일 색 편집 모달 */}
+        {showColorEditModal && (
+          <ColorEditModal
+            isOpen={showColorEditModal}
+            initialColor={
+              colorEditTarget === 'pen'
+                ? penColor
+                : colorEditTarget === 'highlighter'
+                ? highlighterColor
+                : colorEditTarget === 'text'
+                ? textColor
+                : textBoxBorderColor
+            }
+            onSelectColor={(hex) => {
+              if (colorEditTarget === 'pen') setPenColor(hex);
+              else if (colorEditTarget === 'highlighter') setHighlighterColor(hex);
+              else if (colorEditTarget === 'text') setTextColor(hex);
+              else if (colorEditTarget === 'boxBorder') setTextBoxBorderColor(hex);
+            }}
+            onClose={() => setShowColorEditModal(false)}
+          />
+        )}
 
-      {floating.resizeHandle}
+        {/* 저장되지 않은 변경사항 확인 모달 */}
+        {showExitConfirm && (
+          <div className="fixed inset-0 z-100 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+              <div className="flex items-center gap-3 text-amber-400">
+                <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20">
+                  <AlertCircle size={24} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-slate-100">저장되지 않은 변경사항</h3>
+                  <p className="text-xs text-slate-400">PDF 주석 및 서명 수정 내용이 아직 메모에 저장되지 않았습니다.</p>
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-300 leading-relaxed bg-slate-800/60 p-3 rounded-xl border border-slate-700/50">
+                문서를 저장하지 않고 닫으시면 작성하신 주석 및 서명이 취소되고 원래 PDF 문서로 복원됩니다.
+              </p>
+
+              <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleSaveAndExit}
+                  disabled={isSaving}
+                  className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  <span>저장하고 닫기</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDiscardAndExit}
+                  className="py-2.5 px-3 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 rounded-xl text-xs font-bold transition-all active:scale-95"
+                >
+                  저장하지 않고 닫기
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowExitConfirm(false)}
+                  className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition-all"
+                >
+                  취소
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {floating.resizeHandle}
     </div>
   </div>
 );
