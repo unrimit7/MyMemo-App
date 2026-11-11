@@ -212,27 +212,45 @@ export async function dataUrlToUniverWorkbook(
 
           const cItem: ICellData = {};
 
-          // 값 및 수식
-          if (cell.formula) {
-            cItem.f = cell.formula.startsWith('=') ? cell.formula : `=${cell.formula}`;
-            if (typeof cell.result === 'number' || typeof cell.result === 'string' || typeof cell.result === 'boolean') {
-              cItem.v = cell.result;
-            } else {
-              cItem.v = 0;
-            }
-          } else if (cell.value !== undefined && cell.value !== null) {
-            if (typeof cell.value === 'object' && 'richText' in (cell.value as any)) {
-              // 리치 텍스트는 일반 텍스트로 합산
-              cItem.v = (cell.value as any).richText.map((t: any) => t.text).join('');
-            } else if (typeof cell.value === 'object' && 'hyperlink' in (cell.value as any)) {
-              // 하이퍼링크 객체는 표시 텍스트 또는 링크 URL 추출
-              cItem.v = (cell.value as any).text || (cell.value as any).hyperlink;
-            } else if (cell.value instanceof Date) {
-              cItem.v = cell.value.toISOString().slice(0, 10);
-            } else if (typeof cell.value === 'number' || typeof cell.value === 'string' || typeof cell.value === 'boolean') {
-              cItem.v = cell.value;
-            } else {
-              cItem.v = String(cell.value);
+          // 머지 슬레이브 셀(isMerged && master.address !== address)인 경우:
+          // Univer에서 마스터 셀만 값을 가져야 하므로 슬레이브 셀에는 값이나 수식을 채우지 않음 (스타일만 보존)
+          const isSlaveCell = Boolean(cell.isMerged && cell.master && cell.master.address !== cell.address);
+
+          if (!isSlaveCell) {
+            // 값 및 수식
+            if (cell.formula) {
+              cItem.f = cell.formula.startsWith('=') ? cell.formula : `=${cell.formula}`;
+              if (typeof cell.result === 'number' || typeof cell.result === 'string' || typeof cell.result === 'boolean') {
+                cItem.v = cell.result;
+              } else if (cell.result instanceof Date) {
+                cItem.v = cell.result.toISOString().slice(0, 10);
+              } else {
+                cItem.v = 0;
+              }
+            } else if (cell.value !== undefined && cell.value !== null) {
+              if (typeof cell.value === 'object' && 'richText' in (cell.value as any)) {
+                // 리치 텍스트는 일반 텍스트로 합산
+                cItem.v = (cell.value as any).richText.map((t: any) => t.text).join('');
+              } else if (typeof cell.value === 'object' && 'hyperlink' in (cell.value as any)) {
+                // 하이퍼링크 객체는 표시 텍스트 또는 링크 URL 추출
+                cItem.v = (cell.value as any).text || (cell.value as any).hyperlink;
+              } else if (cell.value instanceof Date) {
+                cItem.v = cell.value.toISOString().slice(0, 10);
+              } else if (typeof cell.value === 'number' || typeof cell.value === 'string' || typeof cell.value === 'boolean') {
+                cItem.v = cell.value;
+              } else if (typeof cell.value === 'object' && 'formula' in (cell.value as any)) {
+                const fObj = cell.value as any;
+                cItem.f = fObj.formula.startsWith('=') ? fObj.formula : `=${fObj.formula}`;
+                if (fObj.result instanceof Date) {
+                  cItem.v = fObj.result.toISOString().slice(0, 10);
+                } else if (typeof fObj.result === 'number' || typeof fObj.result === 'string' || typeof fObj.result === 'boolean') {
+                  cItem.v = fObj.result;
+                } else {
+                  cItem.v = 0;
+                }
+              } else {
+                cItem.v = String(cell.value);
+              }
             }
           }
 
@@ -739,6 +757,108 @@ function safeSpliceColumns(ws: ExcelJS.Worksheet, start: number, count: number, 
   }
 }
 
+// 유효성 검사 범위(sqref) 파싱 및 중복 제거 헬퍼
+function parseSqrefRange(sqref: string): { col1: number; row1: number; col2: number; row2: number } | null {
+  const parts = sqref.split(':');
+  const m1 = parts[0]?.match(/^([A-Za-z]+)(\d+)$/);
+  if (!m1) return null;
+  const col1 = colToNum(m1[1].toUpperCase());
+  const row1 = parseInt(m1[2], 10);
+  if (parts.length === 1) {
+    return { col1, row1, col2: col1, row2: row1 };
+  }
+  const m2 = parts[1]?.match(/^([A-Za-z]+)(\d+)$/);
+  if (!m2) return null;
+  const col2 = colToNum(m2[1].toUpperCase());
+  const row2 = parseInt(m2[2], 10);
+  return {
+    col1: Math.min(col1, col2),
+    row1: Math.min(row1, row2),
+    col2: Math.max(col1, col2),
+    row2: Math.max(row1, row2),
+  };
+}
+
+function isSqrefSubRange(sub: string, parent: string): boolean {
+  const rSub = parseSqrefRange(sub);
+  const rParent = parseSqrefRange(parent);
+  if (!rSub || !rParent) return false;
+  return (
+    rSub.col1 >= rParent.col1 &&
+    rSub.col2 <= rParent.col2 &&
+    rSub.row1 >= rParent.row1 &&
+    rSub.row2 <= rParent.row2
+  );
+}
+
+// ExcelJS 4.4.0의 optimiseDataValidations 문자열 정렬 버그로 인해 분할/중복 생성된 dataValidation 태그 정리
+function deduplicateDataValidationsXml(xml: string): string {
+  const dvBlockMatch = xml.match(/<dataValidations[^>]*>([\s\S]*?)<\/dataValidations>/);
+  if (!dvBlockMatch) return xml;
+
+  const fullBlock = dvBlockMatch[0];
+  const inner = dvBlockMatch[1];
+  const dvTagRegex = /<dataValidation\b[\s\S]*?<\/dataValidation>/g;
+  const tags = inner.match(dvTagRegex) || [];
+
+  const parsed = tags.map((tag) => {
+    const sqrefMatch = tag.match(/sqref="([^"]+)"/);
+    const sqref = sqrefMatch ? sqrefMatch[1] : '';
+    // sqref 속성만 제외하고 규칙 내용(type, allowBlank, formulae 등) 동일성 비교
+    const ruleKey = tag.replace(/\s*sqref="[^"]+"/, '').trim();
+    return { tag, sqref, ruleKey };
+  });
+
+  const kept: string[] = [];
+  for (let i = 0; i < parsed.length; i++) {
+    const current = parsed[i];
+    let isRedundant = false;
+    for (let j = 0; j < parsed.length; j++) {
+      if (i === j) continue;
+      const other = parsed[j];
+      if (current.ruleKey === other.ruleKey && isSqrefSubRange(current.sqref, other.sqref)) {
+        if (current.sqref !== other.sqref || i > j) {
+          isRedundant = true;
+          break;
+        }
+      }
+    }
+    if (!isRedundant) {
+      kept.push(current.tag);
+    }
+  }
+
+  if (kept.length === 0) return xml.replace(fullBlock, '');
+  const newBlock = `<dataValidations count="${kept.length}">${kept.join('')}</dataValidations>`;
+  return xml.replace(fullBlock, newBlock);
+}
+
+async function cleanDuplicateDataValidations(buffer: ArrayBuffer | Uint8Array): Promise<Uint8Array> {
+  try {
+    const zip = await JSZip.loadAsync(buffer);
+    let changed = false;
+    for (const [filename, fileObj] of Object.entries(zip.files)) {
+      if (filename.startsWith('xl/worksheets/sheet') && filename.endsWith('.xml')) {
+        const xml = await fileObj.async('string');
+        if (xml.includes('<dataValidations')) {
+          const cleanedXml = deduplicateDataValidationsXml(xml);
+          if (cleanedXml !== xml) {
+            zip.file(filename, cleanedXml);
+            changed = true;
+          }
+        }
+      }
+    }
+    if (!changed) {
+      return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+    }
+    return await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+  } catch (err) {
+    console.warn('dataValidations 중복 정리 실패 (무시 가능):', err);
+    return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  }
+}
+
 /**
  * Univer의 스냅샷(IWorkbookData)을 다시 XLSX 또는 CSV Data URL 문자열로 생성합니다.
  * engine: 'exceljs' (기본값, 서식/열너비/행높이 보존) | 'sheetjs' (기존 가벼운 데이터 모드)
@@ -871,6 +991,10 @@ export async function univerSnapshotToDataUrl(
       ws.eachRow({ includeEmpty: false }, (row: any, rowNumber: number) => {
         const rIdx = rowNumber - 1; // 0-based
         row.eachCell({ includeEmpty: false }, (excelCell: any, colNumber: number) => {
+          // 머지 슬레이브 셀은 마스터의 프록시이므로 비우지 않음!
+          if (excelCell.isMerged && excelCell.master && excelCell.master.address !== excelCell.address) {
+            return;
+          }
           const cIdx = colNumber - 1; // 0-based
           const uCell = cellData[rIdx]?.[cIdx];
           const isUniverEmpty =
@@ -920,11 +1044,29 @@ export async function univerSnapshotToDataUrl(
           const colNum = c + 1; // 1-based
           const excelCell = ws.getCell(rowNum, colNum);
 
+          // 머지 슬레이브 셀은 마스터의 프록시이므로 쓰면 마스터를 덮어써서 오염시킴 -> 건너뜀
+          if (excelCell.isMerged && excelCell.master && excelCell.master.address !== excelCell.address) {
+            continue;
+          }
+
+          // [object Object] 방어: 객체가 문자열로 오염 직렬화된 값 방지
+          if (cell.v === '[object Object]') {
+            continue;
+          }
+
           // 값 및 수식 덮어쓰기
           if (cell.f) {
+            let resultVal = (cell.v !== undefined && cell.v !== null ? cell.v : 0) as any;
+            if (excelCell.result instanceof Date) {
+              if (typeof resultVal === 'string' && /^\d{4}-\d{2}-\d{2}/.test(resultVal)) {
+                resultVal = new Date(resultVal);
+              } else if (resultVal === 0 || resultVal === '') {
+                resultVal = excelCell.result;
+              }
+            }
             excelCell.value = {
               formula: cell.f.replace(/^=/, ''),
-              result: (cell.v !== undefined && cell.v !== null ? cell.v : 0) as any,
+              result: resultVal,
             };
           } else if (cell.v !== undefined && cell.v !== null && cell.v !== '') {
             // 원본 셀이 richText 또는 hyperlink 객체이고 내용이 변경되지 않은 경우: 원본 richText/hyperlink 유지
@@ -940,6 +1082,12 @@ export async function univerSnapshotToDataUrl(
               const origText = (origVal as any).text || (origVal as any).hyperlink;
               if (origText === cell.v) {
                 // 하이퍼링크 미변경 -> 원본 hyperlink 객체 유지
+              } else {
+                excelCell.value = cell.v as any;
+              }
+            } else if (excelCell.type === ExcelJS.ValueType.Date || origVal instanceof Date) {
+              if (typeof cell.v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(cell.v)) {
+                excelCell.value = new Date(cell.v);
               } else {
                 excelCell.value = cell.v as any;
               }
@@ -1037,8 +1185,8 @@ export async function univerSnapshotToDataUrl(
       }
     });
 
-    const buffer = await wb.xlsx.writeBuffer();
-    const uint8 = new Uint8Array(buffer);
+    const rawBuffer = await wb.xlsx.writeBuffer();
+    const uint8 = await cleanDuplicateDataValidations(rawBuffer);
     let binary = '';
     const len = uint8.byteLength;
     for (let i = 0; i < len; i++) {
