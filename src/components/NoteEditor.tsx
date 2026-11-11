@@ -183,6 +183,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     initialPage: number;
   } | null>(null);
   const [activeHwpModal, setActiveHwpModal] = useState<{
+    attId?: string;
     data: string;
     title: string;
     initialPage: number;
@@ -2712,6 +2713,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       if (attId && localAttachments[attId]) {
         const curr = hwpPagesRef.current.get(attId) || 1;
         setActiveHwpModal({
+          attId,
           data: localAttachments[attId].data,
           title,
           initialPage: curr,
@@ -4377,9 +4379,10 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           onClose={() => setActiveHwpModal(null)}
           data={activeHwpModal.data}
           title={activeHwpModal.title}
+          attId={activeHwpModal.attId}
           initialPage={activeHwpModal.initialPage}
           onOpenEditor={() => {
-            const attId = Object.keys(localAttachments).find(
+            const attId = activeHwpModal.attId || Object.keys(localAttachments).find(
               (id) => localAttachments[id].data === activeHwpModal.data
             ) || '';
             setActiveHwpEditorModal({
@@ -4401,10 +4404,23 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           title={activeHwpEditorModal.title}
           attId={activeHwpEditorModal.attId}
           onSave={async (updatedDataUrl) => {
-            const attId = activeHwpEditorModal.attId;
+            // attId를 다양한 경로로 완벽하게 보장
+            let attId = activeHwpEditorModal.attId;
+            if (!attId || !localAttachmentsRef.current[attId]) {
+              attId = Object.keys(localAttachmentsRef.current).find(
+                (id) => localAttachmentsRef.current[id].name === activeHwpEditorModal.title
+              ) || Object.keys(localAttachmentsRef.current).find(
+                (id) => {
+                  const name = (localAttachmentsRef.current[id].name || '').toLowerCase();
+                  return name.endsWith('.hwp') || name.endsWith('.hwpx');
+                }
+              ) || '';
+            }
+
             if (attId) {
-              // 1. 기존 HWP 캐시 및 Blob URL 캐시 즉시 무효화 (새 파일 재로드 보장)
+              // 1. 기존 HWP 캐시(전체 및 ID별) 및 Blob URL 캐시 즉시 무효화 (새 파일 재로드 100% 보장)
               invalidateHwpCache(attId);
+              invalidateHwpCache(); // 전체 캐시도 깨끗하게 초기화
               invalidateAttachmentBlobUrl(attId);
 
               // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장
@@ -4422,10 +4438,13 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               // 3. 편집 모달의 내부 데이터 상태도 최신으로 동기화
               setActiveHwpEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
 
-              // 4. 인라인 뷰어에 새 데이터 URL을 즉시 전달하여 재로드 & 재렌더링
+              // 4. 만약 전면 보기 모달(activeHwpModal)이 열려있다면 해당 데이터도 최신으로 즉시 갱신
+              setActiveHwpModal((prev) => prev && (prev.attId === attId || prev.title === activeHwpEditorModal.title) ? { ...prev, data: updatedDataUrl } : prev);
+
+              // 5. 인라인 뷰어에 새 데이터 URL을 즉시 전달하여 재로드 & 재렌더링
               renderInlineHwp.current(attId, updatedDataUrl);
 
-              // 5. 마크다운 HTML 재계산 및 DOM 갱신 후 한 번 더 보장 렌더링
+              // 6. 마크다운 HTML 재계산 및 DOM 갱신 후 한 번 더 보장 렌더링
               setTimeout(() => {
                 renderInlineHwp.current(attId, updatedDataUrl);
               }, 120);

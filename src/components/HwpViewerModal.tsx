@@ -10,6 +10,7 @@ interface HwpViewerModalProps {
   onClose: () => void;
   data: string;
   title: string;
+  attId?: string;
   initialPage?: number;
   onImportText?: (text: string) => void;
   onOpenEditor?: () => void;
@@ -20,6 +21,7 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
   onClose,
   data,
   title,
+  attId,
   initialPage = 1,
   onImportText,
   onOpenEditor,
@@ -70,7 +72,7 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
     setZoom(1.0);
     setRotation(0);
 
-    loadHwpDocument(data)
+    loadHwpDocument(data, attId)
       .then((doc) => {
         if (!isMounted) return;
         setHwpDoc(doc);

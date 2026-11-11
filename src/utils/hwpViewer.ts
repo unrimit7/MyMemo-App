@@ -56,7 +56,7 @@ const hwpDocCache = new Map<string, HwpDocument>();
 export function invalidateHwpCache(cacheKey?: string): void {
   if (cacheKey) {
     for (const key of Array.from(hwpDocCache.keys())) {
-      if (key === cacheKey || key.startsWith(`${cacheKey}_`)) {
+      if (key === cacheKey || key.startsWith(`${cacheKey}_`) || key.includes(cacheKey)) {
         try {
           hwpDocCache.get(key)?.free?.();
         } catch {
@@ -78,9 +78,10 @@ export function invalidateHwpCache(cacheKey?: string): void {
 }
 
 export async function loadHwpDocument(dataOrUrl: string, cacheKey?: string): Promise<HwpDocument> {
-  // 데이터 내용의 길이와 서명을 포함시켜 내용이 수정되면 자동으로 새 캐시 키가 생성되도록 보장
-  const dataSignature = `${dataOrUrl.length}_${dataOrUrl.slice(-32)}`;
-  const key = cacheKey ? `${cacheKey}_${dataSignature}` : dataOrUrl.slice(0, 80);
+  // 데이터 내용의 길이와 끝 부분 서명을 포함시켜 내용이 수정되면 자동으로 새 캐시 키가 생성되도록 보장
+  const dataSignature = `${dataOrUrl.length}_${dataOrUrl.slice(-40)}`;
+  // 절대 단순 slice(0, 80)을 키로 쓰지 않음 (모든 HWP 파일의 OLE 헤더가 동일하기 때문)
+  const key = cacheKey ? `${cacheKey}_${dataSignature}` : `hwp_${dataSignature}`;
 
   if (hwpDocCache.has(key)) {
     return hwpDocCache.get(key)!;
