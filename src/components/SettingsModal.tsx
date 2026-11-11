@@ -403,7 +403,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   워드 문서의 서식 보존 인플레이스 편집 및 WYSIWYG 레이아웃 엔진으로 사용됩니다.
                 </p>
                 <a
-                  href="https://github.com/vlad-t/superdoc"
+                  href="https://github.com/superdoc/docx-editor"
                   target="_blank"
                   rel="noreferrer"
                   className="text-indigo-400 hover:text-indigo-300 underline flex items-center gap-1 text-[10px] mt-0.5"

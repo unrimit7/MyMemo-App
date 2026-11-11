@@ -11,7 +11,7 @@ MyMemo는 사용자 문서의 서식 보존 및 로컬 오프라인 편집을 �
 1. **SuperDoc** (`superdoc`)
    - **라이선스**: GNU Affero General Public License v3.0 ([AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html))
    - **용도**: 워드(.docx) 문서의 인플레이스(In-place) 서식 보존 및 WYSIWYG 편집 엔진
-   - **소스 코드 저장소**: [https://github.com/vlad-t/superdoc](https://github.com/vlad-t/superdoc)
+   - **소스 코드 저장소**: [https://github.com/superdoc/docx-editor](https://github.com/superdoc/docx-editor)
 
 2. **Univer** (`@univerjs/*`)
    - **라이선스**: Apache License 2.0 ([Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0))
