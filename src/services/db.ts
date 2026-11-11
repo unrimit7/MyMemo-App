@@ -88,12 +88,23 @@ export async function seedInitialDataIfNeeded(): Promise<void> {
       updatedAt: new Date().toISOString(),
     };
 
+    const guideProject: Project = {
+      id: 'proj-guide',
+      name: '사용가이드',
+      isLocalOnly: false,
+      color: '#6366f1',
+      order: 9999,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
     await db.put('projects', defaultProject);
     await db.put('projects', secureProject);
+    await db.put('projects', guideProject);
 
     const welcomeNote: Note = {
       id: 'note-welcome',
-      projectId: 'proj-default',
+      projectId: 'proj-guide',
       title: 'MyMemo 설치 & GitHub 동기화 완벽 가이드 📖',
       isLocalOnly: false,
       syncStatus: 'pending',

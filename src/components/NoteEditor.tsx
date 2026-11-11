@@ -3270,6 +3270,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               <select
                 value={note.projectId}
                 onChange={(e) => handleFolderChange(e.target.value)}
+                onWheel={(e) => (e.target as HTMLElement).blur()}
                 className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer truncate max-w-full font-medium"
                 title="클릭하여 다른 폴더를 선택하면 메모가 해당 폴더로 이동합니다."
               >

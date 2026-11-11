@@ -293,6 +293,34 @@ export function App() {
         const loadedNotes = await getAllNotes();
         const config = await getGitHubConfig();
 
+        // 📖 사용가이드 관련 메모가 엉뚱한 폴더에 있으면 '사용가이드' 폴더로 자동 복귀 및 정리
+        const guideFolder = loadedProjects.find((p) => p.name.trim() === '사용가이드');
+        if (guideFolder) {
+          let hasMovedGuide = false;
+          for (let i = 0; i < loadedNotes.length; i++) {
+            const n = loadedNotes[i];
+            const isGuideNote =
+              n.id === 'note-welcome' ||
+              n.title.includes('설치 & GitHub 동기화') ||
+              n.title.includes('MyMemo 설치') ||
+              n.title.startsWith('[사용가이드]');
+
+            if (isGuideNote && n.projectId !== guideFolder.id) {
+              const moved: Note = {
+                ...n,
+                projectId: guideFolder.id,
+                updatedAt: new Date().toISOString(),
+              };
+              await saveNote(moved);
+              loadedNotes[i] = moved;
+              hasMovedGuide = true;
+            }
+          }
+          if (hasMovedGuide) {
+            console.log('[MyMemo] 엉뚱한 폴더에 위치했던 가이드 메모를 사용가이드 폴더로 자동 복귀시켰습니다.');
+          }
+        }
+
         setProjects(loadedProjects);
         setNotes(loadedNotes);
         setGitHubConfig(config);
@@ -1371,7 +1399,10 @@ export function App() {
       const def = guideDefs[i];
       // 이미 같은 제목이나 관련 가이드 메모가 있는지 탐색
       const existing = updatedNotesList.find(
-        (n) => n.title.trim() === def.title.trim() || (i === 0 && (n.id === 'note-welcome' || n.title.includes('MyMemo 시작하기')))
+        (n) =>
+          n.title.trim() === def.title.trim() ||
+          (i === 0 && n.title.includes('MyMemo 시작하기')) ||
+          (i === 1 && (n.id === 'note-welcome' || n.title.includes('설치 & GitHub 동기화') || n.title.includes('앱 설치(PWA) & GitHub')))
       );
 
       if (existing) {
@@ -1400,6 +1431,26 @@ export function App() {
         await saveNote(newNote);
         updatedNotesList.unshift(newNote);
         if (i === 0) firstGuideId = newNote.id;
+      }
+    }
+
+    // 3. 다른 폴더에 남아있는 기존 가이드/환영 메모가 있다면 사용가이드 폴더로 모두 복귀
+    for (let j = 0; j < updatedNotesList.length; j++) {
+      const n = updatedNotesList[j];
+      const isGuide =
+        n.id === 'note-welcome' ||
+        n.title.includes('설치 & GitHub 동기화') ||
+        n.title.includes('MyMemo 설치') ||
+        n.title.startsWith('[사용가이드]');
+
+      if (isGuide && n.projectId !== guideFolder.id) {
+        const moved: Note = {
+          ...n,
+          projectId: guideFolder.id,
+          updatedAt: new Date().toISOString(),
+        };
+        await saveNote(moved);
+        updatedNotesList[j] = moved;
       }
     }
 
