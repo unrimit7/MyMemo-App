@@ -335,6 +335,9 @@ export function App() {
 
         if (savedProjId && (savedProjId === 'ALL' || loadedProjects.some((p) => p.id === savedProjId))) {
           setActiveProjectId(savedProjId);
+          if (savedProjId !== 'ALL') {
+            try { localStorage.setItem('mymemo_last_folder_id', savedProjId); } catch {}
+          }
         } else {
           setActiveProjectId('ALL');
           try { localStorage.setItem('mymemo_active_project_id', 'ALL'); } catch {}
@@ -445,6 +448,7 @@ export function App() {
     await saveProject(newProject);
     setProjects((prev) => [...prev, newProject]);
     setActiveProjectId(newProject.id);
+    try { localStorage.setItem('mymemo_last_folder_id', newProject.id); } catch {}
     crossTabSync.broadcastChange('projects');
   };
 
@@ -1003,7 +1007,12 @@ export function App() {
   // 폴더(프로젝트) 선택 핸들러
   const handleSelectProject = (id: string) => {
     setActiveProjectId(id);
-    localStorage.setItem('mymemo_active_project_id', id);
+    try {
+      localStorage.setItem('mymemo_active_project_id', id);
+      if (id !== 'ALL') {
+        localStorage.setItem('mymemo_last_folder_id', id);
+      }
+    } catch {}
     setIsCalendarOpen(false);
   };
 
@@ -1300,9 +1309,15 @@ export function App() {
   // 메모 선택 핸들러
   const handleSelectNote = (id: string) => {
     setActiveNoteId(id);
-    localStorage.setItem('mymemo_active_note_id', id);
+    try {
+      localStorage.setItem('mymemo_active_note_id', id);
+      const target = notes.find((n) => n.id === id);
+      if (target && target.projectId) {
+        localStorage.setItem('mymemo_last_folder_id', target.projectId);
+      }
+    } catch {}
     setMobileScreen('editor');
-    localStorage.setItem('mymemo_mobile_screen', 'editor');
+    try { localStorage.setItem('mymemo_mobile_screen', 'editor'); } catch {}
   };
 
   // 수동 동기화 버튼 클릭

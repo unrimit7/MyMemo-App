@@ -116,24 +116,47 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     return new Set(projects.map((p) => p.id));
   });
 
-  // 메모 작성 시 대상이 될 폴더 ID (기본값: 클릭된 활성 폴더, 사용자가 드롭다운으로 언제든 변경 가능)
-  const [createFolderId, setCreateFolderId] = useState<string>(() => {
-    if (activeProjectId && activeProjectId !== 'ALL') {
+  // 마지막으로 열었던 폴더 또는 기본 폴더 ID 추출
+  const resolveDefaultFolderId = useCallback((): string => {
+    // 1. 현재 activeProjectId가 'ALL'이 아니고 유효한 폴더인 경우
+    if (activeProjectId && activeProjectId !== 'ALL' && projects.some((p) => p.id === activeProjectId)) {
       return activeProjectId;
     }
+
+    // 2. localStorage에 기억된 마지막 실제 선택 폴더가 있는 경우
+    try {
+      const lastFolderId = localStorage.getItem('mymemo_last_folder_id');
+      if (lastFolderId && projects.some((p) => p.id === lastFolderId)) {
+        return lastFolderId;
+      }
+    } catch {}
+
+    // 3. 최상위(부모가 없는) 일반 폴더 우선 선택 (자식 폴더인 'ㄴ 문제점' 등 방지)
+    const topLevel = projects.find((p) => !p.parentId);
+    if (topLevel) return topLevel.id;
+
     return projects[0]?.id || '';
-  });
+  }, [activeProjectId, projects]);
+
+  // 메모 작성 시 대상이 될 폴더 ID (사용자가 드롭다운으로 언제든 변경 가능)
+  const [createFolderId, setCreateFolderId] = useState<string>(resolveDefaultFolderId);
 
   useEffect(() => {
-    if (activeProjectId && activeProjectId !== 'ALL') {
+    if (activeProjectId && activeProjectId !== 'ALL' && projects.some((p) => p.id === activeProjectId)) {
       setCreateFolderId(activeProjectId);
+      try { localStorage.setItem('mymemo_last_folder_id', activeProjectId); } catch {}
       // 활성 폴더가 변경되면 캘린더 필터도 해당 폴더 및 모든 하위 폴더로 자동 설정
       const familyIds = getFolderWithDescendants(activeProjectId);
       setSelectedFolderIds(new Set(familyIds));
-    } else if (!createFolderId && projects.length > 0) {
-      setCreateFolderId(projects[0].id);
+    } else {
+      // activeProjectId가 'ALL'이거나 없는 경우:
+      // 직전에 마지막으로 열었던 실제 폴더(localStorage)를 우선 복원하여 설정!
+      const fallbackId = resolveDefaultFolderId();
+      if (fallbackId) {
+        setCreateFolderId(fallbackId);
+      }
     }
-  }, [activeProjectId, projects, getFolderWithDescendants]);
+  }, [activeProjectId, projects, getFolderWithDescendants, resolveDefaultFolderId]);
 
   // 팝오버 외부 클릭 시 닫기
   useEffect(() => {
@@ -944,7 +967,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               <Folder size={12} className="text-indigo-400 shrink-0" />
               <select
                 value={createFolderId}
-                onChange={(e) => setCreateFolderId(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setCreateFolderId(val);
+                  try { localStorage.setItem('mymemo_last_folder_id', val); } catch {}
+                }}
                 className="bg-transparent text-xs text-slate-200 font-medium focus:outline-hidden cursor-pointer max-w-[130px] sm:max-w-[180px] truncate"
                 title="새 메모를 추가할 대상 폴더 선택"
               >
