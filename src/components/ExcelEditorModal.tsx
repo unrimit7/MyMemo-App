@@ -54,6 +54,7 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveToast, setSaveToast] = useState<string | null>(null);
   const [errorToast, setErrorToast] = useState<string | null>(null);
+  const [isFallbackMode, setIsFallbackMode] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState<boolean>(false);
   const [showRestoreConfirm, setShowRestoreConfirm] = useState<boolean>(false);
   const [showLossWarningModal, setShowLossWarningModal] = useState<boolean>(false);
@@ -119,6 +120,9 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
 
         const workbookData = await dataUrlToUniverWorkbook(data, title);
         if (isDisposed || !containerRef.current) return;
+        if ((workbookData as any).isFallbackMode) {
+          setIsFallbackMode(true);
+        }
 
         const { univer, univerAPI } = createUniver({
           locale: LocaleType.KO_KR,
@@ -167,37 +171,69 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
             if (!isInitial && !isDisposed) {
               setHasChanges(true);
 
-              // 행/열 삽입 및 삭제 명령 감지하여 In-Place 패치용 큐에 기록
+              // 행/열 삽입 및 삭제 mutation 감지하여 In-Place 패치용 큐에 기록 (mutation ID 정확 매칭)
               const id = cmd?.id || '';
               const range = cmd?.params?.range;
-              if ((id === 'sheet.mutation.insert-row' || id.includes('insert-row')) && range) {
-                structuralOpsRef.current.push({
-                  type: 'insertRow',
-                  subUnitId: cmd.params?.subUnitId,
-                  start: range.startRow + 1,
-                  count: range.endRow - range.startRow + 1,
-                });
-              } else if ((id === 'sheet.mutation.remove-rows' || id.includes('remove-row')) && range) {
-                structuralOpsRef.current.push({
-                  type: 'removeRow',
-                  subUnitId: cmd.params?.subUnitId,
-                  start: range.startRow + 1,
-                  count: range.endRow - range.startRow + 1,
-                });
-              } else if ((id === 'sheet.mutation.insert-col' || id.includes('insert-col')) && range) {
-                structuralOpsRef.current.push({
-                  type: 'insertCol',
-                  subUnitId: cmd.params?.subUnitId,
-                  start: range.startColumn + 1,
-                  count: range.endColumn - range.startColumn + 1,
-                });
-              } else if ((id === 'sheet.mutation.remove-col' || id.includes('remove-col')) && range) {
-                structuralOpsRef.current.push({
-                  type: 'removeCol',
-                  subUnitId: cmd.params?.subUnitId,
-                  start: range.startColumn + 1,
-                  count: range.endColumn - range.startColumn + 1,
-                });
+              const subUnitId = cmd.params?.subUnitId;
+
+              if (range) {
+                let op: StructuralOperation | null = null;
+                if (id === 'sheet.mutation.insert-row') {
+                  op = {
+                    type: 'insertRow',
+                    subUnitId,
+                    start: range.startRow + 1,
+                    count: range.endRow - range.startRow + 1,
+                  };
+                } else if (id === 'sheet.mutation.remove-rows') {
+                  op = {
+                    type: 'removeRow',
+                    subUnitId,
+                    start: range.startRow + 1,
+                    count: range.endRow - range.startRow + 1,
+                  };
+                } else if (id === 'sheet.mutation.insert-col') {
+                  op = {
+                    type: 'insertCol',
+                    subUnitId,
+                    start: range.startColumn + 1,
+                    count: range.endColumn - range.startColumn + 1,
+                  };
+                } else if (id === 'sheet.mutation.remove-col') {
+                  op = {
+                    type: 'removeCol',
+                    subUnitId,
+                    start: range.startColumn + 1,
+                    count: range.endColumn - range.startColumn + 1,
+                  };
+                }
+
+                if (op) {
+                  // 실행 취소(Undo) / 다시 실행(Redo) 시 반대 연산 상쇄 처리
+                  const ops = structuralOpsRef.current;
+                  if (ops.length > 0) {
+                    const lastOp = ops[ops.length - 1];
+                    const isSameSheet = !lastOp.subUnitId || !op.subUnitId || lastOp.subUnitId === op.subUnitId;
+                    const isOppositeRow =
+                      isSameSheet &&
+                      ((lastOp.type === 'insertRow' && op.type === 'removeRow') ||
+                       (lastOp.type === 'removeRow' && op.type === 'insertRow')) &&
+                      lastOp.start === op.start &&
+                      lastOp.count === op.count;
+                    const isOppositeCol =
+                      isSameSheet &&
+                      ((lastOp.type === 'insertCol' && op.type === 'removeCol') ||
+                       (lastOp.type === 'removeCol' && op.type === 'insertCol')) &&
+                      lastOp.start === op.start &&
+                      lastOp.count === op.count;
+
+                    if (isOppositeRow || isOppositeCol) {
+                      ops.pop();
+                      return;
+                    }
+                  }
+                  ops.push(op);
+                }
               }
             }
           });
@@ -236,7 +272,27 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
       const snapshot = activeWb.save();
       // 원본 데이터(currentDataRef.current) 및 구조 변경 연산(structuralOpsRef.current)을 전달하여 in-place 패치
       const ops = [...structuralOpsRef.current];
-      const updatedDataUrl = await univerSnapshotToDataUrl(snapshot, format, engine, currentDataRef.current, ops);
+      let updatedDataUrl = '';
+      try {
+        updatedDataUrl = await univerSnapshotToDataUrl(snapshot, format, engine, currentDataRef.current, ops);
+      } catch (err: any) {
+        if (err?.message === 'ORIGINAL_WORKBOOK_LOAD_FAILED') {
+          const proceed = window.confirm(
+            '⚠️ 원본 엑셀 문서의 내부 구조를 로드하는 중 오류가 발생했습니다.\n' +
+            '이대로 저장하면 원본의 고급 서식(드롭다운 목록, 조건부 서식, 메모, 틀 고정, 인쇄 설정 등)이 누락될 수 있습니다.\n\n' +
+            '[확인]을 누르면 기본 서식으로 계속 저장하고, [취소]를 누르면 저장을 중단합니다.'
+          );
+          if (!proceed) {
+            setIsSaving(false);
+            return;
+          }
+          // 그래도 저장을 선택한 경우 originalDataOrUrl 없이 새 워크북으로 저장
+          updatedDataUrl = await univerSnapshotToDataUrl(snapshot, format, engine, undefined, ops);
+        } else {
+          throw err;
+        }
+      }
+
       currentDataRef.current = updatedDataUrl;
       structuralOpsRef.current = [];
 
@@ -363,6 +419,11 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
                   <span className="text-[11px] text-amber-400 flex items-center gap-1 font-medium shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
                     수정됨
+                  </span>
+                )}
+                {isFallbackMode && (
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-semibold shrink-0" title="ExcelJS 대신 기본 데이터 모드로 로드되었습니다.">
+                    ⚠️ 호환 모드: 서식 일부가 표시되지 않습니다
                   </span>
                 )}
               </div>

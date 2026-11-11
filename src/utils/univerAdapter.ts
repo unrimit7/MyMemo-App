@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 import type { IWorkbookData, IWorksheetData, ICellData, IRange, IStyleData } from '@univerjs/core';
 import { LocaleType, HorizontalAlign, VerticalAlign, WrapStrategy } from '@univerjs/core';
 
@@ -42,6 +43,114 @@ function hexToArgb(hex?: string): string | undefined {
 }
 
 /**
+ * 한셀(Hancom HanCell) 등 비표준 오피스에서 생성된 XLSX 파일의 XML 네임스페이스 및 비표준 태그를 정규화합니다.
+ * ExcelJS가 오류 없이 파싱할 수 있도록 x:, ep: 접두어 제거, mc:AlternateContent Fallback 추출,
+ * ref 단일 셀 범위(F4:F4 -> F4), boolean 태그(<b val="1"/> -> <b/>)를 표준 OpenXML 형식으로 변환합니다.
+ */
+export async function normalizeHancellXlsx(bytesOrDataUrl: Uint8Array | string): Promise<Uint8Array> {
+  const bytes = typeof bytesOrDataUrl === 'string' ? dataUrlToUint8Array(bytesOrDataUrl) : bytesOrDataUrl;
+
+  try {
+    const zip = await JSZip.loadAsync(bytes);
+    let isModified = false;
+
+    for (const [filename, file] of Object.entries(zip.files)) {
+      if (file.dir) continue;
+      if (!filename.endsWith('.xml') && !filename.endsWith('.rels') && !filename.endsWith('.vml')) continue;
+
+      let content = await file.async('text');
+      let mod = false;
+
+      // 1. docProps/app.xml: ep: 접두어 및 Company 태그 보정
+      if (filename === 'docProps/app.xml') {
+        content = content.replace(
+          /xmlns:ep="http:\/\/schemas\.openxmlformats\.org\/officeDocument\/2006\/extended-properties"/g,
+          'xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"'
+        );
+        content = content.replace(/<\/?ep:([a-zA-Z0-9_]+)/g, (match, tag) => (match.startsWith('</') ? `</${tag}` : `<${tag}`));
+        if (!content.includes('<Company')) {
+          content = content.replace(/<\/Properties>/, '<Company></Company></Properties>');
+        }
+        mod = true;
+      }
+
+      // 2. xl/ 내부의 모든 xml/rels 파일 (styles, comments, worksheets, workbook, sharedStrings 등) - .vml 파일 제외
+      if (filename.startsWith('xl/') && (filename.endsWith('.xml') || filename.endsWith('.rels'))) {
+        // mc:AlternateContent Fallback 우선 채택 (한셀 xf 확장태그 호환)
+        if (content.includes('<mc:AlternateContent')) {
+          content = content.replace(
+            /<mc:AlternateContent[^>]*>[\s\S]*?<mc:Fallback>([\s\S]*?)<\/mc:Fallback>[\s\S]*?<\/mc:AlternateContent>/g,
+            '$1'
+          );
+          content = content.replace(
+            /<mc:AlternateContent[^>]*>[\s\S]*?<mc:Choice[^>]*>([\s\S]*?)<\/mc:Choice>[\s\S]*?<\/mc:AlternateContent>/g,
+            '$1'
+          );
+          mod = true;
+        }
+
+        // 한셀 전용 확장 태그 및 속성 제거 (hs:parashape 등)
+        if (content.includes('hs:')) {
+          content = content.replace(/<hs:[^>]*\/>/g, '');
+          content = content.replace(/<hs:[^>]*>[\s\S]*?<\/hs:[^>]*>/g, '');
+          content = content.replace(/\s+hs:[a-zA-Z0-9_]+="[^"]*"/g, '');
+          mod = true;
+        }
+
+        // spreadsheetml 네임스페이스 및 x: 접두어 정규화
+        if (content.includes('xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"') || content.includes('<x:')) {
+          content = content.replace(
+            /xmlns:x="http:\/\/schemas\.openxmlformats\.org\/spreadsheetml\/2006\/main"/g,
+            'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+          );
+          content = content.replace(/<\/?x:([a-zA-Z0-9_]+)/g, (match, tag) => (match.startsWith('</') ? `</${tag}` : `<${tag}`));
+          mod = true;
+        }
+
+        // boolean 서식 속성 정규화 (<b val="1"/> -> <b/>, <b val="0"/> -> 삭제)
+        if (content.includes('val="1"') || content.includes('val="0"') || content.includes('val="true"') || content.includes('val="false"')) {
+          content = content.replace(/<b\s+val="1"\s*\/>/g, '<b/>');
+          content = content.replace(/<b\s+val="true"\s*\/>/g, '<b/>');
+          content = content.replace(/<b\s+val="0"\s*\/>/g, '');
+          content = content.replace(/<b\s+val="false"\s*\/>/g, '');
+
+          content = content.replace(/<i\s+val="1"\s*\/>/g, '<i/>');
+          content = content.replace(/<i\s+val="true"\s*\/>/g, '<i/>');
+          content = content.replace(/<i\s+val="0"\s*\/>/g, '');
+          content = content.replace(/<i\s+val="false"\s*\/>/g, '');
+
+          content = content.replace(/<u\s+val="1"\s*\/>/g, '<u/>');
+          content = content.replace(/<u\s+val="0"\s*\/>/g, '');
+
+          content = content.replace(/<strike\s+val="1"\s*\/>/g, '<strike/>');
+          content = content.replace(/<strike\s+val="0"\s*\/>/g, '');
+          mod = true;
+        }
+
+        // 단일 셀 범위 정규화 ref="F4:F4" -> ref="F4"
+        if (content.includes('ref=')) {
+          content = content.replace(/ref="([A-Za-z]+[0-9]+):\1"/g, 'ref="$1"');
+          mod = true;
+        }
+      }
+
+      if (mod) {
+        zip.file(filename, content);
+        isModified = true;
+      }
+    }
+
+    if (isModified) {
+      return await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+    }
+  } catch (err) {
+    console.warn('한셀/OpenXML 네임스페이스 정규화 중 예외 (원본 바이너리 유지):', err);
+  }
+
+  return bytes;
+}
+
+/**
  * XLSX/CSV Base64 또는 Data URL을 Univer의 IWorkbookData 모델로 변환합니다.
  * ExcelJS를 사용하여 글꼴, 배경색, 테두리, 열 너비, 행 높이, 수식, 병합 셀을 최대한 보존합니다.
  */
@@ -60,7 +169,8 @@ export async function dataUrlToUniverWorkbook(
   };
 
   try {
-    const bytes = dataUrlToUint8Array(dataOrUrl);
+    const rawBytes = dataUrlToUint8Array(dataOrUrl);
+    const bytes = await normalizeHancellXlsx(rawBytes);
     const excelWb = new ExcelJS.Workbook();
     await excelWb.xlsx.load(bytes as any);
 
@@ -290,6 +400,7 @@ function fallbackSheetJsToUniver(dataOrUrl: string, defaultName: string): IWorkb
     sheetOrder: [],
     styles: {},
   };
+  (workbookData as any).isFallbackMode = true;
 
   try {
     const bytes = dataUrlToUint8Array(dataOrUrl);
@@ -489,6 +600,7 @@ function safeSpliceRows(ws: ExcelJS.Worksheet, start: number, count: number, ...
               dataValidation: cell.dataValidation,
             });
             cell.note = undefined;
+            delete (cell as any)._comment;
             cell.dataValidation = undefined;
           }
         });
@@ -570,6 +682,7 @@ function safeSpliceColumns(ws: ExcelJS.Worksheet, start: number, count: number, 
             dataValidation: cell.dataValidation,
           });
           cell.note = undefined;
+          delete (cell as any)._comment;
           cell.dataValidation = undefined;
         }
       });
@@ -648,11 +761,13 @@ export async function univerSnapshotToDataUrl(
 
     if (originalDataOrUrl) {
       try {
-        const origBytes = dataUrlToUint8Array(originalDataOrUrl);
+        const origRawBytes = dataUrlToUint8Array(originalDataOrUrl);
+        const origBytes = await normalizeHancellXlsx(origRawBytes);
         await wb.xlsx.load(origBytes as any);
         isLoadedFromOriginal = true;
       } catch (loadErr) {
-        console.warn('원본 워크북 로드 실패, 새 워크북으로 생성합니다:', loadErr);
+        console.warn('원본 워크북 로드 실패:', loadErr);
+        throw new Error('ORIGINAL_WORKBOOK_LOAD_FAILED');
       }
     }
 

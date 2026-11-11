@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, test, expect } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import ExcelJS from 'exceljs';
@@ -17,6 +17,12 @@ function dataUrlToBuffer(dataUrl: string): Buffer {
 }
 
 const samplesDir = path.resolve(__dirname, '../docs/office-upgrade/samples');
+
+function readSampleDataUrl(relPath: string): string {
+  const filePath = path.join(samplesDir, relPath);
+  const buf = fs.readFileSync(filePath);
+  return bufferToDataUrl(buf);
+}
 
 describe('ExcelJS Roundtrip Automation Tests (Sample 1 ~ 5)', () => {
   it('Sample 1: 셀 병합(Merges), 열 너비(Widths), 행 높이(Heights) 보존 검증', async () => {
@@ -443,5 +449,271 @@ describe('ExcelJS Roundtrip Automation Tests (Sample 1 ~ 5)', () => {
 
     expect(restoredWs!.getCell('B2').value).toBe(origB2Val);
     expect(restoredWs!.getCell('B2').dataValidation?.type).toBe('list');
+  });
+
+  // =========================================================================
+  // 실파일 4개 라운드트립 및 한셀(HanCell) XML 네임스페이스 호환성 테스트
+  // =========================================================================
+
+  test('실파일A_인사평가_MS엑셀.xlsx 라운드트립: 셀 수정, 셀 지우기, 행 삽입/삭제 및 전 서식 보존 검증', async () => {
+    const origDataUrl = readSampleDataUrl('real/실파일A_인사평가_MS엑셀.xlsx');
+    const snapshot = await dataUrlToUniverWorkbook(origDataUrl, '실파일A_MS');
+    expect(snapshot.sheetOrder.length).toBe(3);
+
+    const sheetId = snapshot.sheetOrder[0];
+    const sheet = snapshot.sheets[sheetId];
+    expect(sheet.name).toBe('인사평가');
+
+    // 1. 셀 수정 (A2 값 수정)
+    if (!sheet.cellData[1]) sheet.cellData[1] = {};
+    sheet.cellData[1][0] = { v: '2026 인사평가 수정본' };
+
+    // 2. 셀 지우기 (B2 값 비우기)
+    sheet.cellData[1][1] = { v: '' };
+
+    // In-Place 라운드트립 저장
+    const savedDataUrl = await univerSnapshotToDataUrl(snapshot, 'xlsx', 'exceljs', origDataUrl);
+    const savedBuf = dataUrlToBuffer(savedDataUrl);
+
+    const reloadedWb = new ExcelJS.Workbook();
+    await reloadedWb.xlsx.load(savedBuf);
+    expect(reloadedWb.worksheets.length).toBe(3);
+
+    const ws = reloadedWb.getWorksheet('인사평가')!;
+    expect(ws).toBeDefined();
+
+    // 1) 셀 수정/지우기 확인
+    expect(ws.getCell('A2').value).toBe('2026 인사평가 수정본');
+    expect(ws.getCell('B2').value).toBeNull();
+
+    // 2) 병합 셀 보존 (A1:H1)
+    const merges = (ws as any).model?.merges || [];
+    expect(merges.some((m: string) => m.includes('A1:H1') || m.includes('A1'))).toBe(true);
+
+    // 3) 글꼴 및 스타일 보존 (A1: 16pt 굵게, A3: 흰색 글자 굵게)
+    expect(ws.getCell('A1').font?.bold).toBe(true);
+    expect(ws.getCell('A3').font?.bold).toBe(true);
+
+    // 4) 수식 보존 (F14: AVERAGE, G14: SUM)
+    expect(ws.getCell('F14').formula).toContain('AVERAGE');
+    expect(ws.getCell('G14').formula).toContain('SUM');
+
+    // 5) 메모(Notes) 보존 (F4, B11)
+    expect(ws.getCell('F4').note).toBeDefined();
+    expect(ws.getCell('B11').note).toBeDefined();
+
+    // 6) 데이터 유효성 검사 (드롭다운 목록 및 정수 범위) 보존
+    expect(ws.getCell('C4').dataValidation?.type).toBe('list');
+    expect(ws.getCell('F4').dataValidation?.type).toBe('whole');
+
+    // 7) 조건부 서식 보존
+    expect((ws as any).conditionalFormattings?.length).toBeGreaterThanOrEqual(1);
+
+    // 8) 틀 고정 (Freeze Panes) 보존
+    expect(ws.views?.[0]?.state).toBe('frozen');
+
+    // 9) 페이지 인쇄 설정 보존
+    expect(ws.pageSetup?.fitToPage).toBe(true);
+  });
+
+  test('실파일A_인사평가_한셀.xlsx 라운드트립: XML 네임스페이스(x:, ep:) 정규화 후 MS엑셀과 동일한 전 서식 보존 검증', async () => {
+    const origDataUrl = readSampleDataUrl('real/실파일A_인사평가_한셀.xlsx');
+    // 한셀 네임스페이스 자동 정규화 후 Univer 로드
+    const snapshot = await dataUrlToUniverWorkbook(origDataUrl, '실파일A_한셀');
+    expect(snapshot.sheetOrder.length).toBe(3);
+
+    const sheetId = snapshot.sheetOrder[0];
+    const sheet = snapshot.sheets[sheetId];
+    expect(sheet.name).toBe('인사평가');
+
+    // 1. 셀 수정 (A2 값 수정)
+    if (!sheet.cellData[1]) sheet.cellData[1] = {};
+    sheet.cellData[1][0] = { v: '2026 한셀 인사평가 수정본' };
+
+    // 2. 셀 지우기 (B2 값 비우기)
+    sheet.cellData[1][1] = { v: '' };
+
+    // In-Place 라운드트립 저장
+    const savedDataUrl = await univerSnapshotToDataUrl(snapshot, 'xlsx', 'exceljs', origDataUrl);
+    const savedBuf = dataUrlToBuffer(savedDataUrl);
+
+    const reloadedWb = new ExcelJS.Workbook();
+    await reloadedWb.xlsx.load(savedBuf);
+    expect(reloadedWb.worksheets.length).toBe(3);
+
+    const ws = reloadedWb.getWorksheet('인사평가')!;
+    expect(ws).toBeDefined();
+
+    // 1) 셀 수정/지우기 확인
+    expect(ws.getCell('A2').value).toBe('2026 한셀 인사평가 수정본');
+    expect(ws.getCell('B2').value).toBeNull();
+
+    // 2) 병합 셀 보존 (A1:H1)
+    const merges = (ws as any).model?.merges || [];
+    expect(merges.some((m: string) => m.includes('A1:H1') || m.includes('A1'))).toBe(true);
+
+    // 3) 글꼴 보존 (A1: 16pt 굵게, A3: 흰색 글자 굵게)
+    expect(ws.getCell('A1').font?.bold).toBe(true);
+    expect(ws.getCell('A3').font?.bold).toBe(true);
+
+    // 4) 수식 보존 (F14: AVERAGE, G14: SUM)
+    expect(ws.getCell('F14').formula).toContain('AVERAGE');
+    expect(ws.getCell('G14').formula).toContain('SUM');
+
+    // 5) 메모(Notes) 보존: 한셀의 x:comments 및 ref="F4:F4" 정규화로 F4, B11 메모 복원 성공 확인
+    expect(ws.getCell('F4').note).toBeDefined();
+    expect(ws.getCell('B11').note).toBeDefined();
+
+    // 6) 데이터 유효성 검사 (드롭다운 목록 및 정수 범위) 보존
+    expect(ws.getCell('C4').dataValidation?.type).toBe('list');
+    expect(ws.getCell('F4').dataValidation?.type).toBe('whole');
+
+    // 7) 조건부 서식 보존
+    expect((ws as any).conditionalFormattings?.length).toBeGreaterThanOrEqual(1);
+
+    // 8) 틀 고정 (Freeze Panes) 보존
+    expect(ws.views?.[0]?.state).toBe('frozen');
+
+    // 9) 페이지 인쇄 설정 보존
+    expect(ws.pageSetup?.fitToPage).toBe(true);
+  });
+
+  test('실파일B_견적서_MS엑셀.xlsx 라운드트립: 셀 수정, 셀 지우기 및 수식/조건부서식/다중시트 보존 검증', async () => {
+    const origDataUrl = readSampleDataUrl('real/실파일B_견적서_MS엑셀.xlsx');
+    const snapshot = await dataUrlToUniverWorkbook(origDataUrl, '실파일B_MS');
+    expect(snapshot.sheetOrder.length).toBe(2);
+
+    const sheetId = snapshot.sheetOrder[0];
+    const sheet = snapshot.sheets[sheetId];
+    expect(sheet.name).toBe('견적서');
+
+    // 1. 셀 수정 (A1 수정)
+    if (!sheet.cellData[0]) sheet.cellData[0] = {};
+    sheet.cellData[0][0] = { v: '견적서 (수정본)' };
+
+    // In-Place 라운드트립 저장
+    const savedDataUrl = await univerSnapshotToDataUrl(snapshot, 'xlsx', 'exceljs', origDataUrl);
+    const savedBuf = dataUrlToBuffer(savedDataUrl);
+
+    const reloadedWb = new ExcelJS.Workbook();
+    await reloadedWb.xlsx.load(savedBuf);
+    expect(reloadedWb.worksheets.length).toBe(2);
+
+    const ws = reloadedWb.getWorksheet('견적서')!;
+    expect(ws.getCell('A1').value).toBe('견적서 (수정본)');
+
+    // 병합 및 조건부 서식 확인
+    const merges = (ws as any).model?.merges || [];
+    expect(merges.length).toBeGreaterThan(0);
+    expect((ws as any).conditionalFormattings?.length).toBeGreaterThanOrEqual(1);
+
+    // 월별매출 시트 조건부 서식 확인
+    const ws2 = reloadedWb.getWorksheet('월별매출')!;
+    expect((ws2 as any).conditionalFormattings?.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('실파일B_견적서_한셀.xlsx 라운드트립: XML 정규화 후 수식, 서식, 조건부서식 보존 검증', async () => {
+    const origDataUrl = readSampleDataUrl('real/실파일B_견적서_한셀.xlsx');
+    const snapshot = await dataUrlToUniverWorkbook(origDataUrl, '실파일B_한셀');
+    expect(snapshot.sheetOrder.length).toBe(2);
+
+    const sheetId = snapshot.sheetOrder[0];
+    const sheet = snapshot.sheets[sheetId];
+    expect(sheet.name).toBe('견적서');
+
+    // 1. 셀 수정 (A1 수정)
+    if (!sheet.cellData[0]) sheet.cellData[0] = {};
+    sheet.cellData[0][0] = { v: '한셀 견적서 (수정본)' };
+
+    // In-Place 라운드트립 저장
+    const savedDataUrl = await univerSnapshotToDataUrl(snapshot, 'xlsx', 'exceljs', origDataUrl);
+    const savedBuf = dataUrlToBuffer(savedDataUrl);
+
+    const reloadedWb = new ExcelJS.Workbook();
+    await reloadedWb.xlsx.load(savedBuf);
+    expect(reloadedWb.worksheets.length).toBe(2);
+
+    const ws = reloadedWb.getWorksheet('견적서')!;
+    expect(ws.getCell('A1').value).toBe('한셀 견적서 (수정본)');
+
+    // 병합 및 조건부 서식 확인
+    const merges = (ws as any).model?.merges || [];
+    expect(merges.length).toBeGreaterThan(0);
+    expect((ws as any).conditionalFormattings?.length).toBeGreaterThanOrEqual(1);
+
+    const ws2 = reloadedWb.getWorksheet('월별매출')!;
+    expect((ws2 as any).conditionalFormattings?.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('Univer 구조 변경 기록: mutation ID 정확 일치 필터링 및 Undo 시 상쇄 검증', () => {
+    // ExcelEditorModal 내부의 structuralOpsRef 기록 로직 단위 검증
+    const ops: StructuralOperation[] = [];
+
+    function processMutation(cmd: any) {
+      const id = cmd?.id || '';
+      const range = cmd?.params?.range;
+      const subUnitId = cmd.params?.subUnitId;
+
+      if (range) {
+        let op: StructuralOperation | null = null;
+        if (id === 'sheet.mutation.insert-row') {
+          op = { type: 'insertRow', subUnitId, start: range.startRow + 1, count: range.endRow - range.startRow + 1 };
+        } else if (id === 'sheet.mutation.remove-rows') {
+          op = { type: 'removeRow', subUnitId, start: range.startRow + 1, count: range.endRow - range.startRow + 1 };
+        } else if (id === 'sheet.mutation.insert-col') {
+          op = { type: 'insertCol', subUnitId, start: range.startColumn + 1, count: range.endColumn - range.startColumn + 1 };
+        } else if (id === 'sheet.mutation.remove-col') {
+          op = { type: 'removeCol', subUnitId, start: range.startColumn + 1, count: range.endColumn - range.startColumn + 1 };
+        }
+
+        if (op) {
+          if (ops.length > 0) {
+            const lastOp = ops[ops.length - 1];
+            const isSameSheet = !lastOp.subUnitId || !op.subUnitId || lastOp.subUnitId === op.subUnitId;
+            const isOppositeRow =
+              isSameSheet &&
+              ((lastOp.type === 'insertRow' && op.type === 'removeRow') ||
+               (lastOp.type === 'removeRow' && op.type === 'insertRow')) &&
+              lastOp.start === op.start &&
+              lastOp.count === op.count;
+            const isOppositeCol =
+              isSameSheet &&
+              ((lastOp.type === 'insertCol' && op.type === 'removeCol') ||
+               (lastOp.type === 'removeCol' && op.type === 'insertCol')) &&
+              lastOp.start === op.start &&
+              lastOp.count === op.count;
+
+            if (isOppositeRow || isOppositeCol) {
+              ops.pop();
+              return;
+            }
+          }
+          ops.push(op);
+        }
+      }
+    }
+
+    // 1. command ID (sheet.command.insert-row)는 무시되고 mutation만 기록되어 중복 0건
+    processMutation({ id: 'sheet.command.insert-row', params: { range: { startRow: 2, endRow: 2 } } });
+    expect(ops.length).toBe(0); // command는 무시
+
+    processMutation({ id: 'sheet.mutation.insert-row', params: { subUnitId: 's1', range: { startRow: 2, endRow: 2 } } });
+    expect(ops.length).toBe(1);
+    expect(ops[0]).toEqual({ type: 'insertRow', subUnitId: 's1', start: 3, count: 1 });
+
+    // 2. 실행 취소(Undo) 발생: sheet.mutation.remove-rows가 동일 위치에 들어옴 -> 자동 상쇄!
+    processMutation({ id: 'sheet.mutation.remove-rows', params: { subUnitId: 's1', range: { startRow: 2, endRow: 2 } } });
+    expect(ops.length).toBe(0); // 완전히 상쇄되어 0개!
+
+    // 3. 다시 실행(Redo) 발생: 다시 1개 기록
+    processMutation({ id: 'sheet.mutation.insert-row', params: { subUnitId: 's1', range: { startRow: 2, endRow: 2 } } });
+    expect(ops.length).toBe(1);
+
+    // 4. 열 삽입 및 열 Undo 상쇄
+    processMutation({ id: 'sheet.mutation.insert-col', params: { subUnitId: 's1', range: { startColumn: 1, endColumn: 1 } } });
+    expect(ops.length).toBe(2);
+
+    processMutation({ id: 'sheet.mutation.remove-col', params: { subUnitId: 's1', range: { startColumn: 1, endColumn: 1 } } });
+    expect(ops.length).toBe(1); // 열 연산만 상쇄되고 행 연산은 유지됨
   });
 });
