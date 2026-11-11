@@ -397,158 +397,243 @@ function fallbackSheetJsToUniver(dataOrUrl: string, defaultName: string): IWorkb
  * Univer의 스냅샷(IWorkbookData)을 다시 XLSX 또는 CSV Data URL 문자열로 생성합니다.
  * engine: 'exceljs' (기본값, 서식/열너비/행높이 보존) | 'sheetjs' (기존 가벼운 데이터 모드)
  */
+/**
+ * Univer의 스냅샷(IWorkbookData)을 다시 XLSX 또는 CSV Data URL 문자열로 생성합니다.
+ * engine: 'exceljs' (기본값, 서식/열너비/행높이 보존) | 'sheetjs' (기존 가벼운 데이터 모드)
+ * originalDataOrUrl: 원본 파일 바이트(Data URL). 제공 시 원본 워크북을 로드하여 바뀐 셀/수식/서식/병합/크기만
+ * in-place로 패치하므로 ExcelJS가 지원하는 조건부 서식, 데이터 유효성 검사, 셀 메모, 인쇄 설정, 틀 고정이 100% 보존됩니다.
+ */
 export async function univerSnapshotToDataUrl(
   snapshot: IWorkbookData,
   format: 'xlsx' | 'csv' = 'xlsx',
-  engine: 'exceljs' | 'sheetjs' = 'exceljs'
+  engine: 'exceljs' | 'sheetjs' = 'exceljs',
+  originalDataOrUrl?: string
 ): Promise<string> {
   if (engine === 'sheetjs' || format === 'csv') {
     return univerSnapshotToDataUrlWithSheetJS(snapshot, format);
   }
 
-  // --- ExcelJS 라운드트립 저장 엔진 (서식/수식/병합/너비/높이 보존) ---
+  // --- ExcelJS 라운드트립 저장 엔진 (서식/수식/병합/너비/높이 및 원본 메타데이터 보존) ---
   try {
     const wb = new ExcelJS.Workbook();
-    const sheetIds = snapshot.sheetOrder || Object.keys(snapshot.sheets || {});
+    let isLoadedFromOriginal = false;
+
+    if (originalDataOrUrl) {
+      try {
+        const origBytes = dataUrlToUint8Array(originalDataOrUrl);
+        await wb.xlsx.load(origBytes as any);
+        isLoadedFromOriginal = true;
+      } catch (loadErr) {
+        console.warn('원본 워크북 로드 실패, 새 워크북으로 생성합니다:', loadErr);
+      }
+    }
+
+    const sheetIds = snapshot.sheetOrder && snapshot.sheetOrder.length > 0
+      ? snapshot.sheetOrder
+      : Object.keys(snapshot.sheets || {});
     const styles = snapshot.styles || {};
 
-    if (sheetIds.length === 0) {
-      wb.addWorksheet('Sheet1');
+    if (!isLoadedFromOriginal) {
+      // 원본 파일이 없는 신규 생성 시 빈 워크북에 시트 추가
+      if (sheetIds.length === 0) {
+        wb.addWorksheet('Sheet1');
+      } else {
+        sheetIds.forEach((sheetId) => {
+          const uSheet = snapshot.sheets[sheetId];
+          if (!uSheet) return;
+          const sheetName = (uSheet.name || 'Sheet').slice(0, 31);
+          wb.addWorksheet(sheetName);
+        });
+      }
     } else {
-      sheetIds.forEach((sheetId) => {
-        const uSheet = snapshot.sheets[sheetId];
-        if (!uSheet) return;
+      // 원본 파일이 있는 경우: 시트 동기화 (추가, 삭제, 이름 변경 in-place 반영)
+      const univerSheets = sheetIds.map((id) => snapshot.sheets[id]).filter(Boolean);
+      const originalWorksheets = [...wb.worksheets];
+      const matchedWsSet = new Set<any>();
 
-        const sheetName = (uSheet.name || 'Sheet').slice(0, 31);
-        const ws = wb.addWorksheet(sheetName);
+      // 1단계: 시트명 완전 일치 매칭
+      univerSheets.forEach((uSheet) => {
+        const match = originalWorksheets.find((ws) => !matchedWsSet.has(ws) && ws.name === uSheet.name);
+        if (match) {
+          matchedWsSet.add(match);
+          (uSheet as any)._matchedWs = match;
+        }
+      });
 
-        // 1. 열 너비 복원
-        const colData = uSheet.columnData;
-        if (colData) {
-          Object.keys(colData).forEach((cStr) => {
-            const cIdx = parseInt(cStr, 10);
-            const colInfo = colData[cIdx];
-            if (colInfo && colInfo.w) {
-              const colWidth = Math.max(8, Math.round((colInfo.w - 5) / 8));
-              ws.getColumn(cIdx + 1).width = colWidth;
-            }
-          });
+      // 2단계: 남은 시트 순서(인덱스) 기반 매칭
+      univerSheets.forEach((uSheet, idx) => {
+        if (!(uSheet as any)._matchedWs) {
+          const candidate = originalWorksheets[idx];
+          if (candidate && !matchedWsSet.has(candidate)) {
+            matchedWsSet.add(candidate);
+            (uSheet as any)._matchedWs = candidate;
+            // 시트 이름 변경 반영
+            candidate.name = (uSheet.name || `Sheet${idx + 1}`).slice(0, 31);
+          }
+        }
+      });
+
+      // 3단계: Univer에서 삭제된 시트는 원본 워크북에서 제거
+      originalWorksheets.forEach((origWs) => {
+        if (!matchedWsSet.has(origWs)) {
+          wb.removeWorksheet(origWs.id);
+        }
+      });
+
+      // 4단계: Univer에서 신규 추가된 시트는 원본 워크북에 추가
+      univerSheets.forEach((uSheet, idx) => {
+        if (!(uSheet as any)._matchedWs) {
+          const newSheetName = (uSheet.name || `Sheet${idx + 1}`).slice(0, 31);
+          const newWs = wb.addWorksheet(newSheetName);
+          (uSheet as any)._matchedWs = newWs;
+        }
+      });
+    }
+
+    // 각 시트별 데이터, 크기, 서식, 병합 덮어쓰기
+    sheetIds.forEach((sheetId, sIdx) => {
+      const uSheet = snapshot.sheets[sheetId];
+      if (!uSheet) return;
+
+      const sheetName = (uSheet.name || `Sheet${sIdx + 1}`).slice(0, 31);
+      const ws = (uSheet as any)._matchedWs || wb.getWorksheet(sheetName) || wb.worksheets[sIdx] || wb.addWorksheet(sheetName);
+
+      // 1. 열 너비 복원
+      const colData = uSheet.columnData;
+      if (colData) {
+        Object.keys(colData).forEach((cStr) => {
+          const cIdx = parseInt(cStr, 10);
+          const colInfo = colData[cIdx];
+          if (colInfo && colInfo.w) {
+            const colWidth = Math.max(8, Math.round((colInfo.w - 5) / 8));
+            ws.getColumn(cIdx + 1).width = colWidth;
+          }
+        });
+      }
+
+      // 2. 행 높이 및 셀 데이터/스타일 복원
+      const cellData = uSheet.cellData || {};
+      const rowKeys = Object.keys(cellData);
+
+      for (let i = 0; i < rowKeys.length; i++) {
+        const r = parseInt(rowKeys[i], 10);
+        const rowObj = cellData[r];
+        if (!rowObj) continue;
+
+        const rowNum = r + 1; // 1-based
+        const row = ws.getRow(rowNum);
+
+        if (uSheet.rowData && uSheet.rowData[r] && uSheet.rowData[r].h) {
+          row.height = Math.round(uSheet.rowData[r].h / 1.33);
         }
 
-        // 2. 행 높이 및 셀 데이터/스타일 복원
-        const cellData = uSheet.cellData || {};
-        const rowKeys = Object.keys(cellData);
+        const colKeys = Object.keys(rowObj);
+        for (let j = 0; j < colKeys.length; j++) {
+          const c = parseInt(colKeys[j], 10);
+          const cell = rowObj[c];
+          if (!cell) continue;
 
-        for (let i = 0; i < rowKeys.length; i++) {
-          const r = parseInt(rowKeys[i], 10);
-          const rowObj = cellData[r];
-          if (!rowObj) continue;
+          const colNum = c + 1; // 1-based
+          const excelCell = ws.getCell(rowNum, colNum);
 
-          const rowNum = r + 1; // 1-based
-          const row = ws.getRow(rowNum);
-
-          if (uSheet.rowData && uSheet.rowData[r] && uSheet.rowData[r].h) {
-            row.height = Math.round(uSheet.rowData[r].h / 1.33);
+          // 값 및 수식 덮어쓰기
+          if (cell.f) {
+            excelCell.value = {
+              formula: cell.f.replace(/^=/, ''),
+              result: (cell.v !== undefined && cell.v !== null ? cell.v : 0) as any,
+            };
+          } else if (cell.v !== undefined && cell.v !== null && cell.v !== '') {
+            excelCell.value = cell.v as any;
+          } else if (cell.v === '') {
+            excelCell.value = null;
           }
 
-          const colKeys = Object.keys(rowObj);
-          for (let j = 0; j < colKeys.length; j++) {
-            const c = parseInt(colKeys[j], 10);
-            const cell = rowObj[c];
-            if (!cell) continue;
+          // 스타일 적용 (폰트, 배경색, 정렬, 표시 형식)
+          if (cell.s) {
+            const styleObj = typeof cell.s === 'string' ? styles[cell.s] : (cell.s as IStyleData);
+            if (styleObj) {
+              // 폰트 (기존 폰트 속성 유지하며 변경된 항목만 덮어씀)
+              if (styleObj.ff || styleObj.fs || styleObj.bl || styleObj.it || styleObj.cl) {
+                excelCell.font = {
+                  ...(excelCell.font || {}),
+                  name: styleObj.ff || excelCell.font?.name,
+                  size: styleObj.fs || excelCell.font?.size,
+                  bold: styleObj.bl === 1,
+                  italic: styleObj.it === 1,
+                  color: styleObj.cl?.rgb ? { argb: hexToArgb(styleObj.cl.rgb) } : excelCell.font?.color,
+                };
+              }
 
-            const colNum = c + 1; // 1-based
-            const excelCell = ws.getCell(rowNum, colNum);
+              // 배경색
+              if (styleObj.bg?.rgb) {
+                excelCell.fill = {
+                  type: 'pattern',
+                  pattern: 'solid',
+                  fgColor: { argb: hexToArgb(styleObj.bg.rgb) },
+                };
+              }
 
-            // 값 및 수식
-            if (cell.f) {
-              excelCell.value = {
-                formula: cell.f.replace(/^=/, ''),
-                result: (cell.v !== undefined && cell.v !== null ? cell.v : 0) as any,
-              };
-            } else if (cell.v !== undefined && cell.v !== null && cell.v !== '') {
-              excelCell.value = cell.v as any;
-            }
+              // 정렬
+              if (styleObj.ht || styleObj.vt || styleObj.tb) {
+                excelCell.alignment = {
+                  ...(excelCell.alignment || {}),
+                  horizontal:
+                    styleObj.ht === HorizontalAlign.CENTER
+                      ? 'center'
+                      : styleObj.ht === HorizontalAlign.RIGHT
+                      ? 'right'
+                      : styleObj.ht === HorizontalAlign.LEFT
+                      ? 'left'
+                      : excelCell.alignment?.horizontal,
+                  vertical:
+                    styleObj.vt === VerticalAlign.MIDDLE
+                      ? 'middle'
+                      : styleObj.vt === VerticalAlign.TOP
+                      ? 'top'
+                      : styleObj.vt === VerticalAlign.BOTTOM
+                      ? 'bottom'
+                      : excelCell.alignment?.vertical,
+                  wrapText: styleObj.tb === WrapStrategy.WRAP,
+                };
+              }
 
-            // 스타일 적용
-            if (cell.s) {
-              const styleObj = typeof cell.s === 'string' ? styles[cell.s] : (cell.s as IStyleData);
-              if (styleObj) {
-                // 폰트
-                if (styleObj.ff || styleObj.fs || styleObj.bl || styleObj.it || styleObj.cl) {
-                  excelCell.font = {
-                    name: styleObj.ff || undefined,
-                    size: styleObj.fs || undefined,
-                    bold: styleObj.bl === 1,
-                    italic: styleObj.it === 1,
-                    color: styleObj.cl?.rgb ? { argb: hexToArgb(styleObj.cl.rgb) } : undefined,
-                  };
-                }
-
-                // 배경색
-                if (styleObj.bg?.rgb) {
-                  excelCell.fill = {
-                    type: 'pattern',
-                    pattern: 'solid',
-                    fgColor: { argb: hexToArgb(styleObj.bg.rgb) },
-                  };
-                }
-
-                // 정렬
-                if (styleObj.ht || styleObj.vt || styleObj.tb) {
-                  excelCell.alignment = {
-                    horizontal:
-                      styleObj.ht === HorizontalAlign.CENTER
-                        ? 'center'
-                        : styleObj.ht === HorizontalAlign.RIGHT
-                        ? 'right'
-                        : styleObj.ht === HorizontalAlign.LEFT
-                        ? 'left'
-                        : undefined,
-                    vertical:
-                      styleObj.vt === VerticalAlign.MIDDLE
-                        ? 'middle'
-                        : styleObj.vt === VerticalAlign.TOP
-                        ? 'top'
-                        : styleObj.vt === VerticalAlign.BOTTOM
-                        ? 'bottom'
-                        : undefined,
-                    wrapText: styleObj.tb === WrapStrategy.WRAP,
-                  };
-                }
-
-                // 표시 형식
-                if (styleObj.n?.pattern) {
-                  excelCell.numFmt = styleObj.n.pattern;
-                }
+              // 표시 형식
+              if (styleObj.n?.pattern) {
+                excelCell.numFmt = styleObj.n.pattern;
               }
             }
           }
         }
+      }
 
-        // 3. 셀 병합 적용
-        if (uSheet.mergeData && Array.isArray(uSheet.mergeData)) {
-          uSheet.mergeData.forEach((m) => {
-            try {
-              ws.mergeCells(m.startRow + 1, m.startColumn + 1, m.endRow + 1, m.endColumn + 1);
-            } catch (mergeErr) {
-              console.warn('셀 병합 적용 오류 (무시 가능):', mergeErr);
-            }
-          });
+      // 3. 셀 병합 적용: 기존 병합 해제 후 Univer 최신 병합 목록 적용
+      if (uSheet.mergeData && Array.isArray(uSheet.mergeData)) {
+        const existingMerges = [...((ws as any).model?.merges || [])];
+        for (const mStr of existingMerges) {
+          try {
+            (ws as any).unMergeCells(mStr);
+          } catch {}
         }
+        uSheet.mergeData.forEach((m) => {
+          try {
+            ws.mergeCells(m.startRow + 1, m.startColumn + 1, m.endRow + 1, m.endColumn + 1);
+          } catch (mergeErr) {
+            console.warn('셀 병합 적용 오류 (무시 가능):', mergeErr);
+          }
+        });
+      }
 
-        // 4. 틀 고정 적용
-        if (uSheet.freeze && (uSheet.freeze.xSplit > 0 || uSheet.freeze.ySplit > 0)) {
-          ws.views = [
-            {
-              state: 'frozen',
-              xSplit: uSheet.freeze.xSplit,
-              ySplit: uSheet.freeze.ySplit,
-            },
-          ];
-        }
-      });
-    }
+      // 4. 틀 고정 적용
+      if (uSheet.freeze && (uSheet.freeze.xSplit > 0 || uSheet.freeze.ySplit > 0)) {
+        ws.views = [
+          {
+            state: 'frozen',
+            xSplit: uSheet.freeze.xSplit,
+            ySplit: uSheet.freeze.ySplit,
+          },
+        ];
+      }
+    });
 
     const buffer = await wb.xlsx.writeBuffer();
     const uint8 = new Uint8Array(buffer);

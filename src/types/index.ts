@@ -55,6 +55,8 @@ export interface SyncSummary {
   conflicts: number;
   skippedLocalOnly: number;
   timestamp: string;
+  warnings?: string[];
+  blocked?: string[];
 }
 
 export type AppTheme = 'navy' | 'black' | 'charcoal' | 'forest' | 'wine' | 'sepia' | 'light';

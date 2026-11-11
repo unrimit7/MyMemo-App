@@ -6,23 +6,23 @@ import { processFileForNote } from '../utils/file';
 import { cleanLegacyAttachments, renderAttachmentsInHtml, invalidateAttachmentBlobUrl } from '../utils/attachment';
 import { exportNoteToPdf } from '../utils/exportPdf';
 import { getFolderHierarchyPath, updateTitleWithFolderPath, stripFolderPrefixFromTitle } from '../utils/folderPath';
-import { PdfViewerModal } from './PdfViewerModal';
-import { PdfEditorModal } from './PdfEditorModal';
-import { ImageEditorModal } from './ImageEditorModal';
+const PdfViewerModal = React.lazy(() => import('./PdfViewerModal').then((m) => ({ default: m.PdfViewerModal })));
+const PdfEditorModal = React.lazy(() => import('./PdfEditorModal').then((m) => ({ default: m.PdfEditorModal })));
+const ImageEditorModal = React.lazy(() => import('./ImageEditorModal').then((m) => ({ default: m.ImageEditorModal })));
 import { loadPdfDocument, renderPdfPageToCanvas, extractPdfText, invalidatePdfCache } from '../utils/pdfViewer';
-import { HwpViewerModal } from './HwpViewerModal';
-import { HwpEditorModal } from './HwpEditorModal';
+const HwpViewerModal = React.lazy(() => import('./HwpViewerModal').then((m) => ({ default: m.HwpViewerModal })));
+const HwpEditorModal = React.lazy(() => import('./HwpEditorModal').then((m) => ({ default: m.HwpEditorModal })));
 import { loadHwpDocument, renderHwpPageToSvg, extractHwpText, invalidateHwpCache } from '../utils/hwpViewer';
-import { ExcelViewerModal } from './ExcelViewerModal';
-import { ExcelEditorModal } from './ExcelEditorModal';
+const ExcelViewerModal = React.lazy(() => import('./ExcelViewerModal').then((m) => ({ default: m.ExcelViewerModal })));
+const ExcelEditorModal = React.lazy(() => import('./ExcelEditorModal').then((m) => ({ default: m.ExcelEditorModal })));
 import { parseExcelWorkbook, sheetRowsToMarkdownTable, invalidateExcelCache, generateExcelDataUrl, buildMergeMap, getColumnLabel } from '../utils/excelViewer';
-import { DocxViewerModal } from './DocxViewerModal';
-import { DocxEditorModal } from './DocxEditorModal';
+const DocxViewerModal = React.lazy(() => import('./DocxViewerModal').then((m) => ({ default: m.DocxViewerModal })));
+const DocxEditorModal = React.lazy(() => import('./DocxEditorModal').then((m) => ({ default: m.DocxEditorModal })));
 import { renderDocxToContainer, extractDocxTextAndHtml, invalidateDocxCache } from '../utils/docxViewer';
-import { PptxViewerModal } from './PptxViewerModal';
-import { PptxEditorModal } from './PptxEditorModal';
+const PptxViewerModal = React.lazy(() => import('./PptxViewerModal').then((m) => ({ default: m.PptxViewerModal })));
+const PptxEditorModal = React.lazy(() => import('./PptxEditorModal').then((m) => ({ default: m.PptxEditorModal })));
 import { extractPptxTextAndMarkdown, invalidatePptxCache } from '../utils/pptxViewer';
-import { HexEditorModal } from './HexEditorModal';
+const HexEditorModal = React.lazy(() => import('./HexEditorModal').then((m) => ({ default: m.HexEditorModal })));
 import { SlashCommandMenu, getSlashCommands, type SlashCommandItem } from './SlashCommandMenu';
 import { TemplateModal } from './TemplateModal';
 import { getNoteTemplates, type NoteTemplate } from '../utils/templates';
@@ -4362,8 +4362,10 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         </div>
       )}
 
-      {/* PDF 전면 뷰어 모달 (모바일/PC 어디서나 다운로드 없이 고해상도 열람 & 줌) */}
-      {activePdfModal && (
+      {/* 문서/오피스 전면 뷰어 및 에디터 모달 (Dynamic Lazy Loading) */}
+      <React.Suspense fallback={null}>
+        {/* PDF 전면 뷰어 모달 (모바일/PC 어디서나 다운로드 없이 고해상도 열람 & 줌) */}
+        {activePdfModal && (
         <PdfViewerModal
           isOpen={true}
           onClose={() => setActivePdfModal(null)}
@@ -4817,6 +4819,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           }}
         />
       )}
+      </React.Suspense>
 
       {/* 단축키 안내 팝업 모달 */}
       {showShortcutsModal && (

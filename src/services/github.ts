@@ -182,7 +182,7 @@ export async function uploadFileToGitHub(
   content: string,
   commitMessage: string,
   sha?: string
-): Promise<{ success: boolean; sha?: string; error?: string }> {
+): Promise<{ success: boolean; sha?: string; error?: string; warning?: string }> {
   try {
     const sizeBytes = new Blob([content]).size;
     const sizeMb = sizeBytes / (1024 * 1024);
@@ -197,9 +197,11 @@ export async function uploadFileToGitHub(
       };
     }
 
-    // 50MB 초과: 대용량 경고
+    let warning: string | undefined;
+    // 50MB 초과: 대용량 경고 (사용자 화면 토스트 및 결과에 표시)
     if (sizeMb >= 50) {
-      console.warn(`[GitHub Sync] 대용량 파일 경고 (50MB 초과): ${sizeMb.toFixed(1)}MB, 경로: ${path}`);
+      warning = `메모 크기(${sizeMb.toFixed(1)}MB)가 50MB를 초과했습니다. 100MB 초과 시 GitHub 동기화가 차단됩니다. (경로: ${path})`;
+      console.warn(`[GitHub Sync] ${warning}`);
     }
 
     const url = getContentsUrl(config, path);
@@ -220,7 +222,7 @@ export async function uploadFileToGitHub(
 
     if (res.ok) {
       const data = await res.json();
-      return { success: true, sha: data.content?.sha };
+      return { success: true, sha: data.content?.sha, warning };
     } else {
       // 409 Conflict 발생 시 최신 SHA를 가져와 재시도(Last-Write-Wins)
       if (res.status === 409) {
@@ -237,7 +239,7 @@ export async function uploadFileToGitHub(
               });
               if (retryRes.ok) {
                 const retryData = await retryRes.json();
-                return { success: true, sha: retryData.content?.sha };
+                return { success: true, sha: retryData.content?.sha, warning };
               }
             }
           }
@@ -246,7 +248,7 @@ export async function uploadFileToGitHub(
         }
       }
       const err = await res.json().catch(() => ({}));
-      return { success: false, error: err.message };
+      return { success: false, error: err.message, warning };
     }
   } catch (err: any) {
     return { success: false, error: err.message };
@@ -285,6 +287,17 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
     conflicts: 0,
     skippedLocalOnly: 0,
     timestamp: new Date().toISOString(),
+    warnings: [],
+    blocked: [],
+  };
+
+  const recordUpRes = (upRes: { success: boolean; error?: string; warning?: string }) => {
+    if (upRes.warning && !summary.warnings!.includes(upRes.warning)) {
+      summary.warnings!.push(upRes.warning);
+    }
+    if (!upRes.success && upRes.error && upRes.error.includes('100MB') && !summary.blocked!.includes(upRes.error)) {
+      summary.blocked!.push(upRes.error);
+    }
   };
 
   if (!config.isConnected || !config.token) {
@@ -520,6 +533,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
           `Update note: ${note.title}`,
           remotePath === expectedPath ? remoteFile.sha : undefined
         );
+        recordUpRes(upRes);
         if (upRes.success) {
           note.githubSha = upRes.sha;
           note.githubPath = expectedPath;
@@ -537,6 +551,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
           serializedContent,
           `Move note to new path: ${note.title}`
         );
+        recordUpRes(upRes);
         if (upRes.success) {
           note.githubSha = upRes.sha;
           note.githubPath = expectedPath;
@@ -565,6 +580,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
               `Update note: ${note.title}`,
               remoteFile.sha
             );
+            recordUpRes(upRes);
             if (upRes.success) {
               note.githubSha = upRes.sha;
               note.githubPath = expectedPath;
@@ -595,6 +611,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
             serializedContent,
             `Move note: ${note.title}`
           );
+          recordUpRes(upRes);
           if (upRes.success) {
             note.githubSha = upRes.sha;
             note.githubPath = expectedPath;
@@ -620,6 +637,7 @@ export async function syncWithGitHub(config: GitHubConfig): Promise<SyncSummary>
           serializedContent,
           `Create note: ${note.title}`
         );
+        recordUpRes(upRes);
         if (upRes.success) {
           note.githubSha = upRes.sha;
           note.githubPath = expectedPath;

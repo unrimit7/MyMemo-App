@@ -7,11 +7,11 @@ import { PopoutWindow } from './PopoutWindow';
 import { loadPdfDocument, renderPdfPageToCanvas } from '../utils/pdfViewer';
 import { loadHwpDocument, renderHwpPageToSvg } from '../utils/hwpViewer';
 import { renderDocxToContainer } from '../utils/docxViewer';
-import { PdfViewerModal } from './PdfViewerModal';
-import { HwpViewerModal } from './HwpViewerModal';
-import { DocxViewerModal } from './DocxViewerModal';
-import { ExcelViewerModal } from './ExcelViewerModal';
-import { ExcelEditorModal } from './ExcelEditorModal';
+const PdfViewerModal = React.lazy(() => import('./PdfViewerModal').then((m) => ({ default: m.PdfViewerModal })));
+const HwpViewerModal = React.lazy(() => import('./HwpViewerModal').then((m) => ({ default: m.HwpViewerModal })));
+const DocxViewerModal = React.lazy(() => import('./DocxViewerModal').then((m) => ({ default: m.DocxViewerModal })));
+const ExcelViewerModal = React.lazy(() => import('./ExcelViewerModal').then((m) => ({ default: m.ExcelViewerModal })));
+const ExcelEditorModal = React.lazy(() => import('./ExcelEditorModal').then((m) => ({ default: m.ExcelEditorModal })));
 import { invalidateExcelCache } from '../utils/excelViewer';
 import {
   X,
@@ -668,6 +668,7 @@ export const FloatingNoteWindow: React.FC<FloatingNoteWindowProps> = ({
   // 문서 크게 보기 모달들 렌더링
   const renderDocumentModals = () => (
     <>
+      <React.Suspense fallback={null}>
       {activePdfModal && (
         <PdfViewerModal
           isOpen={true}
@@ -786,6 +787,7 @@ export const FloatingNoteWindow: React.FC<FloatingNoteWindowProps> = ({
           />
         );
       })()}
+      </React.Suspense>
     </>
   );
 

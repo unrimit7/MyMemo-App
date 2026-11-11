@@ -262,7 +262,11 @@ export function App() {
 
       crossTabSync.broadcastChange('sync_complete');
 
-      if (!silent) {
+      if (summary.blocked && summary.blocked.length > 0) {
+        setSyncToast(`⚠️ 동기화 차단 (100MB 초과): ${summary.blocked[0]}`);
+      } else if (summary.warnings && summary.warnings.length > 0) {
+        setSyncToast(`⚠️ 대용량 메모 경고: ${summary.warnings[0]}`);
+      } else if (!silent) {
         setSyncToast(
           `동기화 완료! (업로드: ${summary.uploaded}, 다운로드: ${summary.downloaded}, 로컬보호: ${summary.skippedLocalOnly})`
         );
@@ -277,7 +281,7 @@ export function App() {
       crossTabSync.releaseSyncLock();
       isSyncingRef.current = false;
       setIsSyncing(false);
-      setTimeout(() => setSyncToast(null), 3500);
+      setTimeout(() => setSyncToast(null), 5000);
     }
   }, [gitHubConfig]);
 

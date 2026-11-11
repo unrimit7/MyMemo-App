@@ -65,6 +65,11 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const univerRef = useRef<any>(null);
   const univerAPIRef = useRef<any>(null);
+  const currentDataRef = useRef<string>(data);
+
+  useEffect(() => {
+    currentDataRef.current = data;
+  }, [data]);
 
   // 원본 문서의 미보존 고급 요소(차트, 피벗 등) 사전 검사
   useEffect(() => {
@@ -195,7 +200,9 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
       if (!activeWb) throw new Error('활성 워크북을 찾을 수 없습니다.');
 
       const snapshot = activeWb.save();
-      const updatedDataUrl = await univerSnapshotToDataUrl(snapshot, format, engine);
+      // 원본 데이터(currentDataRef.current)를 전달하여 바뀐 셀/서식만 in-place로 업데이트
+      const updatedDataUrl = await univerSnapshotToDataUrl(snapshot, format, engine, currentDataRef.current);
+      currentDataRef.current = updatedDataUrl;
 
       invalidateExcelCache(attId);
 
@@ -232,7 +239,7 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
       if (!activeWb) return;
 
       const snapshot = activeWb.save();
-      const dataUrl = await univerSnapshotToDataUrl(snapshot, format, engine);
+      const dataUrl = await univerSnapshotToDataUrl(snapshot, format, engine, currentDataRef.current);
 
       const a = document.createElement('a');
       a.href = dataUrl;
