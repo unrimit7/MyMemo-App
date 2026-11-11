@@ -74,6 +74,29 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
     };
   }, [isOpen, hasChanges]);
 
+  // rhwp 에디터 내부의 dirty(미저장 수정 상태)를 실시간 감지하여 상단 배지 및 닫기 방지 연동
+  useEffect(() => {
+    if (!isOpen || isLoading) return;
+
+    let isMounted = true;
+    const checkDirtyInterval = setInterval(async () => {
+      if (!editorRef.current || !isMounted) return;
+      try {
+        const state = await editorRef.current.getDocumentState();
+        if (state && typeof state.dirty === 'boolean') {
+          setHasChanges(state.dirty);
+        }
+      } catch {
+        // rhwp 환경에 따라 document-state-v1 미지원 시 무시
+      }
+    }, 1000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(checkDirtyInterval);
+    };
+  }, [isOpen, isLoading]);
+
   useEffect(() => {
     if (!isOpen || !data || !containerRef.current) return;
 
@@ -210,8 +233,23 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
     }
   };
 
-  const handleClose = () => {
-    if (hasChanges) {
+  const handleClose = async () => {
+    let isDirty = hasChanges;
+
+    // 닫기 버튼 클릭 시 rhwp 에디터의 최신 dirty 상태를 즉시 최종 확인
+    if (!isDirty && editorRef.current) {
+      try {
+        const state = await editorRef.current.getDocumentState();
+        if (state && state.dirty) {
+          isDirty = true;
+          setHasChanges(true);
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (isDirty) {
       setShowExitConfirm(true);
       return;
     }
