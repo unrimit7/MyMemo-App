@@ -26,6 +26,7 @@ import { loadPdfDocument, renderPdfPageToCanvas, invalidatePdfCache } from '../u
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { ColorEditModal } from './ColorEditModal';
 import { useFloatingWindow } from './useFloatingWindow';
+import { useWheelPageNavigation } from '../hooks/useWheelPageNavigation';
 
 interface Stroke {
   id: string;
@@ -170,6 +171,15 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const signCanvasRef = useRef<HTMLCanvasElement>(null);
 
+  // 상/하단 마우스 휠 페이지 이동 (상단에서 휠 올리면 이전 페이지, 하단에서 휠 내리면 다음 페이지)
+  const { pendingScrollRef, pageToast } = useWheelPageNavigation({
+    containerRef,
+    currentPage,
+    totalPages,
+    onPageChange: setCurrentPage,
+    enabled: isOpen && !isLoading,
+  });
+
   // 진행 중인 드로잉 스트로크
   const currentStrokeRef = useRef<Stroke | null>(null);
 
@@ -238,6 +248,16 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
           overlay.style.width = `${canvas.clientWidth}px`;
           overlay.style.height = `${canvas.clientHeight}px`;
           redrawOverlay();
+        }
+
+        const container = containerRef.current;
+        if (container && pendingScrollRef.current) {
+          if (pendingScrollRef.current === 'bottom') {
+            container.scrollTop = container.scrollHeight - container.clientHeight;
+          } else if (pendingScrollRef.current === 'top') {
+            container.scrollTop = 0;
+          }
+          pendingScrollRef.current = null;
         }
       })
       .catch((err) => {
@@ -2018,6 +2038,13 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
             )}
           </div>
         </div>
+
+        {/* 마우스 휠 페이지 이동 안내 토스트 */}
+        {pageToast && (
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 text-indigo-300 border border-indigo-500/40 px-3.5 py-1.5 rounded-full text-xs font-mono font-semibold shadow-2xl backdrop-blur-sm pointer-events-none transition-all animate-in fade-in duration-150">
+            {pageToast}
+          </div>
+        )}
       </div>
 
       {/* 텍스트 및 사각형 박스 삽입 모달 */}

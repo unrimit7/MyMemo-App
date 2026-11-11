@@ -3,6 +3,7 @@ import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Download, RotateCw, Edit
 import { loadPdfDocument, renderPdfPageToCanvas } from '../utils/pdfViewer';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { useFloatingWindow } from './useFloatingWindow';
+import { useWheelPageNavigation } from '../hooks/useWheelPageNavigation';
 
 interface PdfViewerModalProps {
   isOpen: boolean;
@@ -35,6 +36,15 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTapRef = useRef<number>(0);
   const floating = useFloatingWindow({ id: 'pdf-viewer', defaultWidth: 880, defaultHeight: 800 });
+
+  // 상/하단 마우스 휠 페이지 이동 (상단에서 휠 올리면 이전 페이지, 하단에서 휠 내리면 다음 페이지)
+  const { pendingScrollRef, pageToast } = useWheelPageNavigation({
+    containerRef,
+    currentPage,
+    totalPages,
+    onPageChange: setCurrentPage,
+    enabled: isOpen && !isLoading,
+  });
 
   // PDF 문서 로딩
   useEffect(() => {
@@ -91,6 +101,18 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
     const baseWidth = Math.min(Math.max(260, containerWidth - 24), 850);
 
     renderPdfPageToCanvas(pdfDoc, currentPage, canvas, baseWidth, renderedZoom, rotation)
+      .then(() => {
+        if (!isMounted) return;
+        const container = containerRef.current;
+        if (container && pendingScrollRef.current) {
+          if (pendingScrollRef.current === 'bottom') {
+            container.scrollTop = container.scrollHeight - container.clientHeight;
+          } else if (pendingScrollRef.current === 'top') {
+            container.scrollTop = 0;
+          }
+          pendingScrollRef.current = null;
+        }
+      })
       .catch((err) => {
         if (isMounted) {
           console.error('PDF 페이지 렌더링 실패:', err);
@@ -454,6 +476,13 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
             />
           </div>
         </div>
+
+        {/* 마우스 휠 페이지 이동 안내 토스트 */}
+        {pageToast && (
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 text-indigo-300 border border-indigo-500/40 px-3.5 py-1.5 rounded-full text-xs font-mono font-semibold shadow-2xl backdrop-blur-sm pointer-events-none transition-all animate-in fade-in duration-150">
+            {pageToast}
+          </div>
+        )}
       </div>
 
       {floating.resizeHandle}

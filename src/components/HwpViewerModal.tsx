@@ -3,6 +3,7 @@ import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Download, FileText, Chec
 import { loadHwpDocument, renderHwpPageToSvg, extractHwpText, rotateSvg } from '../utils/hwpViewer';
 import type { HwpDocument } from '@rhwp/core';
 import { useFloatingWindow } from './useFloatingWindow';
+import { useWheelPageNavigation } from '../hooks/useWheelPageNavigation';
 
 interface HwpViewerModalProps {
   isOpen: boolean;
@@ -36,6 +37,27 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const lastTapRef = useRef<number>(0);
   const floating = useFloatingWindow({ id: 'hwp-viewer', defaultWidth: 880, defaultHeight: 800 });
+
+  // 상/하단 마우스 휠 페이지 이동 (상단에서 휠 올리면 이전 페이지, 하단에서 휠 내리면 다음 페이지)
+  const { pendingScrollRef, pageToast } = useWheelPageNavigation({
+    containerRef,
+    currentPage,
+    totalPages,
+    onPageChange: setCurrentPage,
+    enabled: isOpen && !isLoading,
+  });
+
+  // 페이지 전환 시 스크롤 위치 보정 (이전 페이지 이동 시 맨 아래로, 다음 페이지 이동 시 맨 위로)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !pendingScrollRef.current) return;
+    if (pendingScrollRef.current === 'bottom') {
+      container.scrollTop = container.scrollHeight - container.clientHeight;
+    } else if (pendingScrollRef.current === 'top') {
+      container.scrollTop = 0;
+    }
+    pendingScrollRef.current = null;
+  }, [svgHtml]);
 
   // HWP 문서 로드
   useEffect(() => {
@@ -468,6 +490,13 @@ export const HwpViewerModal: React.FC<HwpViewerModalProps> = ({
             />
           )}
         </div>
+
+        {/* 마우스 휠 페이지 이동 안내 토스트 */}
+        {pageToast && (
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 text-indigo-300 border border-indigo-500/40 px-3.5 py-1.5 rounded-full text-xs font-mono font-semibold shadow-2xl backdrop-blur-sm pointer-events-none transition-all animate-in fade-in duration-150">
+            {pageToast}
+          </div>
+        )}
       </div>
 
       {floating.resizeHandle}
