@@ -27,7 +27,12 @@ const excelCache = new Map<string, ParsedWorkbook>();
 
 export function invalidateExcelCache(attId?: string) {
   if (attId) {
-    excelCache.delete(attId);
+    // attId로 시작하는 모든 동적 시그니처 캐시 엔트리 삭제
+    for (const key of Array.from(excelCache.keys())) {
+      if (key === attId || key.startsWith(`${attId}_`)) {
+        excelCache.delete(key);
+      }
+    }
   } else {
     excelCache.clear();
   }
@@ -37,8 +42,12 @@ export function invalidateExcelCache(attId?: string) {
  * XLSX, XLS, CSV Data URL 또는 Base64 문자열을 워크북 객체로 파싱합니다.
  */
 export function parseExcelWorkbook(dataOrUrl: string, cacheKey?: string): ParsedWorkbook {
-  if (cacheKey && excelCache.has(cacheKey)) {
-    return excelCache.get(cacheKey)!;
+  const dataSignature = cacheKey
+    ? `${cacheKey}_${(dataOrUrl || '').slice(0, 100)}_${(dataOrUrl || '').length}_${(dataOrUrl || '').slice(-100)}`
+    : undefined;
+
+  if (dataSignature && excelCache.has(dataSignature)) {
+    return excelCache.get(dataSignature)!;
   }
 
   try {
@@ -68,8 +77,8 @@ export function parseExcelWorkbook(dataOrUrl: string, cacheKey?: string): Parsed
       sheets: Object.keys(sheets).length > 0 ? sheets : { Sheet1: [] },
     };
 
-    if (cacheKey) {
-      excelCache.set(cacheKey, result);
+    if (dataSignature) {
+      excelCache.set(dataSignature, result);
     }
 
     return result;

@@ -304,22 +304,22 @@ export function createAttachmentCardHtml(
       : '';
 
     const tableHeaderHtml = `
-      <thead class="bg-slate-900 sticky top-0 z-10 border-b border-slate-800">
+      <thead class="bg-[#f3f4f6] sticky top-0 z-10 border-b border-[#cbd5e1]">
         <tr>
-          <th class="w-10 px-2 py-1.5 text-center text-[10px] font-bold text-slate-500 bg-slate-950 border-r border-slate-800 sticky left-0 z-20">#</th>
+          <th class="w-10 px-2 py-1.5 text-center text-[10px] font-bold text-[#64748b] bg-[#e2e8f0] border-r border-[#cbd5e1] sticky left-0 z-20 select-none">#</th>
           ${Array.from({ length: colCount }).map((_, cIdx) => `
-            <th class="px-2.5 py-1.5 text-[11px] font-mono font-semibold text-slate-400 border-r border-slate-800/80 min-w-[75px]">${getColumnLabel(cIdx)}</th>
+            <th class="px-3 py-1.5 text-[11px] font-mono font-semibold text-[#334155] border-r border-[#cbd5e1] min-w-[85px] bg-[#f1f5f9] text-center select-none">${getColumnLabel(cIdx)}</th>
           `).join('')}
         </tr>
       </thead>
     `;
 
     const tableBodyHtml = previewRows.map((row, rIdx) => `
-      <tr class="hover:bg-indigo-950/20 transition-colors">
-        <td class="px-2 py-1 text-center text-[10px] font-mono font-bold text-slate-500 bg-slate-950/90 border-r border-slate-800 sticky left-0 z-10">${rIdx + 1}</td>
+      <tr class="hover:bg-[#ecfdf5] transition-colors border-b border-[#e2e8f0]">
+        <td class="px-2 py-1.5 text-center text-[10px] font-mono font-semibold text-[#64748b] bg-[#f8fafc] border-r border-[#cbd5e1] sticky left-0 z-10 select-none">${rIdx + 1}</td>
         ${Array.from({ length: colCount }).map((_, cIdx) => {
           const val = row[cIdx] !== undefined && row[cIdx] !== null ? String(row[cIdx]) : '';
-          return `<td class="px-2.5 py-1 text-xs text-slate-200 border-r border-slate-800/50 break-words whitespace-pre-wrap max-w-xs">${val}</td>`;
+          return `<td class="px-3 py-1.5 text-xs text-[#0f172a] border-r border-[#e2e8f0] break-words whitespace-pre-wrap max-w-xs font-sans leading-relaxed">${val}</td>`;
         }).join('')}
       </tr>
     `).join('');
@@ -362,12 +362,12 @@ export function createAttachmentCardHtml(
     </div>
   </div>
 
-  <!-- 인라인 표 그리드 뷰어 -->
-  <div class="w-full bg-slate-950 p-2 md:p-3 overflow-x-auto max-h-[420px]">
-    <div class="inline-block min-w-full align-middle border border-slate-800 rounded-xl overflow-hidden bg-slate-900/60 shadow-inner">
-      <table class="min-w-full border-collapse text-left" id="excel-table-${att.id}">
+  <!-- 인라인 표 그리드 뷰어 (편집기와 일치하는 진짜 엑셀 시트 룩앤필) -->
+  <div class="w-full bg-[#f8fafc] p-2 md:p-3 overflow-x-auto max-h-[460px]">
+    <div class="inline-block min-w-full align-middle border border-[#cbd5e1] rounded-lg overflow-hidden bg-white shadow-sm">
+      <table class="min-w-full border-collapse text-left font-sans bg-white" id="excel-table-${att.id}">
         ${tableHeaderHtml}
-        <tbody class="divide-y divide-slate-800/60 font-sans">
+        <tbody class="divide-y divide-[#e2e8f0]">
           ${tableBodyHtml}
         </tbody>
       </table>

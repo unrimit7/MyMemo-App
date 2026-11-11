@@ -283,32 +283,32 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
           </div>
         </div>
 
-        {/* 메인 스프레드시트 표 영역 */}
+        {/* 메인 스프레드시트 표 영역 (편집기와 일치하는 엑셀 화이트 테마) */}
         <div
           ref={containerRef}
-          className="flex-1 overflow-auto bg-slate-950 p-3 select-text"
+          className="flex-1 overflow-auto bg-[#f8fafc] p-3 select-text"
           style={{ fontSize: `${Math.round(13 * zoom)}px` }}
         >
           {filteredRows.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-2">
-              <FileSpreadsheet size={36} className="text-slate-600" />
+            <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-2">
+              <FileSpreadsheet size={36} className="text-slate-400" />
               <p className="text-sm">
                 {searchQuery ? '검색된 셀 데이터가 없습니다.' : '시트에 데이터가 없습니다.'}
               </p>
             </div>
           ) : (
-            <div className="inline-block min-w-full align-middle border border-slate-800 rounded-xl overflow-hidden bg-slate-900/60 shadow-inner">
-              <table className="min-w-full border-collapse text-left">
+            <div className="inline-block min-w-full align-middle border border-[#cbd5e1] rounded-lg overflow-hidden bg-white shadow-sm">
+              <table className="min-w-full border-collapse text-left font-sans bg-white">
                 {/* 상단 열 헤더 (A, B, C...) */}
-                <thead className="bg-slate-900 sticky top-0 z-20 border-b border-slate-800 shadow-xs">
+                <thead className="bg-[#f1f5f9] sticky top-0 z-20 border-b border-[#cbd5e1] shadow-xs">
                   <tr>
-                    <th className="w-12 min-w-[48px] px-2 py-2 text-center text-[11px] font-bold text-slate-500 bg-slate-950/80 border-r border-slate-800 sticky left-0 z-30">
+                    <th className="w-12 min-w-[48px] px-2 py-2 text-center text-[11px] font-bold text-[#64748b] bg-[#e2e8f0] border-r border-[#cbd5e1] sticky left-0 z-30 select-none">
                       #
                     </th>
                     {Array.from({ length: colCount }).map((_, cIdx) => (
                       <th
                         key={cIdx}
-                        className="px-3 py-2 text-[11px] font-semibold text-slate-400 border-r border-slate-800/80 bg-slate-900 min-w-[90px]"
+                        className="px-3 py-2 text-[11px] font-mono font-semibold text-[#334155] border-r border-[#cbd5e1] bg-[#f1f5f9] min-w-[90px] text-center select-none"
                       >
                         {getColumnLabel(cIdx)}
                       </th>
@@ -317,14 +317,14 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
                 </thead>
 
                 {/* 행 및 셀 데이터 */}
-                <tbody className="divide-y divide-slate-800/60 font-sans">
+                <tbody className="divide-y divide-[#e2e8f0] font-sans">
                   {filteredRows.map(({ row, originalIndex }) => (
                     <tr
                       key={originalIndex}
-                      className="hover:bg-indigo-950/20 transition-colors group"
+                      className="hover:bg-[#ecfdf5] transition-colors group border-b border-[#e2e8f0]"
                     >
                       {/* 행 번호 (1, 2, 3...) */}
-                      <td className="px-2 py-1.5 text-center text-[11px] font-mono font-bold text-slate-500 bg-slate-950/90 border-r border-slate-800 sticky left-0 z-10 group-hover:text-indigo-400 group-hover:bg-slate-950">
+                      <td className="px-2 py-1.5 text-center text-[11px] font-mono font-semibold text-[#64748b] bg-[#f8fafc] border-r border-[#cbd5e1] sticky left-0 z-10 select-none group-hover:text-emerald-700">
                         {originalIndex + 1}
                       </td>
 
@@ -339,8 +339,8 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
                         return (
                           <td
                             key={cIdx}
-                            className={`px-3 py-1.5 text-xs text-slate-200 border-r border-slate-800/50 break-words whitespace-pre-wrap max-w-sm ${
-                              isMatch ? 'bg-amber-500/25 text-amber-200 font-semibold' : ''
+                            className={`px-3 py-1.5 text-xs text-[#0f172a] border-r border-[#e2e8f0] break-words whitespace-pre-wrap max-w-sm leading-relaxed ${
+                              isMatch ? 'bg-amber-200/70 text-amber-950 font-bold' : ''
                             }`}
                           >
                             {cellStr}

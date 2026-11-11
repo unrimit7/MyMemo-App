@@ -4539,10 +4539,22 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           title={activeExcelEditorModal.title}
           attId={activeExcelEditorModal.attId}
           onSave={async (updatedDataUrl) => {
-            const attId = activeExcelEditorModal.attId;
+            let attId = activeExcelEditorModal.attId;
+            if (!attId || !localAttachmentsRef.current[attId]) {
+              attId = Object.keys(localAttachmentsRef.current).find(
+                (id) => localAttachmentsRef.current[id].name === activeExcelEditorModal.title
+              ) || Object.keys(localAttachmentsRef.current).find(
+                (id) => {
+                  const name = (localAttachmentsRef.current[id].name || '').toLowerCase();
+                  return name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv');
+                }
+              ) || '';
+            }
+
             if (attId) {
-              // 1. 엑셀 캐시 및 Blob URL 캐시 무효화
+              // 1. 엑셀 캐시(전체 및 ID별) 및 Blob URL 캐시 즉시 무효화 (새 파일 재로드 100% 보장)
               invalidateExcelCache(attId);
+              invalidateExcelCache();
               invalidateAttachmentBlobUrl(attId);
 
               // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장
@@ -4553,12 +4565,15 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                   data: updatedDataUrl,
                 },
               };
-              setLocalAttachments(updatedAtts);
+              setLocalAttachments({ ...updatedAtts });
               localAttachmentsRef.current = updatedAtts;
               onUpdateNote({ attachments: updatedAtts });
 
               // 3. 편집 모달 내부 데이터 동기화
               setActiveExcelEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
+
+              // 4. 전면 뷰어 모달(activeExcelModal)이 열려있다면 최신 데이터 동기화
+              setActiveExcelModal((prev) => prev && (prev.attId === attId || prev.title === activeExcelEditorModal.title) ? { ...prev, data: updatedDataUrl } : prev);
             }
           }}
         />
