@@ -15,7 +15,7 @@ import { HwpEditorModal } from './HwpEditorModal';
 import { loadHwpDocument, renderHwpPageToSvg, extractHwpText, invalidateHwpCache } from '../utils/hwpViewer';
 import { ExcelViewerModal } from './ExcelViewerModal';
 import { ExcelEditorModal } from './ExcelEditorModal';
-import { parseExcelWorkbook, sheetRowsToMarkdownTable, invalidateExcelCache, generateExcelDataUrl } from '../utils/excelViewer';
+import { parseExcelWorkbook, sheetRowsToMarkdownTable, invalidateExcelCache, generateExcelDataUrl, buildMergeMap, getColumnLabel } from '../utils/excelViewer';
 import { DocxViewerModal } from './DocxViewerModal';
 import { DocxEditorModal } from './DocxEditorModal';
 import { renderDocxToContainer, extractDocxTextAndHtml, invalidateDocxCache } from '../utils/docxViewer';
@@ -2890,35 +2890,50 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         if (viewer) {
           const parsed = parseExcelWorkbook(localAttachments[attId].data, attId);
           const rows = parsed.sheets[sheetName] || [];
+          const sheetMerges = parsed.merges?.[sheetName] || [];
           const tableEl = viewer.querySelector<HTMLTableElement>(`#excel-table-${attId}`);
           if (tableEl) {
             let maxCols = 0;
             rows.forEach((r) => { maxCols = Math.max(maxCols, r.length); });
+            sheetMerges.forEach((m) => { maxCols = Math.max(maxCols, m.e.c + 1); });
             const colCount = Math.max(maxCols, 1);
             const previewRows = rows.slice(0, 12);
+            const mergeMap = buildMergeMap(sheetMerges);
 
             const thead = tableEl.querySelector('thead');
             if (thead) {
               const colHeaders = Array.from({ length: colCount }).map((_, cIdx) => {
-                let lbl = '';
-                let num = cIdx;
-                while (num >= 0) {
-                  lbl = String.fromCharCode((num % 26) + 65) + lbl;
-                  num = Math.floor(num / 26) - 1;
-                }
-                return `<th class="px-2.5 py-1.5 text-[11px] font-mono font-semibold text-slate-400 border-r border-slate-800/80 min-w-[75px]">${lbl}</th>`;
+                return `<th class="px-3 py-1.5 text-[11px] font-mono font-semibold text-[#334155] border-r border-[#cbd5e1] min-w-[85px] bg-[#f1f5f9] text-center select-none">${getColumnLabel(cIdx)}</th>`;
               }).join('');
-              thead.innerHTML = `<tr><th class="w-10 px-2 py-1.5 text-center text-[10px] font-bold text-slate-500 bg-slate-950 border-r border-slate-800 sticky left-0 z-20">#</th>${colHeaders}</tr>`;
+              thead.innerHTML = `<tr><th class="w-10 px-2 py-1.5 text-center text-[10px] font-bold text-[#64748b] bg-[#e2e8f0] border-r border-[#cbd5e1] sticky left-0 z-20 select-none">#</th>${colHeaders}</tr>`;
             }
 
             const tbody = tableEl.querySelector('tbody');
             if (tbody) {
-              tbody.innerHTML = previewRows.map((row, rIdx) => `
-                <tr class="hover:bg-indigo-950/20 transition-colors">
-                  <td class="px-2 py-1 text-center text-[10px] font-mono font-bold text-slate-500 bg-slate-950/90 border-r border-slate-800 sticky left-0 z-10">${rIdx + 1}</td>
-                  ${Array.from({ length: colCount }).map((_, cIdx) => `<td class="px-2.5 py-1 text-xs text-slate-200 border-r border-slate-800/50 break-words whitespace-pre-wrap max-w-xs">${row[cIdx] !== undefined && row[cIdx] !== null ? String(row[cIdx]) : ''}</td>`).join('')}
-                </tr>
-              `).join('');
+              tbody.innerHTML = previewRows.map((row, rIdx) => {
+                const cellsHtml: string[] = [];
+                for (let cIdx = 0; cIdx < colCount; cIdx++) {
+                  const mergeInfo = mergeMap.get(`${rIdx},${cIdx}`);
+                  if (mergeInfo?.isCovered) {
+                    continue;
+                  }
+                  const val = row[cIdx] !== undefined && row[cIdx] !== null ? String(row[cIdx]) : '';
+                  const colSpanAttr = mergeInfo && mergeInfo.colSpan > 1 ? ` colspan="${mergeInfo.colSpan}"` : '';
+                  const rowSpanAttr = mergeInfo && mergeInfo.rowSpan > 1 ? ` rowspan="${mergeInfo.rowSpan}"` : '';
+                  const isMerged = mergeInfo && (mergeInfo.colSpan > 1 || mergeInfo.rowSpan > 1);
+
+                  cellsHtml.push(
+                    `<td${colSpanAttr}${rowSpanAttr} class="px-3 py-1.5 text-xs text-[#0f172a] border-r border-[#e2e8f0] break-words whitespace-pre-wrap max-w-xs font-sans leading-relaxed ${isMerged ? 'bg-slate-50/70 font-semibold' : ''}">${val}</td>`
+                  );
+                }
+
+                return `
+                  <tr class="hover:bg-[#ecfdf5] transition-colors border-b border-[#e2e8f0]">
+                    <td class="px-2 py-1.5 text-center text-[10px] font-mono font-semibold text-[#64748b] bg-[#f8fafc] border-r border-[#cbd5e1] sticky left-0 z-10 select-none">${rIdx + 1}</td>
+                    ${cellsHtml.join('')}
+                  </tr>
+                `;
+              }).join('');
             }
 
             viewer.querySelectorAll('.excel-sheet-pill').forEach((pill) => {

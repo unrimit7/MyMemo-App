@@ -5,9 +5,58 @@ export interface ParsedSheetData {
   rows: (string | number)[][];
 }
 
+export interface CellMergeRange {
+  s: { r: number; c: number };
+  e: { r: number; c: number };
+}
+
+export interface CellMergeInfo {
+  isOrigin: boolean;
+  isCovered: boolean;
+  rowSpan: number;
+  colSpan: number;
+}
+
 export interface ParsedWorkbook {
   sheetNames: string[];
   sheets: Record<string, (string | number)[][]>;
+  merges?: Record<string, CellMergeRange[]>;
+}
+
+/**
+ * 특정 시트의 셀 병합(merges) 목록을 빠른 O(1) 좌표 조회가 가능한 맵으로 변환합니다.
+ * key: `${r},${c}`
+ */
+export function buildMergeMap(merges: CellMergeRange[] = []): Map<string, CellMergeInfo> {
+  const map = new Map<string, CellMergeInfo>();
+  if (!merges || !Array.isArray(merges)) return map;
+
+  for (const m of merges) {
+    if (!m || !m.s || !m.e) continue;
+    const minR = Math.min(m.s.r, m.e.r);
+    const maxR = Math.max(m.s.r, m.e.r);
+    const minC = Math.min(m.s.c, m.e.c);
+    const maxC = Math.max(m.s.c, m.e.c);
+
+    const rowSpan = maxR - minR + 1;
+    const colSpan = maxC - minC + 1;
+
+    // 단일 셀 병합(1x1)인 경우는 스킵
+    if (rowSpan <= 1 && colSpan <= 1) continue;
+
+    for (let r = minR; r <= maxR; r++) {
+      for (let c = minC; c <= maxC; c++) {
+        const key = `${r},${c}`;
+        if (r === minR && c === minC) {
+          map.set(key, { isOrigin: true, isCovered: false, rowSpan, colSpan });
+        } else {
+          map.set(key, { isOrigin: false, isCovered: true, rowSpan: 1, colSpan: 1 });
+        }
+      }
+    }
+  }
+
+  return map;
 }
 
 // Data URL 또는 Base64 문자열을 안전하게 Uint8Array로 변환
@@ -55,6 +104,7 @@ export function parseExcelWorkbook(dataOrUrl: string, cacheKey?: string): Parsed
     const workbook = XLSX.read(bytes, { type: 'array', cellDates: true });
 
     const sheets: Record<string, (string | number)[][]> = {};
+    const merges: Record<string, CellMergeRange[]> = {};
     const sheetNames = workbook.SheetNames || [];
 
     sheetNames.forEach((name) => {
@@ -67,14 +117,29 @@ export function parseExcelWorkbook(dataOrUrl: string, cacheKey?: string): Parsed
           blankrows: false,
         });
         sheets[name] = rows;
+
+        // 셀 병합(!merges) 정보 안전하게 추출
+        const rawMerges = sheet['!merges'];
+        if (Array.isArray(rawMerges) && rawMerges.length > 0) {
+          merges[name] = rawMerges
+            .filter((m) => m && m.s && m.e)
+            .map((m) => ({
+              s: { r: m.s.r, c: m.s.c },
+              e: { r: m.e.r, c: m.e.c },
+            }));
+        } else {
+          merges[name] = [];
+        }
       } else {
         sheets[name] = [];
+        merges[name] = [];
       }
     });
 
     const result: ParsedWorkbook = {
       sheetNames: sheetNames.length > 0 ? sheetNames : ['Sheet1'],
       sheets: Object.keys(sheets).length > 0 ? sheets : { Sheet1: [] },
+      merges,
     };
 
     if (dataSignature) {
@@ -162,4 +227,17 @@ export function sheetRowsToMarkdownTable(rows: (string | number)[][]): string {
   }
 
   return lines.join('\n');
+}
+
+/**
+ * 열 인덱스(0, 1, 2...)를 엑셀 열 문자('A', 'B', 'Z', 'AA'...)로 변환합니다.
+ */
+export function getColumnLabel(index: number): string {
+  let label = '';
+  let num = index;
+  while (num >= 0) {
+    label = String.fromCharCode((num % 26) + 65) + label;
+    num = Math.floor(num / 26) - 1;
+  }
+  return label;
 }

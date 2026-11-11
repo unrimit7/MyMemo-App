@@ -10,7 +10,7 @@ import {
   ZoomIn, 
   ZoomOut 
 } from 'lucide-react';
-import { parseExcelWorkbook, sheetRowsToMarkdownTable, type ParsedWorkbook } from '../utils/excelViewer';
+import { parseExcelWorkbook, sheetRowsToMarkdownTable, buildMergeMap, getColumnLabel, type ParsedWorkbook } from '../utils/excelViewer';
 import { useFloatingWindow } from './useFloatingWindow';
 
 interface ExcelViewerModalProps {
@@ -21,17 +21,6 @@ interface ExcelViewerModalProps {
   attId?: string;
   onOpenEditor?: () => void;
   onImportTable?: (markdownTable: string) => void;
-}
-
-// 열 인덱스(0, 1, 2...)를 엑셀 열 문자('A', 'B', 'Z', 'AA'...)로 변환
-function getColumnLabel(index: number): string {
-  let label = '';
-  let num = index;
-  while (num >= 0) {
-    label = String.fromCharCode((num % 26) + 65) + label;
-    num = Math.floor(num / 26) - 1;
-  }
-  return label;
 }
 
 export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
@@ -72,14 +61,28 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
     return workbook.sheets[activeSheetName] || [];
   }, [workbook, activeSheetName]);
 
+  // 현재 활성화된 시트의 병합 목록
+  const activeMerges = useMemo(() => {
+    if (!workbook || !activeSheetName || !workbook.merges) return [];
+    return workbook.merges[activeSheetName] || [];
+  }, [workbook, activeSheetName]);
+
+  // 병합 셀 맵
+  const mergeMap = useMemo(() => {
+    return buildMergeMap(activeMerges);
+  }, [activeMerges]);
+
   // 최대 열 수 계산
   const colCount = useMemo(() => {
     let max = 0;
     activeRows.forEach((r) => {
       max = Math.max(max, r.length);
     });
+    activeMerges.forEach((m) => {
+      max = Math.max(max, m.e.c + 1);
+    });
     return Math.max(max, 1);
-  }, [activeRows]);
+  }, [activeRows, activeMerges]);
 
   // 검색 필터링된 행 목록 및 매칭 셀 좌표 계산
   const { filteredRows, matchCount } = useMemo(() => {
@@ -330,17 +333,33 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
 
                       {/* 열 셀들 */}
                       {Array.from({ length: colCount }).map((_, cIdx) => {
+                        const isSearching = searchQuery.trim() !== '';
+                        const mergeInfo = !isSearching ? mergeMap.get(`${originalIndex},${cIdx}`) : undefined;
+
+                        // 병합으로 가려진 셀은 렌더링 생략
+                        if (mergeInfo?.isCovered) {
+                          return null;
+                        }
+
                         const cellVal = row[cIdx];
                         const cellStr = cellVal !== undefined && cellVal !== null ? String(cellVal) : '';
                         const isMatch =
-                          searchQuery.trim() !== '' &&
+                          isSearching &&
                           cellStr.toLowerCase().includes(searchQuery.trim().toLowerCase());
+
+                        const isMerged = mergeInfo && (mergeInfo.colSpan > 1 || mergeInfo.rowSpan > 1);
 
                         return (
                           <td
                             key={cIdx}
+                            colSpan={mergeInfo && mergeInfo.colSpan > 1 ? mergeInfo.colSpan : undefined}
+                            rowSpan={mergeInfo && mergeInfo.rowSpan > 1 ? mergeInfo.rowSpan : undefined}
                             className={`px-3 py-1.5 text-xs text-[#0f172a] border-r border-[#e2e8f0] break-words whitespace-pre-wrap max-w-sm leading-relaxed ${
-                              isMatch ? 'bg-amber-200/70 text-amber-950 font-bold' : ''
+                              isMatch
+                                ? 'bg-amber-200/70 text-amber-950 font-bold'
+                                : isMerged
+                                ? 'bg-slate-50/70 font-semibold'
+                                : ''
                             }`}
                           >
                             {cellStr}

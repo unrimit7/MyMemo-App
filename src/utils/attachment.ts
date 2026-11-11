@@ -1,5 +1,5 @@
 import type { AttachmentItem } from '../types';
-import { parseExcelWorkbook } from './excelViewer';
+import { parseExcelWorkbook, buildMergeMap } from './excelViewer';
 import { dataUrlToUint8Array, formatHexOffset, formatByteToHex, byteToAsciiChar } from './hexViewer';
 
 function getColumnLabel(index: number): string {
@@ -287,10 +287,14 @@ export function createAttachmentCardHtml(
     const sheetNames = parsed.sheetNames || ['Sheet1'];
     const firstSheet = sheetNames[0] || 'Sheet1';
     const rows = parsed.sheets[firstSheet] || [];
+    const sheetMerges = parsed.merges?.[firstSheet] || [];
     const totalRows = rows.length;
     let maxCols = 0;
     rows.forEach((r) => {
       maxCols = Math.max(maxCols, r.length);
+    });
+    sheetMerges.forEach((m) => {
+      maxCols = Math.max(maxCols, m.e.c + 1);
     });
     const colCount = Math.max(maxCols, 1);
     const previewRows = rows.slice(0, 12);
@@ -314,15 +318,34 @@ export function createAttachmentCardHtml(
       </thead>
     `;
 
-    const tableBodyHtml = previewRows.map((row, rIdx) => `
-      <tr class="hover:bg-[#ecfdf5] transition-colors border-b border-[#e2e8f0]">
-        <td class="px-2 py-1.5 text-center text-[10px] font-mono font-semibold text-[#64748b] bg-[#f8fafc] border-r border-[#cbd5e1] sticky left-0 z-10 select-none">${rIdx + 1}</td>
-        ${Array.from({ length: colCount }).map((_, cIdx) => {
-          const val = row[cIdx] !== undefined && row[cIdx] !== null ? String(row[cIdx]) : '';
-          return `<td class="px-3 py-1.5 text-xs text-[#0f172a] border-r border-[#e2e8f0] break-words whitespace-pre-wrap max-w-xs font-sans leading-relaxed">${val}</td>`;
-        }).join('')}
-      </tr>
-    `).join('');
+    const mergeMap = buildMergeMap(sheetMerges);
+
+    const tableBodyHtml = previewRows.map((row, rIdx) => {
+      const cellsHtml: string[] = [];
+      for (let cIdx = 0; cIdx < colCount; cIdx++) {
+        const mergeInfo = mergeMap.get(`${rIdx},${cIdx}`);
+        if (mergeInfo?.isCovered) {
+          // 병합으로 가려진 셀은 렌더링 건너뜀
+          continue;
+        }
+
+        const val = row[cIdx] !== undefined && row[cIdx] !== null ? String(row[cIdx]) : '';
+        const colSpanAttr = mergeInfo && mergeInfo.colSpan > 1 ? ` colspan="${mergeInfo.colSpan}"` : '';
+        const rowSpanAttr = mergeInfo && mergeInfo.rowSpan > 1 ? ` rowspan="${mergeInfo.rowSpan}"` : '';
+        const isMerged = mergeInfo && (mergeInfo.colSpan > 1 || mergeInfo.rowSpan > 1);
+
+        cellsHtml.push(
+          `<td${colSpanAttr}${rowSpanAttr} class="px-3 py-1.5 text-xs text-[#0f172a] border-r border-[#e2e8f0] break-words whitespace-pre-wrap max-w-xs font-sans leading-relaxed ${isMerged ? 'bg-slate-50/70 font-semibold' : ''}">${val}</td>`
+        );
+      }
+
+      return `
+        <tr class="hover:bg-[#ecfdf5] transition-colors border-b border-[#e2e8f0]">
+          <td class="px-2 py-1.5 text-center text-[10px] font-mono font-semibold text-[#64748b] bg-[#f8fafc] border-r border-[#cbd5e1] sticky left-0 z-10 select-none">${rIdx + 1}</td>
+          ${cellsHtml.join('')}
+        </tr>
+      `;
+    }).join('');
 
     return `
 <div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl excel-inline-viewer" data-att-id="${att.id}" data-file-name="${displayName}">
