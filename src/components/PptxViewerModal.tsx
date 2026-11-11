@@ -231,6 +231,11 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
               el.verticalAlign === 'middle' ? 'center' : el.verticalAlign === 'bottom' ? 'flex-end' : 'flex-start',
             padding: hasBg ? '8px 12px' : '2px 4px',
             boxSizing: 'border-box',
+            transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
+            transformOrigin: 'center center',
+            writingMode: el.isVerticalText ? 'vertical-rl' : undefined,
+            columnCount: el.columnCount && el.columnCount > 1 ? el.columnCount : undefined,
+            columnGap: el.columnCount && el.columnCount > 1 ? '16px' : undefined,
           }}
           className="pointer-events-auto leading-normal select-text shadow-xs"
         >
@@ -266,6 +271,9 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                 }}
                 className={`leading-snug ${el.isTitle ? 'font-extrabold' : ''}`}
               >
+                {p.bulletChar && (
+                  <span className="mr-1 text-slate-500 font-sans select-none">{p.bulletChar}</span>
+                )}
                 {p.runs.map((r, rIdx) => {
                   const textColor =
                     r.color ||
@@ -281,11 +289,24 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                       key={rIdx}
                       style={{
                         color: textColor,
+                        backgroundColor: r.highlightColor || undefined,
                         fontSize,
                         fontWeight: r.isBold || el.isTitle ? 'bold' : 'normal',
                         fontStyle: r.isItalic ? 'italic' : 'normal',
-                        textDecoration: r.isUnderline ? 'underline' : 'none',
+                        textDecoration: r.isStrike
+                          ? 'line-through'
+                          : r.isUnderline
+                          ? 'underline'
+                          : 'none',
+                        verticalAlign:
+                          r.baseline && r.baseline > 0
+                            ? 'super'
+                            : r.baseline && r.baseline < 0
+                            ? 'sub'
+                            : undefined,
                       }}
+                      className={r.hyperlink ? 'underline text-blue-600 hover:text-blue-800 cursor-pointer' : undefined}
+                      title={r.hyperlink ? `링크: ${r.hyperlink}` : undefined}
                     >
                       {r.text}
                     </span>
@@ -437,6 +458,196 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
             className={isFullBackground ? '' : 'cursor-zoom-in hover:opacity-95 transition-opacity'}
             title={isFullBackground ? undefined : '클릭하여 원본 고해상도로 확대 보기'}
           />
+        </div>
+      );
+    }
+
+    if (el.type === 'chart') {
+      const palette = ['#3B82F6', '#F59E0B', '#10B981', '#EC4899', '#8B5CF6', '#06B6D4'];
+      const { chartType, title: chartTitle, categories, series } = el;
+
+      let maxVal = 1;
+      for (const s of series) {
+        for (const v of s.values) {
+          if (v > maxVal) maxVal = v;
+        }
+      }
+
+      return (
+        <div
+          key={el.id}
+          style={{
+            position: 'absolute',
+            left: `${el.left}%`,
+            top: `${el.top}%`,
+            width: `${el.width}%`,
+            height: `${el.height}%`,
+            zIndex: el.zIndex,
+            overflow: 'hidden',
+          }}
+          className="bg-white/95 dark:bg-slate-800/95 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-2 flex flex-col pointer-events-auto"
+        >
+          {chartTitle && (
+            <div className="text-xs font-bold text-slate-800 dark:text-slate-100 text-center mb-1 truncate">
+              {chartTitle}
+            </div>
+          )}
+
+          <div className="flex-1 w-full h-full min-h-0 relative">
+            {chartType === 'bar' && (
+              <svg viewBox="0 0 300 180" className="w-full h-full" preserveAspectRatio="none">
+                <line x1="30" y1="20" x2="290" y2="20" stroke="#CBD5E1" strokeDasharray="2,2" strokeWidth="0.5" />
+                <line x1="30" y1="80" x2="290" y2="80" stroke="#CBD5E1" strokeDasharray="2,2" strokeWidth="0.5" />
+                <line x1="30" y1="140" x2="290" y2="140" stroke="#64748B" strokeWidth="1" />
+                {categories.map((cat, cIdx) => {
+                  const groupWidth = 260 / Math.max(1, categories.length);
+                  const groupX = 30 + cIdx * groupWidth;
+                  const barWidth = Math.max(4, (groupWidth * 0.7) / Math.max(1, series.length));
+
+                  return (
+                    <g key={cIdx}>
+                      {series.map((s, sIdx) => {
+                        const val = s.values[cIdx] || 0;
+                        const barH = maxVal > 0 ? (val / maxVal) * 115 : 0;
+                        const bx = groupX + 5 + sIdx * barWidth;
+                        const by = 140 - barH;
+                        const color = palette[sIdx % palette.length];
+
+                        return (
+                          <rect
+                            key={sIdx}
+                            x={bx}
+                            y={by}
+                            width={barWidth - 1}
+                            height={Math.max(1, barH)}
+                            fill={color}
+                            rx="1"
+                          >
+                            <title>{`${s.name || `시리즈 ${sIdx + 1}`}: ${val}`}</title>
+                          </rect>
+                        );
+                      })}
+                      <text
+                        x={groupX + groupWidth / 2}
+                        y="155"
+                        textAnchor="middle"
+                        fontSize="8"
+                        fill="#64748B"
+                      >
+                        {cat}
+                      </text>
+                    </g>
+                  );
+                })}
+              </svg>
+            )}
+
+            {chartType === 'line' && (
+              <svg viewBox="0 0 300 180" className="w-full h-full" preserveAspectRatio="none">
+                <line x1="30" y1="20" x2="290" y2="20" stroke="#CBD5E1" strokeDasharray="2,2" strokeWidth="0.5" />
+                <line x1="30" y1="80" x2="290" y2="80" stroke="#CBD5E1" strokeDasharray="2,2" strokeWidth="0.5" />
+                <line x1="30" y1="140" x2="290" y2="140" stroke="#64748B" strokeWidth="1" />
+                {series.map((s, sIdx) => {
+                  const color = palette[sIdx % palette.length];
+                  const points = s.values
+                    .map((v, vIdx) => {
+                      const step = categories.length > 1 ? 260 / (categories.length - 1) : 130;
+                      const x = 30 + vIdx * step;
+                      const y = 140 - (maxVal > 0 ? (v / maxVal) * 115 : 0);
+                      return `${x},${y}`;
+                    })
+                    .join(' ');
+
+                  return (
+                    <g key={sIdx}>
+                      <polyline
+                        fill="none"
+                        stroke={color}
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        points={points}
+                      />
+                      {s.values.map((v, vIdx) => {
+                        const step = categories.length > 1 ? 260 / (categories.length - 1) : 130;
+                        const x = 30 + vIdx * step;
+                        const y = 140 - (maxVal > 0 ? (v / maxVal) * 115 : 0);
+                        return (
+                          <circle key={vIdx} cx={x} cy={y} r="3" fill={color}>
+                            <title>{`${categories[vIdx] || ''}: ${v}`}</title>
+                          </circle>
+                        );
+                      })}
+                    </g>
+                  );
+                })}
+                {categories.map((cat, cIdx) => {
+                  const step = categories.length > 1 ? 260 / (categories.length - 1) : 130;
+                  const x = 30 + cIdx * step;
+                  return (
+                    <text key={cIdx} x={x} y="155" textAnchor="middle" fontSize="8" fill="#64748B">
+                      {cat}
+                    </text>
+                  );
+                })}
+              </svg>
+            )}
+
+            {chartType === 'pie' && (
+              <svg viewBox="0 0 200 180" className="w-full h-full">
+                {(() => {
+                  const s = series[0];
+                  if (!s || s.values.length === 0) return null;
+                  const total = s.values.reduce((a, b) => a + b, 0) || 1;
+                  let cumulativeAngle = 0;
+                  const cx = 100;
+                  const cy = 90;
+                  const r = 65;
+
+                  return s.values.map((val, idx) => {
+                    const angle = (val / total) * 360;
+                    const startAngle = cumulativeAngle;
+                    const endAngle = cumulativeAngle + angle;
+                    cumulativeAngle = endAngle;
+
+                    const startRad = (startAngle - 90) * (Math.PI / 180);
+                    const endRad = (endAngle - 90) * (Math.PI / 180);
+
+                    const x1 = cx + r * Math.cos(startRad);
+                    const y1 = cy + r * Math.sin(startRad);
+                    const x2 = cx + r * Math.cos(endRad);
+                    const y2 = cy + r * Math.sin(endRad);
+
+                    const largeArc = angle > 180 ? 1 : 0;
+                    const d = `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+                    const color = palette[idx % palette.length];
+
+                    return (
+                      <path key={idx} d={d} fill={color} stroke="#FFFFFF" strokeWidth="1">
+                        <title>{`${categories[idx] || `항목 ${idx + 1}`}: ${val} (${Math.round((val / total) * 100)}%)`}</title>
+                      </path>
+                    );
+                  });
+                })()}
+              </svg>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-2 mt-1 shrink-0 text-[9px] text-slate-600 dark:text-slate-300">
+            {chartType === 'pie'
+              ? categories.map((cat, idx) => (
+                  <div key={idx} className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-xs inline-block" style={{ backgroundColor: palette[idx % palette.length] }} />
+                    <span>{cat}</span>
+                  </div>
+                ))
+              : series.map((s, idx) => (
+                  <div key={idx} className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-xs inline-block" style={{ backgroundColor: palette[idx % palette.length] }} />
+                    <span>{s.name || `시리즈 ${idx + 1}`}</span>
+                  </div>
+                ))}
+          </div>
         </div>
       );
     }
@@ -651,9 +862,16 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                     }`}
                   >
                     <div className="flex items-center justify-between text-[11px] font-mono">
-                      <span className={`px-1.5 py-0.2 rounded font-bold ${isActive ? 'bg-orange-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
-                        #{s.slideNumber}
-                      </span>
+                      <div className="flex items-center gap-1">
+                        <span className={`px-1.5 py-0.2 rounded font-bold ${isActive ? 'bg-orange-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
+                          #{s.slideNumber}
+                        </span>
+                        {s.isHidden && (
+                          <span className="px-1 py-0.2 rounded text-[9px] bg-rose-900/60 text-rose-300 border border-rose-700/50 font-sans">
+                            숨김
+                          </span>
+                        )}
+                      </div>
                       {s.images.length > 0 && (
                         <span className="text-slate-500 flex items-center gap-0.5 text-[10px]">
                           <ImageIcon size={10} /> {s.images.length}
@@ -736,6 +954,7 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
               {currentSlide ? (
                 renderMode === 'canvas' && currentSlide.elements && currentSlide.elements.length > 0 ? (
                   /* 1. 한쇼/파워포인트 원본 2차원 절대 좌표 캔버스 렌더링 */
+                  <div className="flex flex-col items-center justify-center w-full">
                   <div
                     style={{
                       aspectRatio: `${slideAspect}`,
@@ -756,13 +975,29 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                     {/* 상단 얇은 슬라이드 액센트 바 */}
                     <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-orange-500 via-amber-500 to-indigo-600 z-30" />
 
-                    {/* 모든 2D 엘리먼트 (도형, 표, 이미지) 좌표 배치 */}
+                    {/* 숨김 슬라이드 배지 */}
+                    {currentSlide.isHidden && (
+                      <div className="absolute top-3 right-4 z-30 px-2.5 py-1 rounded-full bg-rose-600/90 text-white text-[11px] font-bold shadow-md flex items-center gap-1.5 backdrop-blur-xs">
+                        <span>숨김 슬라이드</span>
+                      </div>
+                    )}
+
+                    {/* 모든 2D 엘리먼트 (도형, 표, 이미지, 차트) 좌표 배치 */}
                     {currentSlide.elements.map((el) => renderCanvasElement(el, isDarkMode))}
 
                     {/* 하단 우측 슬라이드 번호 */}
                     <div className="absolute bottom-2 right-4 text-[10px] text-slate-400 font-mono z-20 pointer-events-none">
                       {currentSlide.slideNumber}
                     </div>
+                  </div>
+                  {currentSlide.notes && !isSlideShow && (
+                    <div className="mt-3 p-3 bg-slate-900/90 border border-slate-700/80 rounded-xl text-xs text-slate-200 max-w-2xl w-full shadow-lg">
+                      <div className="font-bold text-orange-400 mb-1 flex items-center gap-1.5">
+                        <span>📝 발표자 메모</span>
+                      </div>
+                      <div className="whitespace-pre-wrap leading-relaxed text-slate-300">{currentSlide.notes}</div>
+                    </div>
+                  )}
                   </div>
                 ) : (
                   /* 2. 텍스트 개요 뷰 (Fallback / 개요 읽기 모드) */

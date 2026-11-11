@@ -23,6 +23,10 @@ import {
   updatePptxSlideTexts,
   type PptxPresentation,
 } from '../utils/pptxViewer';
+import {
+  detectPptxUnsupportedFeatures,
+  type PptxUnsupportedFeatureReport,
+} from '../utils/pptxLossDetector';
 import { useFloatingWindow } from './useFloatingWindow';
 
 interface PptxEditorModalProps {
@@ -60,6 +64,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [hasChanges, setHasChanges] = useState<boolean>(false);
   const [showExitConfirm, setShowExitConfirm] = useState<boolean>(false);
+  const [unsupportedReport, setUnsupportedReport] = useState<PptxUnsupportedFeatureReport | null>(null);
 
   // 브라우저 탭/창 종료 시 미저장 경고
   useEffect(() => {
@@ -107,6 +112,10 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
     let isMounted = true;
     setLoading(true);
     setErrorToast(null);
+
+    detectPptxUnsupportedFeatures(data).then((rep) => {
+      if (isMounted) setUnsupportedReport(rep);
+    });
 
     parsePptxPresentation(data)
       .then((pres: PptxPresentation) => {
@@ -360,6 +369,46 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
     }
   };
 
+  // 원본으로 되돌리기
+  const handleRevertToOriginal = () => {
+    if (window.confirm('모든 수정을 취소하고 파일의 원래 상태로 되돌리시겠습니까?')) {
+      setLoading(true);
+      parsePptxPresentation(data)
+        .then((pres) => {
+          const editableList: EditableSlide[] = pres.slides.map((s) => {
+            const bodyLines = s.paragraphs
+              .filter((p) => !p.isTitle && p.text !== s.title)
+              .map((p) => {
+                const indent = '  '.repeat(Math.max(0, p.level));
+                return `${indent}• ${p.text}`;
+              });
+            const slideTables: EditableTableData[] = [];
+            for (const el of s.elements) {
+              if (el.type === 'table') {
+                const tableRows = el.rows.map((row) => row.cells.map((cell) => cell.text));
+                slideTables.push({ id: el.id, rows: tableRows });
+              }
+            }
+            return {
+              slideNumber: s.slideNumber,
+              title: s.title,
+              bodyText: bodyLines.join('\n'),
+              images: s.images.map((img) => ({ id: img.id, dataUrl: img.dataUrl })),
+              tables: slideTables,
+            };
+          });
+          setSlides(editableList);
+          setHasChanges(false);
+          setLoading(false);
+          setSaveToast('원본 상태로 되돌렸습니다.');
+          setTimeout(() => setSaveToast(null), 3000);
+        })
+        .catch(() => {
+          setLoading(false);
+        });
+    }
+  };
+
   // 닫기
   const handleClose = () => {
     if (hasChanges) {
@@ -478,6 +527,18 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
               <span className="sm:hidden">저장</span>
             </button>
 
+            {/* 원본으로 되돌리기 */}
+            {hasChanges && (
+              <button
+                type="button"
+                onClick={handleRevertToOriginal}
+                className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-medium border border-slate-700 flex items-center gap-1 transition-colors cursor-pointer"
+                title="모든 수정을 취소하고 원본 상태로 되돌리기"
+              >
+                <span>되돌리기</span>
+              </button>
+            )}
+
             {/* 다운로드 */}
             <button
               type="button"
@@ -501,6 +562,18 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* 미지원/고급 요소 감지 경고 배너 */}
+        {unsupportedReport && unsupportedReport.unsupportedList.length > 0 && (
+          <div className="px-4 py-2 bg-amber-950/60 border-b border-amber-800/80 text-amber-200 text-xs flex items-center justify-between gap-2 shrink-0">
+            <div className="flex items-center gap-2">
+              <AlertCircle size={15} className="text-amber-400 shrink-0" />
+              <span>
+                <strong>고급 개체 감지:</strong> 이 프레젠테이션에는 {unsupportedReport.unsupportedList.join(', ')}가 포함되어 있습니다. 본문 텍스트나 표 수정 후 저장 시 해당 고급 개체는 100% 무손실 보존됩니다.
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* 메인 뷰: 좌측 슬라이드 목록 + 중앙 편집 영역 / 실시간 미리보기 */}
         <div className="flex-1 flex overflow-hidden min-h-0 relative">

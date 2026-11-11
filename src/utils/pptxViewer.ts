@@ -8,6 +8,10 @@ export interface PptxTextRun {
   isUnderline?: boolean;
   fontSize?: number; // pt 단위
   color?: string; // hex 색상 (예: #FFFFFF, #333333)
+  highlightColor?: string; // 형광펜 배경색
+  isStrike?: boolean; // 취소선
+  baseline?: number; // 위첨자 (>0) 또는 아래첨자 (<0)
+  hyperlink?: string; // 링크
 }
 
 export interface PptxParagraph {
@@ -73,6 +77,28 @@ export interface PptxShapeElement {
   isTitle?: boolean;
   verticalAlign?: 'top' | 'middle' | 'bottom';
   zIndex: number;
+  rotation?: number; // 회전 각도 (도, deg)
+  isVerticalText?: boolean; // 세로 쓰기 (eaVert)
+  columnCount?: number; // 2단 등 다단 배치 (numCol)
+}
+
+export interface PptxChartSeries {
+  name: string;
+  values: number[];
+}
+
+export interface PptxChartElement {
+  id: string;
+  type: 'chart';
+  chartType: 'bar' | 'pie' | 'line';
+  title?: string;
+  categories: string[];
+  series: PptxChartSeries[];
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  zIndex: number;
 }
 
 export interface PptxImageElement {
@@ -87,7 +113,7 @@ export interface PptxImageElement {
   zIndex: number;
 }
 
-export type PptxSlideElement = PptxShapeElement | PptxTableElement | PptxImageElement;
+export type PptxSlideElement = PptxShapeElement | PptxTableElement | PptxImageElement | PptxChartElement;
 
 export interface PptxSlide {
   slideNumber: number;
@@ -97,6 +123,7 @@ export interface PptxSlide {
   height: number;
   aspectRatio: number;
   backgroundColor?: string;
+  isHidden?: boolean; // 숨김 슬라이드 (show="0")
   elements: PptxSlideElement[]; // 2차원 절대 좌표 렌더링용 엘리먼트 목록
   paragraphs: PptxParagraph[]; // 레거시/텍스트 추출 호환용
   tables: { headers: string[]; rows: string[][] }[]; // 레거시 호환용
@@ -237,7 +264,77 @@ function parseDrawingColor(parent: Element, themeMap?: Record<string, string>): 
     if (val) return val;
   }
 
+  // 4. gradFill (그라데이션 색상)
+  const gradFill = getElementsByLocalName(parent, 'gradFill');
+  if (gradFill.length > 0) {
+    const gsList = getElementsByLocalName(gradFill[0], 'gs');
+    if (gsList.length >= 2) {
+      const stops: string[] = [];
+      for (let i = 0; i < gsList.length; i++) {
+        const gs = gsList[i];
+        const pos = Math.round((parseInt(gs.getAttribute('pos') || '0', 10) / 100000) * 100);
+        const c = parseDrawingColor(gs, themeMap) || '#4F81BD';
+        stops.push(`${c} ${pos}%`);
+      }
+      return `linear-gradient(135deg, ${stops.join(', ')})`;
+    }
+  }
+
   return undefined;
+}
+
+// Chart 파서 (bar, pie, line 및 c:numCache 데이터 추출)
+function parsePptxChart(chartDoc: Document): {
+  chartType: 'bar' | 'pie' | 'line';
+  title: string;
+  categories: string[];
+  series: PptxChartSeries[];
+} {
+  let chartType: 'bar' | 'pie' | 'line' = 'bar';
+  if (getElementsByLocalName(chartDoc, 'pieChart').length > 0) chartType = 'pie';
+  else if (getElementsByLocalName(chartDoc, 'lineChart').length > 0) chartType = 'line';
+
+  // Title
+  let title = '';
+  const titleList = getElementsByLocalName(chartDoc, 'title');
+  if (titleList.length > 0) {
+    const tEls = getElementsByLocalName(titleList[0], 't');
+    title = tEls.map((t) => t.textContent || '').join(' ').trim();
+  }
+
+  // Categories
+  const categories: string[] = [];
+  const catList = getElementsByLocalName(chartDoc, 'cat');
+  if (catList.length > 0) {
+    const ptEls = getElementsByLocalName(catList[0], 'pt');
+    for (const pt of ptEls) {
+      const v = getElementsByLocalName(pt, 'v')[0]?.textContent || '';
+      categories.push(v);
+    }
+  }
+
+  // Series
+  const series: PptxChartSeries[] = [];
+  const serList = getElementsByLocalName(chartDoc, 'ser');
+  for (const ser of serList) {
+    let name = '';
+    const txList = getElementsByLocalName(ser, 'tx');
+    if (txList.length > 0) {
+      name = getElementsByLocalName(txList[0], 'v')[0]?.textContent || '';
+    }
+    const values: number[] = [];
+    const valList = getElementsByLocalName(ser, 'val');
+    if (valList.length > 0) {
+      const ptEls = getElementsByLocalName(valList[0], 'pt');
+      for (const pt of ptEls) {
+        const valStr = getElementsByLocalName(pt, 'v')[0]?.textContent || '0';
+        values.push(parseFloat(valStr) || 0);
+      }
+    }
+    series.push({ name, values });
+  }
+
+  return { chartType, title, categories, series };
 }
 
 // 테마 파일(theme1.xml)에서 프레젠테이션 고유 색상 팔레트 파싱
@@ -284,7 +381,7 @@ function parseElementCoordinates(
   parent: Element,
   slideWidth: number,
   slideHeight: number
-): { left: number; top: number; width: number; height: number } | null {
+): { left: number; top: number; width: number; height: number; rotation?: number } | null {
   const xfrmList = getElementsByLocalName(parent, 'xfrm');
   if (xfrmList.length === 0) return null;
   const xfrm = xfrmList[0];
@@ -306,15 +403,23 @@ function parseElementCoordinates(
   const width = Math.max(0, Math.min(100, (rawW / slideWidth) * 100));
   const height = Math.max(0, Math.min(100, (rawH / slideHeight) * 100));
 
-  return { left, top, width, height };
+  const rotAttr = xfrm.getAttribute('rot');
+  const rotation = rotAttr ? Math.round(parseInt(rotAttr, 10) / 60000) : undefined;
+
+  return { left, top, width, height, rotation };
 }
 
 // 단락(Paragraph) 파서
-function parseParagraph(p: Element, defaultAlign?: 'left' | 'center' | 'right' | 'justify'): PptxParagraph {
+function parseParagraph(
+  p: Element,
+  defaultAlign?: 'left' | 'center' | 'right' | 'justify',
+  themeMap?: Record<string, string>
+): PptxParagraph {
   let level = 0;
   let align: 'left' | 'center' | 'right' | 'justify' = defaultAlign || 'left';
   let marL: number | undefined;
   let indent: number | undefined;
+  let bulletChar: string | undefined;
 
   const pPrList = getDirectChildrenByLocalName(p, 'pPr');
   let bulletPrefix = '';
@@ -338,6 +443,11 @@ function parseParagraph(p: Element, defaultAlign?: 'left' | 'center' | 'right' |
     if (buAutoNum.length > 0) {
       bulletPrefix = '1. ';
     }
+    const buChar = getElementsByLocalName(pPrList[0], 'buChar');
+    if (buChar.length > 0) {
+      bulletChar = buChar[0].getAttribute('char') || '•';
+      bulletPrefix = bulletChar + ' ';
+    }
   }
 
   const runs: PptxTextRun[] = [];
@@ -353,6 +463,17 @@ function parseParagraph(p: Element, defaultAlign?: 'left' | 'center' | 'right' |
       continue;
     }
 
+    if (localName === 'fld') {
+      const tElements = getDirectChildrenByLocalName(child, 't');
+      for (const t of tElements) {
+        const textContent = t.textContent || '';
+        if (!textContent) continue;
+        runs.push({ text: textContent });
+        paragraphFullText += textContent;
+      }
+      continue;
+    }
+
     if (localName === 'r') {
       const tElements = getDirectChildrenByLocalName(child, 't');
       for (const t of tElements) {
@@ -362,6 +483,10 @@ function parseParagraph(p: Element, defaultAlign?: 'left' | 'center' | 'right' |
         let isBold = false;
         let isItalic = false;
         let isUnderline = false;
+        let isStrike = false;
+        let baseline: number | undefined;
+        let highlightColor: string | undefined;
+        let hyperlink: string | undefined;
         let fontSize: number | undefined;
         let color: string | undefined;
 
@@ -371,13 +496,26 @@ function parseParagraph(p: Element, defaultAlign?: 'left' | 'center' | 'right' |
           isBold = rPr.getAttribute('b') === '1' || rPr.getAttribute('b') === 'true';
           isItalic = rPr.getAttribute('i') === '1' || rPr.getAttribute('i') === 'true';
           isUnderline = rPr.getAttribute('u') === 'sng';
+          isStrike = rPr.getAttribute('strike') === 'sngStrike';
+          const baseAttr = rPr.getAttribute('baseline');
+          if (baseAttr) baseline = parseInt(baseAttr, 10);
 
           const szAttr = rPr.getAttribute('sz');
           if (szAttr) {
             fontSize = Math.round(parseInt(szAttr, 10) / 100);
           }
 
-          color = parseDrawingColor(rPr);
+          color = parseDrawingColor(rPr, themeMap);
+
+          const hlList = getElementsByLocalName(rPr, 'highlight');
+          if (hlList.length > 0) {
+            highlightColor = parseDrawingColor(hlList[0], themeMap) || '#FEF08A';
+          }
+
+          const hlinkList = getElementsByLocalName(rPr, 'hlinkClick');
+          if (hlinkList.length > 0) {
+            hyperlink = hlinkList[0].getAttribute('action') || hlinkList[0].getAttribute('r:id') || '#';
+          }
         }
 
         runs.push({
@@ -385,6 +523,10 @@ function parseParagraph(p: Element, defaultAlign?: 'left' | 'center' | 'right' |
           isBold,
           isItalic,
           isUnderline,
+          isStrike,
+          baseline,
+          highlightColor,
+          hyperlink,
           fontSize,
           color,
         });
@@ -418,6 +560,7 @@ function parseParagraph(p: Element, defaultAlign?: 'left' | 'center' | 'right' |
     runs: runs.length > 0 ? runs : [{ text: paragraphFullText }],
     level,
     align,
+    bulletChar,
     marL,
     indent,
     isBlank: !paragraphFullText.trim(),
@@ -837,7 +980,9 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
     const relsFile = zip.file(relsPath);
 
     const slideImageMap = new Map<string, string>();
+    const slideChartMap = new Map<string, string>();
     let layoutPath: string | undefined;
+    let notesPath: string | undefined;
 
     if (relsFile) {
       try {
@@ -856,8 +1001,21 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
               target = `ppt/slides/${target}`;
             }
             slideImageMap.set(id, target);
+          } else if (type.includes('chart') && id && target) {
+            if (target.startsWith('../')) {
+              target = `ppt/${target.substring(3)}`;
+            } else if (!target.startsWith('ppt/')) {
+              target = `ppt/slides/${target}`;
+            }
+            slideChartMap.set(id, target);
           } else if (type.includes('slideLayout') && target) {
             layoutPath = target.startsWith('../')
+              ? `ppt/${target.substring(3)}`
+              : target.startsWith('ppt/')
+              ? target
+              : `ppt/slides/${target}`;
+          } else if (type.includes('notesSlide') && target) {
+            notesPath = target.startsWith('../')
               ? `ppt/${target.substring(3)}`
               : target.startsWith('ppt/')
               ? target
@@ -868,6 +1026,32 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
         console.warn(`슬라이드 rels 파싱 오류 (${relsPath}):`, e);
       }
     }
+
+    // 슬라이드 노트(Notes) 파싱
+    let slideNotes: string | undefined;
+    if (notesPath && zip.file(notesPath)) {
+      try {
+        const nText = await zip.file(notesPath)!.async('text');
+        const nDoc = parseXml(nText);
+        const nSps = getElementsByLocalName(nDoc, 'sp');
+        const noteParts: string[] = [];
+        for (const nSp of nSps) {
+          const phList = getElementsByLocalName(nSp, 'ph');
+          if (phList.length > 0 && phList[0].getAttribute('type') === 'body') {
+            const nTs = getElementsByLocalName(nSp, 't');
+            const text = nTs.map((t) => t.textContent || '').join(' ').trim();
+            if (text) noteParts.push(text);
+          }
+        }
+        if (noteParts.length > 0) {
+          slideNotes = noteParts.join('\n');
+        }
+      } catch (e) {
+        console.warn(`노트 파싱 오류 (${notesPath}):`, e);
+      }
+    }
+
+    const isHidden = sDoc.documentElement.getAttribute('show') === '0';
 
     // 슬라이드 레이아웃 데이터 가져오기
     let layoutData: SlideLayoutData = { elements: [], phStyles: new Map() };
@@ -970,13 +1154,20 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
         }
 
         let verticalAlign: 'top' | 'middle' | 'bottom' = 'top';
+        let isVerticalText = false;
+        let columnCount = 1;
         const txBodyList = getElementsByLocalName(item, 'txBody');
         if (txBodyList.length > 0) {
           const bodyPrList = getElementsByLocalName(txBodyList[0], 'bodyPr');
           if (bodyPrList.length > 0) {
-            const anchor = bodyPrList[0].getAttribute('anchor');
+            const bp = bodyPrList[0];
+            const anchor = bp.getAttribute('anchor');
             if (anchor === 'ctr' || anchor === 'mid') verticalAlign = 'middle';
             else if (anchor === 'b') verticalAlign = 'bottom';
+            const vert = bp.getAttribute('vert');
+            if (vert && vert.includes('Vert')) isVerticalText = true;
+            const numCol = bp.getAttribute('numCol');
+            if (numCol && parseInt(numCol, 10) > 1) columnCount = parseInt(numCol, 10);
           }
         }
 
@@ -1058,15 +1249,47 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
           isTitle,
           verticalAlign,
           zIndex: zOrder++,
+          rotation: coords.rotation,
+          isVerticalText,
+          columnCount,
         });
       }
 
-      // 2. 표 (<p:graphicFrame> -> <a:tbl>)
+      // 2. 표 (<p:graphicFrame> -> <a:tbl>) 또는 차트 (<p:graphicFrame> -> <c:chart>)
       else if (localName === 'graphicFrame') {
         const coords = parseElementCoordinates(item, slideWidth, slideHeight);
         const tblList = getElementsByLocalName(item, 'tbl');
+        const chartList = getElementsByLocalName(item, 'chart');
 
-        if (coords && tblList.length > 0) {
+        if (coords && chartList.length > 0) {
+          const chartRId = chartList[0].getAttribute('r:id');
+          if (chartRId && slideChartMap.has(chartRId)) {
+            const chartPath = slideChartMap.get(chartRId)!;
+            const chartFile = zip.file(chartPath);
+            if (chartFile) {
+              try {
+                const chartXmlText = await chartFile.async('text');
+                const chartDoc = parseXml(chartXmlText);
+                const parsedChart = parsePptxChart(chartDoc);
+                elements.push({
+                  id: `chart-${zOrder}`,
+                  type: 'chart',
+                  chartType: parsedChart.chartType,
+                  title: parsedChart.title,
+                  categories: parsedChart.categories,
+                  series: parsedChart.series,
+                  left: coords.left,
+                  top: coords.top,
+                  width: coords.width,
+                  height: coords.height,
+                  zIndex: zOrder++,
+                });
+              } catch (e) {
+                console.warn('차트 파싱 오류:', e);
+              }
+            }
+          }
+        } else if (coords && tblList.length > 0) {
           const tbl = tblList[0];
 
           // 열 너비 백분율
@@ -1245,6 +1468,51 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
           });
         }
       }
+
+      // 5. 그룹 도형 (<p:grpSp>)
+      else if (localName === 'grpSp') {
+        const childSps = getElementsByLocalName(item, 'sp');
+        for (const childSp of childSps) {
+          const spCoords = parseElementCoordinates(childSp, slideWidth, slideHeight);
+          if (!spCoords) continue;
+
+          let fillColor: string | undefined;
+          let borderColor: string | undefined;
+          let borderWidth: number | undefined;
+
+          const spPrList = getElementsByLocalName(childSp, 'spPr');
+          if (spPrList.length > 0) {
+            fillColor = parseDrawingColor(spPrList[0], themeMap);
+            const lnList = getElementsByLocalName(spPrList[0], 'ln');
+            if (lnList.length > 0) {
+              borderColor = parseDrawingColor(lnList[0], themeMap) || '#CBD5E1';
+              const wAttr = lnList[0].getAttribute('w');
+              borderWidth = wAttr ? Math.max(1, Math.round(parseInt(wAttr, 10) / 12700)) : 1;
+            }
+          }
+
+          const paragraphs: PptxParagraph[] = [];
+          const pElements = getElementsByLocalName(childSp, 'p');
+          for (const p of pElements) {
+            paragraphs.push(parseParagraph(p, 'center', themeMap));
+          }
+
+          elements.push({
+            id: `grp-sp-${zOrder++}`,
+            type: 'shape',
+            left: spCoords.left,
+            top: spCoords.top,
+            width: spCoords.width,
+            height: spCoords.height,
+            fillColor: fillColor || '#E2E8F0',
+            borderColor,
+            borderWidth,
+            paragraphs,
+            verticalAlign: 'middle',
+            zIndex: zOrder++,
+          });
+        }
+      }
     }
 
     if (!slideTitle) {
@@ -1263,10 +1531,12 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
       height: slideHeight,
       aspectRatio,
       backgroundColor,
+      isHidden,
       elements,
       paragraphs: legacyParagraphs,
       tables: legacyTables,
       images: legacyImages,
+      notes: slideNotes,
     });
   }
 
