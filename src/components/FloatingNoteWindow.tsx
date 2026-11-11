@@ -723,7 +723,7 @@ export const FloatingNoteWindow: React.FC<FloatingNoteWindowProps> = ({
             attId={activeExcelEditorModal.attId}
             originalData={targetAtt?.originalData}
             originalDate={targetAtt?.originalDate}
-            initialEngine={targetAtt?.editorEngine || 'exceljs'}
+            initialEngine={targetAtt?.editorEngine === 'sheetjs' ? 'sheetjs' : 'exceljs'}
             onClose={() => setActiveExcelEditorModal(null)}
             onSave={async (updatedDataUrl, chosenEngine) => {
               let attId = activeExcelEditorModal.attId;

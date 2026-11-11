@@ -833,6 +833,12 @@ function deduplicateDataValidationsXml(xml: string): string {
   return xml.replace(fullBlock, newBlock);
 }
 
+interface OriginalRowMeta {
+  hasCustomHeight: boolean;
+  thickBot: boolean;
+  thickTop: boolean;
+}
+
 interface DefaultFontInfo {
   name: string;
   sz?: string | null;
@@ -840,62 +846,115 @@ interface DefaultFontInfo {
   family?: string | null;
   scheme?: string | null;
   isPyoJun?: boolean;
+  normalAlignment?: string | null;
+  sheetRowAttrs?: Map<string, Map<number, OriginalRowMeta>>;
 }
 
-async function extractDefaultFontInfo(buffer: Uint8Array): Promise<DefaultFontInfo | null> {
+async function extractOriginalDocDefaults(buffer: Uint8Array): Promise<DefaultFontInfo | null> {
   try {
     const zip = await JSZip.loadAsync(buffer);
     const stylesFile = zip.file('xl/styles.xml');
-    if (!stylesFile) return null;
-    let xml = await stylesFile.async('string');
-    // x: 네임스페이스 접두어 정규화
-    xml = xml.replace(/<x:font\b/g, '<font').replace(/<\/x:font>/g, '</font>')
-             .replace(/<x:([A-Za-z0-9_]+)/g, '<$1').replace(/<\/x:([A-Za-z0-9_]+)>/g, '</$1>');
-    const fontsBlock = xml.match(/<fonts[^>]*>([\s\S]*?)<\/fonts>/);
-    if (!fontsBlock) return null;
-    const firstFont = fontsBlock[1].match(/<font\b[\s\S]*?<\/font>/)?.[0];
-    if (!firstFont) return null;
-    const name = firstFont.match(/<name\s+val="([^"]+)"/)?.[1] || null;
-    if (!name) return null;
-    const sz = firstFont.match(/<sz\s+val="([^"]+)"/)?.[1] || null;
-    const charset = firstFont.match(/<charset\s+val="([^"]+)"/)?.[1] || null;
-    const family = firstFont.match(/<family\s+val="([^"]+)"/)?.[1] || null;
-    const scheme = firstFont.match(/<scheme\s+val="([^"]+)"/)?.[1] || null;
-    const isPyoJun = xml.includes('name="표준"');
-    return { name, sz, charset, family, scheme, isPyoJun };
+    let name: string | null = null;
+    let sz: string | null = null;
+    let charset: string | null = null;
+    let family: string | null = null;
+    let scheme: string | null = null;
+    let isPyoJun = false;
+    let normalAlignment: string | null = null;
+
+    if (stylesFile) {
+      let xml = await stylesFile.async('string');
+      // x: 네임스페이스 접두어 정규화
+      xml = xml.replace(/<x:font\b/g, '<font').replace(/<\/x:font>/g, '</font>')
+               .replace(/<x:([A-Za-z0-9_]+)/g, '<$1').replace(/<\/x:([A-Za-z0-9_]+)>/g, '</$1>');
+      const fontsBlock = xml.match(/<fonts[^>]*>([\s\S]*?)<\/fonts>/);
+      if (fontsBlock) {
+        const firstFont = fontsBlock[1].match(/<font\b[\s\S]*?<\/font>/)?.[0];
+        if (firstFont) {
+          name = firstFont.match(/<name\s+val="([^"]+)"/)?.[1] || null;
+          sz = firstFont.match(/<sz\s+val="([^"]+)"/)?.[1] || null;
+          charset = firstFont.match(/<charset\s+val="([^"]+)"/)?.[1] || null;
+          family = firstFont.match(/<family\s+val="([^"]+)"/)?.[1] || null;
+          scheme = firstFont.match(/<scheme\s+val="([^"]+)"/)?.[1] || null;
+        }
+      }
+      isPyoJun = xml.includes('name="표준"');
+
+      // 원본 Normal(표준) 스타일의 alignment 추출
+      const cellStyleXfs = xml.match(/<cellStyleXfs[^>]*>([\s\S]*?)<\/cellStyleXfs>/)?.[1] || '';
+      const firstStyleXf = cellStyleXfs.match(/<xf\b[\s\S]*?<\/xf>/)?.[0] || cellStyleXfs.match(/<xf\b[^>]*\/>/)?.[0];
+      const alignMatch = firstStyleXf ? firstStyleXf.match(/<alignment\b[^>]*\/>/) : null;
+      if (alignMatch) {
+        normalAlignment = alignMatch[0];
+      } else {
+        const cellXfs = xml.match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/)?.[1] || '';
+        const firstCellXf = cellXfs.match(/<xf\b[\s\S]*?<\/xf>/)?.[0] || cellXfs.match(/<xf\b[^>]*\/>/)?.[0];
+        const alignMatch2 = firstCellXf ? firstCellXf.match(/<alignment\b[^>]*\/>/) : null;
+        if (alignMatch2) {
+          normalAlignment = alignMatch2[0];
+        }
+      }
+    }
+
+    // 시트별 원본 행 속성(customHeight 여부, thickBot, thickTop) 추출
+    const sheetRowAttrs = new Map<string, Map<number, OriginalRowMeta>>();
+    for (const [fname, fileObj] of Object.entries(zip.files)) {
+      if (fname.startsWith('xl/worksheets/sheet') && fname.endsWith('.xml')) {
+        const sXml = await fileObj.async('string');
+        const rowMap = new Map<number, OriginalRowMeta>();
+        const rowTags = sXml.match(/<row\b[^>]*>/g) || [];
+        for (const tag of rowTags) {
+          const rMatch = tag.match(/\br="(\d+)"/);
+          if (rMatch) {
+            const rNum = parseInt(rMatch[1], 10);
+            rowMap.set(rNum, {
+              hasCustomHeight: tag.includes('customHeight="1"') || tag.includes('customHeight="true"'),
+              thickBot: tag.includes('thickBot="1"') || tag.includes('thickBot="true"'),
+              thickTop: tag.includes('thickTop="1"') || tag.includes('thickTop="true"'),
+            });
+          }
+        }
+        sheetRowAttrs.set(fname, rowMap);
+      }
+    }
+
+    if (!name && !normalAlignment && sheetRowAttrs.size === 0) return null;
+    return { name: name || '맑은 고딕', sz, charset, family, scheme, isPyoJun, normalAlignment, sheetRowAttrs };
   } catch {
     return null;
   }
 }
 
 function patchStylesXmlDefaultFont(stylesXml: string, fontInfo: DefaultFontInfo): string {
-  if (!fontInfo || !fontInfo.name) return stylesXml;
+  if (!fontInfo) return stylesXml;
   let newXml = stylesXml;
 
-  const fontsBlockMatch = newXml.match(/<fonts[^>]*>([\s\S]*?)<\/fonts>/);
-  if (fontsBlockMatch) {
-    const inner = fontsBlockMatch[1];
-    const firstFontMatch = inner.match(/<font\b[\s\S]*?<\/font>/);
-    if (firstFontMatch) {
-      let font0 = firstFontMatch[0];
-      if (font0.includes('<name')) {
-        font0 = font0.replace(/<name\s+val="[^"]*"\s*\/>/, `<name val="${fontInfo.name}"/>`);
-      } else {
-        font0 = font0.replace('</font>', `<name val="${fontInfo.name}"/></font>`);
+  if (fontInfo.name) {
+    const fontsBlockMatch = newXml.match(/<fonts[^>]*>([\s\S]*?)<\/fonts>/);
+    if (fontsBlockMatch) {
+      const inner = fontsBlockMatch[1];
+      const firstFontMatch = inner.match(/<font\b[\s\S]*?<\/font>/);
+      if (firstFontMatch) {
+        let font0 = firstFontMatch[0];
+        if (font0.includes('<name')) {
+          font0 = font0.replace(/<name\s+val="[^"]*"\s*\/>/, `<name val="${fontInfo.name}"/>`);
+        } else {
+          font0 = font0.replace('</font>', `<name val="${fontInfo.name}"/></font>`);
+        }
+        if (fontInfo.sz && font0.includes('<sz')) {
+          font0 = font0.replace(/<sz\s+val="[^"]*"\s*\/>/, `<sz val="${fontInfo.sz}"/>`);
+        }
+        if (fontInfo.charset && !font0.includes('<charset')) {
+          font0 = font0.replace('</font>', `<charset val="${fontInfo.charset}"/></font>`);
+        }
+        if (fontInfo.family && font0.includes('<family')) {
+          font0 = font0.replace(/<family\s+val="[^"]*"\s*\/>/, `<family val="${fontInfo.family}"/>`);
+        }
+        if (fontInfo.scheme && font0.includes('<scheme')) {
+          font0 = font0.replace(/<scheme\s+val="[^"]*"\s*\/>/, `<scheme val="${fontInfo.scheme}"/>`);
+        }
+        newXml = newXml.replace(firstFontMatch[0], font0);
       }
-      if (fontInfo.sz && font0.includes('<sz')) {
-        font0 = font0.replace(/<sz\s+val="[^"]*"\s*\/>/, `<sz val="${fontInfo.sz}"/>`);
-      }
-      if (fontInfo.charset && !font0.includes('<charset')) {
-        font0 = font0.replace('</font>', `<charset val="${fontInfo.charset}"/></font>`);
-      }
-      if (fontInfo.family && font0.includes('<family')) {
-        font0 = font0.replace(/<family\s+val="[^"]*"\s*\/>/, `<family val="${fontInfo.family}"/>`);
-      }
-      if (fontInfo.scheme && font0.includes('<scheme')) {
-        font0 = font0.replace(/<scheme\s+val="[^"]*"\s*\/>/, `<scheme val="${fontInfo.scheme}"/>`);
-      }
-      newXml = newXml.replace(firstFontMatch[0], font0);
     }
   }
 
@@ -903,32 +962,94 @@ function patchStylesXmlDefaultFont(stylesXml: string, fontInfo: DefaultFontInfo)
     newXml = newXml.replace('name="Normal"', 'name="표준"');
   }
 
+  // 원본 Normal(표준) 스타일 정렬(alignment) 복원 (한국어 엑셀 vertical="center" 등)
+  if (fontInfo.normalAlignment) {
+    // 1. cellStyleXfs 첫 번째 xf
+    newXml = newXml.replace(
+      /(<cellStyleXfs[^>]*>\s*<xf\b[^>]*?)(\/?>)/,
+      (match, pre) => {
+        if (pre.includes('<alignment')) return match;
+        return `${pre}>${fontInfo.normalAlignment}</xf>`;
+      }
+    );
+    // 2. cellXfs xfId="0" (기본 셀 xf)
+    newXml = newXml.replace(
+      /(<cellXfs[^>]*>\s*<xf\b[^>]*?xfId="0"[^>]*?)(\/?>)/,
+      (match, pre) => {
+        if (pre.includes('<alignment')) return match;
+        return `${pre}>${fontInfo.normalAlignment}</xf>`;
+      }
+    );
+  }
+
   return newXml;
 }
 
 async function cleanAndNormalizeWorkbookBuffer(
   buffer: ArrayBuffer | Uint8Array,
-  origDefaultFont?: DefaultFontInfo | null
+  origDefaultFont?: DefaultFontInfo | null,
+  modifiedRowsBySheet?: Map<string, Set<number>>
 ): Promise<Uint8Array> {
   try {
     const zip = await JSZip.loadAsync(buffer);
     let changed = false;
 
-    // 1. 유효성 검사 중복 정리
+    // 1. 유효성 검사 중복 정리 및 미수정 행 customHeight="1" 속성 정리
     for (const [filename, fileObj] of Object.entries(zip.files)) {
       if (filename.startsWith('xl/worksheets/sheet') && filename.endsWith('.xml')) {
-        const xml = await fileObj.async('string');
+        let xml = await fileObj.async('string');
+        let sheetChanged = false;
+
         if (xml.includes('<dataValidations')) {
           const cleanedXml = deduplicateDataValidationsXml(xml);
           if (cleanedXml !== xml) {
-            zip.file(filename, cleanedXml);
-            changed = true;
+            xml = cleanedXml;
+            sheetChanged = true;
           }
+        }
+
+        // 사용자가 높이를 바꾸지 않은 행은 원본 customHeight 속성 유지 (ExcelJS 강제 추가 방지)
+        const origSheetRowMeta = origDefaultFont?.sheetRowAttrs?.get(filename);
+        if (origSheetRowMeta) {
+          const modifiedRows = modifiedRowsBySheet?.get(filename) || new Set<number>();
+          const cleanedXml = xml.replace(/<row\b([^>]*)>/g, (match, attrs) => {
+            const rMatch = attrs.match(/\br="(\d+)"/);
+            if (!rMatch) return match;
+            const rNum = parseInt(rMatch[1], 10);
+            if (modifiedRows.has(rNum)) return match; // 사용자가 직접 조정한 행은 건드리지 않음
+
+            const orig = origSheetRowMeta.get(rNum);
+            if (!orig) return match;
+
+            let newAttrs = attrs;
+            // 원본에 customHeight가 없었던 행은 customHeight="1" 제거
+            if (!orig.hasCustomHeight) {
+              newAttrs = newAttrs.replace(/\s+customHeight="1"/g, '').replace(/\s+customHeight="true"/g, '');
+            }
+            // 원본의 thickBot / thickTop 속성 유지
+            if (orig.thickBot && !newAttrs.includes('thickBot')) {
+              newAttrs += ' thickBot="1"';
+            }
+            if (orig.thickTop && !newAttrs.includes('thickTop')) {
+              newAttrs += ' thickTop="1"';
+            }
+            return `<row${newAttrs}>`;
+          });
+
+          if (cleanedXml !== xml) {
+            xml = cleanedXml;
+            sheetChanged = true;
+          }
+        }
+
+        if (sheetChanged) {
+          zip.file(filename, xml);
+          changed = true;
         }
       }
     }
 
-    // 2. styles.xml 기본 글꼴(font 0) 및 Normal 스타일명 복원
+    // 2. styles.xml 기본 글꼴(font 0), Normal 스타일명 및 alignment 복원
     if (origDefaultFont) {
       const stylesFile = zip.file('xl/styles.xml');
       if (stylesFile) {
@@ -974,11 +1095,12 @@ export async function univerSnapshotToDataUrl(
     const wb = new ExcelJS.Workbook();
     let isLoadedFromOriginal = false;
     let origDefaultFont: DefaultFontInfo | null = null;
+    const modifiedRowsBySheet = new Map<string, Set<number>>();
 
     if (originalDataOrUrl) {
       try {
         const origRawBytes = dataUrlToUint8Array(originalDataOrUrl);
-        origDefaultFont = await extractDefaultFontInfo(origRawBytes);
+        origDefaultFont = await extractOriginalDocDefaults(origRawBytes);
         const origBytes = await normalizeHancellXlsx(origRawBytes);
         await wb.xlsx.load(origBytes as any);
         isLoadedFromOriginal = true;
@@ -1057,6 +1179,9 @@ export async function univerSnapshotToDataUrl(
 
       const sheetName = (uSheet.name || `Sheet${sIdx + 1}`).slice(0, 31);
       const ws = (uSheet as any)._matchedWs || wb.getWorksheet(sheetName) || wb.worksheets[sIdx] || wb.addWorksheet(sheetName);
+      const sheetFileName = `xl/worksheets/sheet${sIdx + 1}.xml`;
+      const modifiedRows = new Set<number>();
+      modifiedRowsBySheet.set(sheetFileName, modifiedRows);
 
       // 0. 행/열 구조 변경(삽입/삭제) In-Place 적용 (메모/유효성검사/조건부서식 함께 시프트)
       const sheetOps = (structuralOperations || []).filter(
@@ -1161,9 +1286,11 @@ export async function univerSnapshotToDataUrl(
             const initPxH = Math.round(origH * 1.33);
             if (Math.abs(uSheet.rowData[r].h - initPxH) > 2) {
               row.height = Math.round((uSheet.rowData[r].h / 1.33) * 100) / 100;
+              modifiedRows.add(rowNum);
             }
           } else if (!isLoadedFromOriginal) {
             row.height = Math.round(uSheet.rowData[r].h / 1.33);
+            modifiedRows.add(rowNum);
           }
         }
 
@@ -1312,7 +1439,7 @@ export async function univerSnapshotToDataUrl(
     });
 
     const rawBuffer = await wb.xlsx.writeBuffer();
-    const uint8 = await cleanAndNormalizeWorkbookBuffer(rawBuffer, origDefaultFont);
+    const uint8 = await cleanAndNormalizeWorkbookBuffer(rawBuffer, origDefaultFont, modifiedRowsBySheet);
     let binary = '';
     const len = uint8.byteLength;
     for (let i = 0; i < len; i++) {

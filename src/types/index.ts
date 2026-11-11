@@ -18,7 +18,7 @@ export interface AttachmentItem {
   data: string; // Base64 data URL
   originalData?: string; // 최초 웹 수정 전 원본 백업 데이터 URL
   originalDate?: string; // 최초 백업 일시 (ISO 문자열)
-  editorEngine?: 'exceljs' | 'sheetjs'; // 선호 편집/저장 엔진 (기본: exceljs)
+  editorEngine?: 'exceljs' | 'sheetjs' | 'superdoc' | 'legacy'; // 선호 편집/저장 엔진 (엑셀: exceljs | 워드: superdoc)
 }
 
 export interface Note {

@@ -4586,7 +4586,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             attId={activeExcelEditorModal.attId}
             originalData={targetAtt?.originalData}
             originalDate={targetAtt?.originalDate}
-            initialEngine={targetAtt?.editorEngine || 'exceljs'}
+            initialEngine={targetAtt?.editorEngine === 'sheetjs' ? 'sheetjs' : 'exceljs'}
             onSave={async (updatedDataUrl, chosenEngine) => {
               let attId = activeExcelEditorModal.attId;
               if (!attId || !localAttachmentsRef.current[attId]) {
@@ -4694,44 +4694,89 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       )}
 
       {/* 워드(DOCX) 웹 직접 편집기 모달 */}
-      {activeDocxEditorModal && (
-        <DocxEditorModal
-          isOpen={true}
-          onClose={() => setActiveDocxEditorModal(null)}
-          data={activeDocxEditorModal.data}
-          title={activeDocxEditorModal.title}
-          attId={activeDocxEditorModal.attId}
-          onSave={async (updatedDataUrl) => {
-            const attId = activeDocxEditorModal.attId;
-            if (attId) {
-              // 1. 워드 캐시 및 Blob URL 캐시 무효화
-              invalidateDocxCache(attId);
-              invalidateAttachmentBlobUrl(attId);
+      {activeDocxEditorModal && (() => {
+        let attId = activeDocxEditorModal.attId;
+        if (!attId) {
+          attId = Object.keys(localAttachments).find(
+            (id) => localAttachments[id].data === activeDocxEditorModal.data
+          ) || '';
+        }
+        const existingAtt = attId ? localAttachments[attId] : undefined;
 
-              // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장
-              const updatedAtts = {
-                ...localAttachmentsRef.current,
-                [attId]: {
-                  ...(localAttachmentsRef.current[attId] || {}),
-                  data: updatedDataUrl,
-                },
-              };
-              setLocalAttachments(updatedAtts);
-              localAttachmentsRef.current = updatedAtts;
-              onUpdateNote({ attachments: updatedAtts });
+        return (
+          <DocxEditorModal
+            isOpen={true}
+            onClose={() => setActiveDocxEditorModal(null)}
+            data={activeDocxEditorModal.data}
+            title={activeDocxEditorModal.title}
+            attId={attId}
+            originalData={existingAtt?.originalData}
+            originalDate={existingAtt?.originalDate}
+            initialEngine={(existingAtt?.editorEngine as any) || 'superdoc'}
+            onSave={async (updatedDataUrl, chosenEngine = 'superdoc') => {
+              if (attId) {
+                // 1. 워드 캐시 및 Blob URL 캐시 무효화
+                invalidateDocxCache(attId);
+                invalidateDocxCache();
+                invalidateAttachmentBlobUrl(attId);
 
-              // 3. 편집 모달 내부 데이터 동기화
-              setActiveDocxEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
+                // 최초 1회 저장 시 원본 첨부파일을 기기 내부 원본 백업으로 보관
+                const originalData = existingAtt?.originalData || existingAtt?.data || activeDocxEditorModal.data;
+                const originalDate = existingAtt?.originalDate || new Date().toISOString();
 
-              // 4. 인라인 뷰어 재렌더링
-              renderInlineDocx.current(attId, updatedDataUrl);
-              setTimeout(() => {
+                // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장
+                const updatedAtts = {
+                  ...localAttachmentsRef.current,
+                  [attId]: {
+                    ...(localAttachmentsRef.current[attId] || {}),
+                    data: updatedDataUrl,
+                    originalData,
+                    originalDate,
+                    editorEngine: chosenEngine,
+                  },
+                };
+                setLocalAttachments({ ...updatedAtts });
+                localAttachmentsRef.current = updatedAtts;
+                onUpdateNote({ attachments: updatedAtts });
+
+                // 3. 편집 모달 내부 데이터 동기화
+                setActiveDocxEditorModal((prev) => (prev ? { ...prev, data: updatedDataUrl } : null));
+
+                // 4. 인라인 뷰어 재렌더링
                 renderInlineDocx.current(attId, updatedDataUrl);
-              }, 120);
-            }
-          }}
-        />
-      )}
+                setTimeout(() => {
+                  renderInlineDocx.current(attId, updatedDataUrl);
+                }, 120);
+              }
+            }}
+            onRestoreOriginal={async () => {
+              if (existingAtt && existingAtt.originalData) {
+                invalidateDocxCache(attId);
+                invalidateDocxCache();
+                invalidateAttachmentBlobUrl(attId);
+
+                const restoredData = existingAtt.originalData;
+                const updatedAtts = {
+                  ...localAttachmentsRef.current,
+                  [attId]: {
+                    ...existingAtt,
+                    data: restoredData,
+                    originalData: undefined,
+                    originalDate: undefined,
+                  },
+                };
+                setLocalAttachments({ ...updatedAtts });
+                localAttachmentsRef.current = updatedAtts;
+                onUpdateNote({ attachments: updatedAtts });
+
+                setActiveDocxEditorModal((prev) => (prev ? { ...prev, data: restoredData } : null));
+                renderInlineDocx.current(attId, restoredData);
+                alert('최초 원본 버전으로 성공적으로 복원되었습니다.');
+              }
+            }}
+          />
+        );
+      })()}
 
       {/* 파워포인트(PPTX) 슬라이드 뷰어 및 슬라이드 쇼 모달 */}
       {activePptxModal && (

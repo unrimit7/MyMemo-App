@@ -374,6 +374,71 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </p>
           </div>
 
+          {/* 오픈소스 라이선스 고지 카드 */}
+          <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300 font-bold text-xs">
+                  📜
+                </div>
+                <h4 className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                  <span>오픈소스 라이선스 고지 (Open Source Licenses)</span>
+                </h4>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              MyMemo는 외부 서버 없는 100% 로컬 오프라인 문서 편집을 위해 다음 오픈소스를 탑재하여 동작합니다.
+            </p>
+
+            <div className="space-y-2 text-[11px] pt-1">
+              <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-200">SuperDoc (Word .docx 편집 엔진)</span>
+                  <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 text-[10px] font-bold">
+                    AGPL-3.0
+                  </span>
+                </div>
+                <p className="text-slate-400 text-[10px]">
+                  워드 문서의 서식 보존 인플레이스 편집 및 WYSIWYG 레이아웃 엔진으로 사용됩니다.
+                </p>
+                <a
+                  href="https://github.com/vlad-t/superdoc"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-indigo-400 hover:text-indigo-300 underline flex items-center gap-1 text-[10px] mt-0.5"
+                >
+                  <span>소스 코드 저장소 (GitHub)</span>
+                  <ExternalLink size={10} />
+                </a>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-200">Univer & ExcelJS (Excel .xlsx 스프레드시트 엔진)</span>
+                  <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 text-[10px] font-bold">
+                    Apache-2.0 / MIT
+                  </span>
+                </div>
+                <p className="text-slate-400 text-[10px]">
+                  엑셀 문서의 셀 값, 수식, 서식, 조건부 서식, 유효성 검사, 병합 라운드트립 보존에 사용됩니다.
+                </p>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-200">rhwp (한컴 한글 .hwp 오프라인 뷰어/편집기)</span>
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 text-[10px] font-bold">
+                    MIT
+                  </span>
+                </div>
+                <p className="text-slate-400 text-[10px]">
+                  WebAssembly 기반 로컬 오프라인 한글 문서 렌더링 및 텍스트 추출에 사용됩니다.
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* GitHub 클라우드 동기화 섹션 헤더 */}
           <div className="pt-1">
             <div className="flex items-center gap-2 pb-2 border-b border-slate-800/80">

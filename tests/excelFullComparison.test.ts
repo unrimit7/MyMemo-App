@@ -180,6 +180,43 @@ async function assertFullWorkbookFidelity(
     expect(normSavedStyles.includes('name="표준"')).toBe(true);
   }
 
+  // 6-1. Normal 스타일 alignment(vertical="center" 등) 검증
+  const origCellStyleXf = normOrigStyles.match(/<cellStyleXfs[^>]*>([\s\S]*?)<\/cellStyleXfs>/)?.[1] || '';
+  if (origCellStyleXf.includes('<alignment')) {
+    const savedCellStyleXf = normSavedStyles.match(/<cellStyleXfs[^>]*>([\s\S]*?)<\/cellStyleXfs>/)?.[1] || '';
+    expect(savedCellStyleXf.includes('<alignment')).toBe(true);
+    const savedCellXfs = normSavedStyles.match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/)?.[1] || '';
+    const firstCellXf = savedCellXfs.match(/<xf\b[\s\S]*?<\/xf>/)?.[0] || savedCellXfs.match(/<xf\b[^>]*\/>/)?.[0] || '';
+    expect(firstCellXf.includes('<alignment')).toBe(true);
+  }
+
+  // 6-2. 미수정 행 customHeight 속성 유지 검증 (원본에 없었던 customHeight="1" 강제 추가 방지)
+  for (const [filename, fileObj] of Object.entries(zipOrig.files)) {
+    if (filename.startsWith('xl/worksheets/sheet') && filename.endsWith('.xml')) {
+      const origXml = await fileObj.async('string');
+      const savedXml = (await zipSaved.file(filename)?.async('string')) || '';
+      const origRows = origXml.match(/<row\b[^>]*>/g) || [];
+      const savedRows = savedXml.match(/<row\b[^>]*>/g) || [];
+      const savedRowMap = new Map<number, string>();
+      for (const sTag of savedRows) {
+        const rMatch = sTag.match(/\br="(\d+)"/);
+        if (rMatch) savedRowMap.set(parseInt(rMatch[1], 10), sTag);
+      }
+      for (const oTag of origRows) {
+        const rMatch = oTag.match(/\br="(\d+)"/);
+        if (rMatch) {
+          const rNum = parseInt(rMatch[1], 10);
+          if (!oTag.includes('customHeight="1"') && !oTag.includes('customHeight="true"')) {
+            const sTag = savedRowMap.get(rNum);
+            if (sTag) {
+              expect(sTag.includes('customHeight="1"')).toBe(false);
+            }
+          }
+        }
+      }
+    }
+  }
+
   // 7. 데이터 유효성 검사 XML 태그 개수 및 범위 일치 검증
   const origDvs = await extractDataValidationsFromXml(origBuf);
   const savedDvs = await extractDataValidationsFromXml(savedBuf);
@@ -315,6 +352,7 @@ describe('Excel Full Cell-by-Cell & Feature Roundtrip Comparison Tests', () => {
 
       const savedDataUrl = await univerSnapshotToDataUrl(snapshot, 'xlsx', 'exceljs', origDataUrl);
       const savedBuf = dataUrlToBuffer(savedDataUrl);
+      fs.writeFileSync(path.join(samplesDir, '../out/실파일A_인사평가_MS엑셀_저장결과.xlsx'), savedBuf);
       await assertFullWorkbookFidelity(origBuf, savedBuf, { excludedCells: { 인사평가: ['A2'] } });
     }
 
@@ -329,6 +367,7 @@ describe('Excel Full Cell-by-Cell & Feature Roundtrip Comparison Tests', () => {
 
       const savedDataUrl = await univerSnapshotToDataUrl(snapshot, 'xlsx', 'exceljs', origDataUrl);
       const savedBuf = dataUrlToBuffer(savedDataUrl);
+      fs.writeFileSync(path.join(samplesDir, '../out/실파일A_인사평가_한셀_저장결과.xlsx'), savedBuf);
       // 한셀 원본은 정규화 파이프라인을 거치므로 ExcelJS 로드 기준으로 전수 검증
       const origNormalizedDataUrl = await univerSnapshotToDataUrl(
         await dataUrlToUniverWorkbook(origDataUrl, '정규화'),
@@ -352,6 +391,7 @@ describe('Excel Full Cell-by-Cell & Feature Roundtrip Comparison Tests', () => {
 
       const savedDataUrl = await univerSnapshotToDataUrl(snapshot, 'xlsx', 'exceljs', origDataUrl);
       const savedBuf = dataUrlToBuffer(savedDataUrl);
+      fs.writeFileSync(path.join(samplesDir, '../out/실파일B_견적서_MS엑셀_저장결과.xlsx'), savedBuf);
       await assertFullWorkbookFidelity(origBuf, savedBuf, { excludedCells: { 견적서: ['A1'] } });
     }
 
@@ -366,6 +406,7 @@ describe('Excel Full Cell-by-Cell & Feature Roundtrip Comparison Tests', () => {
 
       const savedDataUrl = await univerSnapshotToDataUrl(snapshot, 'xlsx', 'exceljs', origDataUrl);
       const savedBuf = dataUrlToBuffer(savedDataUrl);
+      fs.writeFileSync(path.join(samplesDir, '../out/실파일B_견적서_한셀_저장결과.xlsx'), savedBuf);
       const origNormalizedDataUrl = await univerSnapshotToDataUrl(
         await dataUrlToUniverWorkbook(origDataUrl, '정규화'),
         'xlsx',

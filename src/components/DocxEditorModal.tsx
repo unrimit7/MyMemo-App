@@ -14,12 +14,18 @@ import {
   Table,
   CheckCircle,
   AlertCircle,
+  AlertTriangle,
+  RotateCcw,
   Loader2,
   FileText,
   Eye,
-  Edit3
+  Edit3,
 } from 'lucide-react';
+import { SuperDoc } from 'superdoc';
+import 'superdoc/style.css';
+
 import { extractDocxTextAndHtml, generateDocxDataUrl } from '../utils/docxViewer';
+import { detectDocxUnsupportedFeatures, type DocxUnsupportedFeatureReport } from '../utils/docxLossDetector';
 import { marked } from 'marked';
 import { useFloatingWindow } from './useFloatingWindow';
 
@@ -29,7 +35,22 @@ interface DocxEditorModalProps {
   data: string;
   title: string;
   attId?: string;
-  onSave?: (updatedDataUrl: string) => Promise<void> | void;
+  originalData?: string;
+  originalDate?: string;
+  initialEngine?: 'superdoc' | 'legacy';
+  onSave?: (updatedDataUrl: string, engine?: 'superdoc' | 'legacy') => Promise<void> | void;
+  onRestoreOriginal?: () => Promise<void> | void;
+}
+
+function dataUrlToBlob(dataOrUrl: string, mime: string = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'): Blob {
+  const commaIdx = dataOrUrl.indexOf(',');
+  const b64 = commaIdx !== -1 ? dataOrUrl.slice(commaIdx + 1) : dataOrUrl;
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mime });
 }
 
 export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
@@ -37,10 +58,15 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
   onClose,
   data,
   title,
+  originalData,
+  originalDate,
+  initialEngine = 'superdoc',
   onSave,
+  onRestoreOriginal,
 }) => {
-  const [content, setContent] = useState<string>('');
+  const [engine, setEngine] = useState<'superdoc' | 'legacy'>(initialEngine);
   const [docTitle, setDocTitle] = useState<string>(title.replace(/\.docx?$/i, ''));
+  const [content, setContent] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [hasChanges, setHasChanges] = useState<boolean>(false);
@@ -48,16 +74,59 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'edit' | 'preview' | 'split'>('split');
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const floating = useFloatingWindow({ id: 'docx-editor', defaultWidth: 920, defaultHeight: 820 });
+  const [showExitConfirm, setShowExitConfirm] = useState<boolean>(false);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState<boolean>(false);
+  const [showLossWarningModal, setShowLossWarningModal] = useState<boolean>(false);
+  const [lossReport, setLossReport] = useState<DocxUnsupportedFeatureReport | null>(null);
 
-  // 워드 내용 추출 및 초기화
+  const containerRef = useRef<HTMLDivElement>(null);
+  const superdocRef = useRef<SuperDoc | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const floating = useFloatingWindow({ id: 'docx-editor', defaultWidth: 1040, defaultHeight: 840 });
+
+  // 문서 사전 검사 (매크로, OLE 등)
   useEffect(() => {
     if (!isOpen || !data) return;
+    let isCancelled = false;
+    detectDocxUnsupportedFeatures(data).then((report) => {
+      if (!isCancelled) {
+        setLossReport(report);
+      }
+    });
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOpen, data]);
 
+  // 저장되지 않은 변경사항이 있을 때 브라우저 닫기/새로고침 방지
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasChanges) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasChanges]);
+
+  // 단축키 (Ctrl+S / Cmd+S)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        triggerSave();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
+
+  // 레거시 마크다운 편집기 내용 추출
+  useEffect(() => {
+    if (!isOpen || !data || engine !== 'legacy') return;
     let isMounted = true;
     setIsLoading(true);
-    setHasChanges(false);
 
     extractDocxTextAndHtml(data)
       .then(({ markdown, text }) => {
@@ -66,9 +135,9 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
         setIsLoading(false);
       })
       .catch((err) => {
-        console.error('워드 본문 로드 실패:', err);
-        if (!isMounted) {
-          setErrorToast('워드 문서 내용을 불러오지 못했습니다.');
+        console.error('워드 텍스트 추출 실패:', err);
+        if (isMounted) {
+          setErrorToast('워드 문서 텍스트를 불러오지 못했습니다.');
           setIsLoading(false);
         }
       });
@@ -76,9 +145,79 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, data]);
+  }, [isOpen, data, engine]);
 
-  // 서식 도구 적용 헬퍼
+  // SuperDoc 인스턴스 초기화 및 라이프사이클 관리
+  useEffect(() => {
+    if (!isOpen || !data || engine !== 'superdoc') return;
+
+    let isDisposed = false;
+    setIsLoading(true);
+
+    const timer = setTimeout(() => {
+      if (isDisposed || !containerRef.current) return;
+
+      try {
+        if (superdocRef.current) {
+          try {
+            superdocRef.current.destroy();
+          } catch {}
+          superdocRef.current = null;
+        }
+
+        // 이전 렌더링 엘리먼트 비우기
+        if (containerRef.current) {
+          containerRef.current.innerHTML = '';
+        }
+
+        const blob = dataUrlToBlob(data);
+        const superdoc = new SuperDoc({
+          selector: containerRef.current,
+          document: blob,
+          documentMode: 'editing',
+        });
+
+        superdocRef.current = superdoc;
+
+        superdoc.on('ready', () => {
+          if (!isDisposed) {
+            setIsLoading(false);
+          }
+        });
+
+        superdoc.on('editor-update', () => {
+          if (!isDisposed) {
+            setHasChanges(true);
+          }
+        });
+
+        superdoc.on('history-change', () => {
+          if (!isDisposed) {
+            setHasChanges(true);
+          }
+        });
+      } catch (err) {
+        console.error('SuperDoc 초기화 실패:', err);
+        if (!isDisposed) {
+          setErrorToast('SuperDoc 워드 엔진 로드 실패. 레거시 모드로 전환할 수 있습니다.');
+          setIsLoading(false);
+        }
+      }
+    }, 100);
+
+    return () => {
+      isDisposed = true;
+      clearTimeout(timer);
+      if (superdocRef.current) {
+        try {
+          superdocRef.current.destroy();
+        } catch {}
+        superdocRef.current = null;
+      }
+    };
+  }, [isOpen, data, engine]);
+
+  // 레거시 서식 도구 적용 헬퍼
   const applyFormat = (prefix: string, suffix: string = '') => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -99,22 +238,47 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
     }, 10);
   };
 
-  // 표 삽입 헬퍼
   const insertTable = () => {
     const sampleTable = `\n| 항목 | 내용 | 비고 |\n| --- | --- | --- |\n| 항목 1 | 내용 입력 |  |\n| 항목 2 | 내용 입력 |  |\n`;
     applyFormat(sampleTable);
   };
 
-  // 저장 및 메모 반영 핸들러
-  const handleSave = async () => {
+  // 저장 트리거 (손실 경고 검사)
+  const triggerSave = () => {
+    if (lossReport && lossReport.unsupportedList.length > 0) {
+      setShowLossWarningModal(true);
+      return;
+    }
+    executeSave();
+  };
+
+  // 실제 저장 실행
+  const executeSave = async () => {
+    setShowLossWarningModal(false);
     setIsSaving(true);
     setSaveToast(null);
     setErrorToast(null);
 
     try {
-      const updatedDataUrl = await generateDocxDataUrl(docTitle, content);
+      let updatedDataUrl = '';
+
+      if (engine === 'superdoc' && superdocRef.current) {
+        const exportedBlob = await superdocRef.current.export({ exportType: ['docx'], triggerDownload: false });
+        const reader = new FileReader();
+        await new Promise<void>((resolve, reject) => {
+          reader.onloadend = () => {
+            updatedDataUrl = reader.result as string;
+            resolve();
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(exportedBlob);
+        });
+      } else {
+        updatedDataUrl = await generateDocxDataUrl(docTitle, content);
+      }
+
       if (onSave) {
-        await onSave(updatedDataUrl);
+        await onSave(updatedDataUrl, engine);
       }
       setHasChanges(false);
       setSaveToast('워드 문서가 성공적으로 저장 및 메모에 반영되었습니다!');
@@ -130,36 +294,62 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
   // 다운로드 핸들러
   const handleDownload = async () => {
     try {
-      const exportUrl = await generateDocxDataUrl(docTitle, content);
-      const link = document.createElement('a');
-      link.href = exportUrl;
-      link.download = `${docTitle}.docx`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      if (engine === 'superdoc' && superdocRef.current) {
+        const exportedBlob = await superdocRef.current.export({ exportType: ['docx'] });
+        const url = URL.createObjectURL(exportedBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${docTitle}.docx`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      } else {
+        const exportUrl = await generateDocxDataUrl(docTitle, content);
+        const link = document.createElement('a');
+        link.href = exportUrl;
+        link.download = `${docTitle}.docx`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
     } catch (err) {
       console.error('다운로드 생성 실패:', err);
-      alert('파일을 생성하지 못했습니다.');
+      alert('파일을 다운로드하지 못했습니다.');
     }
   };
 
-  // 닫기 핸들러
-  const handleClose = () => {
+  // 닫기 요청 핸들러
+  const handleRequestClose = () => {
     if (hasChanges) {
-      if (!confirm('저장되지 않은 수정 내용이 있습니다. 닫으시겠습니까?')) {
-        return;
-      }
+      setShowExitConfirm(true);
+      return;
     }
     onClose();
+  };
+
+  // 원본으로 되돌리기 실행
+  const handleExecuteRestore = async () => {
+    setShowRestoreConfirm(false);
+    if (onRestoreOriginal) {
+      try {
+        await onRestoreOriginal();
+        setHasChanges(false);
+        setSaveToast('원본 버전으로 되돌렸습니다.');
+        setTimeout(() => setSaveToast(null), 3000);
+      } catch (err) {
+        console.error('원본 되돌리기 실패:', err);
+        setErrorToast('원본으로 되돌리지 못했습니다.');
+      }
+    }
   };
 
   if (!isOpen) return null;
 
   return (
     <div className={floating.modalWrapperClass}>
-      {/* 팝업 컨테이너 (완전 불투명) */}
       <div {...floating.windowContainerProps}>
-        {/* 상단 1단: 제목 & 저장 / 다운로드 / 닫기 헤더 */}
+        {/* 상단 1단: 헤더 */}
         <div 
           {...floating.headerProps}
           className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0"
@@ -193,7 +383,7 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
             </div>
           </div>
 
-          {/* 우측 저장 및 닫기 버튼 */}
+          {/* 우측 도구: 엔진 선택, 저장, 다운로드, 원본 되돌리기, 닫기 */}
           <div className="flex items-center gap-2 shrink-0">
             {saveToast && (
               <div className="hidden sm:flex items-center gap-1.5 text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-lg">
@@ -208,171 +398,211 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
               </div>
             )}
 
-            {/* 보기 모드 전환 (편집, 분할, 미리보기) */}
-            <div className="hidden sm:flex items-center gap-0.5 bg-slate-950 border border-slate-800 rounded-lg p-0.5 text-xs">
-              <button
-                type="button"
-                onClick={() => setViewMode('edit')}
-                className={`px-2 py-1 rounded transition-colors ${
-                  viewMode === 'edit' ? 'bg-slate-800 text-blue-400 font-bold' : 'text-slate-400 hover:text-slate-200'
-                }`}
-                title="편집 전용"
+            {/* 편집 엔진 선택 셀렉터 */}
+            <div className="flex items-center gap-1 bg-slate-950/70 border border-slate-800 rounded-lg px-2 py-1 text-xs">
+              <span className="text-[10px] text-slate-400 font-medium">엔진:</span>
+              <select
+                value={engine}
+                onChange={(e) => setEngine(e.target.value as 'superdoc' | 'legacy')}
+                className="bg-transparent text-slate-200 text-xs font-semibold focus:outline-none cursor-pointer"
+                title="워드 편집 엔진을 전환합니다."
               >
-                <Edit3 size={13} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('split')}
-                className={`px-2 py-1 rounded transition-colors ${
-                  viewMode === 'split' ? 'bg-slate-800 text-blue-400 font-bold' : 'text-slate-400 hover:text-slate-200'
-                }`}
-                title="분할 보기"
-              >
-                반반
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('preview')}
-                className={`px-2 py-1 rounded transition-colors ${
-                  viewMode === 'preview' ? 'bg-slate-800 text-blue-400 font-bold' : 'text-slate-400 hover:text-slate-200'
-                }`}
-                title="인쇄 용지 미리보기"
-              >
-                <Eye size={13} />
-              </button>
+                <option value="superdoc" className="bg-slate-900 text-slate-100">
+                  SuperDoc (워드 정품 서식 보존)
+                </option>
+                <option value="legacy" className="bg-slate-900 text-slate-100">
+                  레거시 (텍스트/마크다운)
+                </option>
+              </select>
             </div>
 
-            {/* 저장 및 반영 버튼 */}
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={isSaving}
-              className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold shadow-md flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-50"
-              title="워드 파일에 저장하고 본문 뷰어에 즉시 반영"
-            >
-              {isSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-              <span>{isSaving ? '저장 중...' : '💾 저장 및 반영'}</span>
-            </button>
+            {/* 원본으로 되돌리기 버튼 */}
+            {originalData && onRestoreOriginal && (
+              <button
+                type="button"
+                onClick={() => setShowRestoreConfirm(true)}
+                className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 hover:border-amber-500/40 rounded-lg text-xs font-medium flex items-center gap-1 transition-all"
+                title={`최초 편집 전 원본 버전(${originalDate || '이전'})으로 되돌립니다.`}
+              >
+                <RotateCcw size={13} />
+                <span className="hidden sm:inline">원본 되돌리기</span>
+              </button>
+            )}
+
+            {/* 레거시 보기 모드 전환 (편집, 분할, 미리보기) */}
+            {engine === 'legacy' && (
+              <div className="hidden sm:flex items-center gap-0.5 bg-slate-950 border border-slate-800 rounded-lg p-0.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('edit')}
+                  className={`px-2 py-1 rounded transition-colors ${
+                    viewMode === 'edit' ? 'bg-slate-800 text-blue-400 font-bold' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="편집 전용"
+                >
+                  <Edit3 size={13} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('split')}
+                  className={`px-2 py-1 rounded transition-colors ${
+                    viewMode === 'split' ? 'bg-slate-800 text-blue-400 font-bold' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="분할 보기"
+                >
+                  반반
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('preview')}
+                  className={`px-2 py-1 rounded transition-colors ${
+                    viewMode === 'preview' ? 'bg-slate-800 text-blue-400 font-bold' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="인쇄 용지 미리보기"
+                >
+                  <Eye size={13} />
+                </button>
+              </div>
+            )}
 
             {/* 다운로드 버튼 */}
             <button
               type="button"
               onClick={handleDownload}
-              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition-colors"
-              title="수정된 워드(.docx) 파일 다운로드"
+              className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-colors border border-slate-800"
+              title="워드 문서(.docx) 다운로드"
             >
               <Download size={15} />
             </button>
 
-            {floating.toggleFloatingButton}
+            {/* 저장 및 반영 버튼 */}
+            <button
+              type="button"
+              onClick={triggerSave}
+              disabled={isSaving}
+              className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold shadow-md flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-50"
+              title="Ctrl+S: 저장 후 메모에 즉시 반영"
+            >
+              {isSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+              <span>{isSaving ? '저장 중...' : '저장 및 반영'}</span>
+            </button>
 
             {/* 닫기 버튼 */}
             <button
               type="button"
-              onClick={handleClose}
-              className="p-1.5 bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-300 rounded-lg border border-slate-700 transition-colors"
-              title="닫기 (Esc)"
+              onClick={handleRequestClose}
+              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+              title="닫기"
             >
-              <X size={16} />
+              <X size={18} />
             </button>
           </div>
         </div>
 
-        {/* 상단 2단: 서식 툴바 */}
-        <div className="px-3 py-1.5 bg-slate-950/70 border-b border-slate-800 flex flex-wrap items-center gap-1.5 shrink-0 text-xs">
-          <button
-            type="button"
-            onClick={() => applyFormat('**', '**')}
-            className="p-1.5 hover:bg-slate-800 text-slate-300 hover:text-white rounded"
-            title="굵게 (Bold)"
-          >
-            <Bold size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => applyFormat('*', '*')}
-            className="p-1.5 hover:bg-slate-800 text-slate-300 hover:text-white rounded"
-            title="기울임 (Italic)"
-          >
-            <Italic size={14} />
-          </button>
+        {/* 상단 2단: 레거시 모드 마크다운 서식 툴바 */}
+        {engine === 'legacy' && (
+          <div className="px-4 py-1.5 bg-slate-900/90 border-b border-slate-800/80 flex items-center gap-1 overflow-x-auto text-xs shrink-0">
+            <button
+              type="button"
+              onClick={() => applyFormat('**', '**')}
+              className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+              title="굵게 (**텍스트**)"
+            >
+              <Bold size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => applyFormat('*', '*')}
+              className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+              title="기울임 (*텍스트*)"
+            >
+              <Italic size={14} />
+            </button>
+            <div className="h-4 w-px bg-slate-800 mx-1" />
+            <button
+              type="button"
+              onClick={() => applyFormat('# ')}
+              className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+              title="제목 1 (# )"
+            >
+              <Heading1 size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => applyFormat('## ')}
+              className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+              title="제목 2 (## )"
+            >
+              <Heading2 size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => applyFormat('### ')}
+              className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+              title="제목 3 (### )"
+            >
+              <Heading3 size={14} />
+            </button>
+            <div className="h-4 w-px bg-slate-800 mx-1" />
+            <button
+              type="button"
+              onClick={() => applyFormat('- ')}
+              className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+              title="글머리 기호 목록 (- )"
+            >
+              <List size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => applyFormat('1. ')}
+              className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+              title="번호 매기기 목록 (1. )"
+            >
+              <ListOrdered size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => applyFormat('> ')}
+              className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+              title="인용구 (> )"
+            >
+              <Quote size={14} />
+            </button>
+            <div className="h-4 w-px bg-slate-800 mx-1" />
+            <button
+              type="button"
+              onClick={insertTable}
+              className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+              title="표 삽입"
+            >
+              <Table size={14} />
+            </button>
+          </div>
+        )}
 
-          <span className="w-px h-4 bg-slate-800 mx-1"></span>
-
-          <button
-            type="button"
-            onClick={() => applyFormat('# ')}
-            className="p-1.5 hover:bg-slate-800 text-slate-300 hover:text-white rounded"
-            title="제목 1"
-          >
-            <Heading1 size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => applyFormat('## ')}
-            className="p-1.5 hover:bg-slate-800 text-slate-300 hover:text-white rounded"
-            title="제목 2"
-          >
-            <Heading2 size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => applyFormat('### ')}
-            className="p-1.5 hover:bg-slate-800 text-slate-300 hover:text-white rounded"
-            title="제목 3"
-          >
-            <Heading3 size={14} />
-          </button>
-
-          <span className="w-px h-4 bg-slate-800 mx-1"></span>
-
-          <button
-            type="button"
-            onClick={() => applyFormat('- ')}
-            className="p-1.5 hover:bg-slate-800 text-slate-300 hover:text-white rounded"
-            title="글머리 기호 목록"
-          >
-            <List size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => applyFormat('1. ')}
-            className="p-1.5 hover:bg-slate-800 text-slate-300 hover:text-white rounded"
-            title="번호 매기기 목록"
-          >
-            <ListOrdered size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => applyFormat('> ')}
-            className="p-1.5 hover:bg-slate-800 text-slate-300 hover:text-white rounded"
-            title="인용구"
-          >
-            <Quote size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={insertTable}
-            className="p-1.5 hover:bg-slate-800 text-slate-300 hover:text-white rounded flex items-center gap-1"
-            title="표 삽입"
-          >
-            <Table size={14} />
-            <span className="text-[11px]">표</span>
-          </button>
-        </div>
-
-        {/* 에디터 메인 작업 영역 */}
-        <div className="flex-1 overflow-hidden flex flex-col md:flex-row bg-slate-950">
-          {isLoading ? (
-            <div className="w-full flex items-center justify-center gap-2 py-20 text-slate-400 text-xs">
-              <Loader2 size={16} className="animate-spin text-blue-500" />
-              <span>워드 문서 텍스트를 불러오는 중입니다...</span>
+        {/* 바디 컨테이너 */}
+        <div className="flex-1 relative overflow-hidden bg-slate-950 flex flex-col">
+          {isLoading && (
+            <div className="absolute inset-0 z-30 bg-slate-900/80 backdrop-blur-xs flex flex-col items-center justify-center gap-3 text-slate-300">
+              <Loader2 size={32} className="animate-spin text-blue-400" />
+              <p className="text-sm font-medium">
+                {engine === 'superdoc' ? 'SuperDoc 워드 편집기를 불러오는 중입니다...' : '문서 내용을 파싱하는 중입니다...'}
+              </p>
             </div>
+          )}
+
+          {/* SuperDoc WYSIWYG 편집기 */}
+          {engine === 'superdoc' ? (
+            <div
+              ref={containerRef}
+              className="w-full h-full superdoc-editor-container bg-white text-slate-900 overflow-hidden"
+              style={{ minHeight: '100%', width: '100%' }}
+            />
           ) : (
-            <>
-              {/* 왼쪽: 에디터 텍스트 영역 */}
+            /* 레거시 마크다운 편집기 */
+            <div className="flex-1 flex overflow-hidden">
               {(viewMode === 'edit' || viewMode === 'split') && (
-                <div className={`h-full overflow-auto p-4 flex flex-col ${viewMode === 'split' ? 'w-full md:w-1/2 border-r border-slate-800' : 'w-full'}`}>
+                <div className={`h-full flex flex-col ${viewMode === 'split' ? 'w-1/2 border-r border-slate-800' : 'w-full'}`}>
                   <textarea
                     ref={textareaRef}
                     value={content}
@@ -380,39 +610,150 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
                       setContent(e.target.value);
                       setHasChanges(true);
                     }}
-                    placeholder="워드 문서 본문 내용을 입력하거나 수정하세요..."
-                    className="w-full h-full bg-slate-900/60 text-slate-200 text-sm font-sans p-4 rounded-xl border border-slate-800 focus:outline-none focus:border-blue-500 resize-none leading-relaxed"
+                    placeholder="워드 문서 내용을 마크다운으로 편집하세요..."
+                    className="flex-1 w-full p-4 bg-slate-950 text-slate-100 font-mono text-xs md:text-sm resize-none focus:outline-none focus:ring-0 leading-relaxed overflow-y-auto"
+                    spellCheck={false}
                   />
                 </div>
               )}
 
-              {/* 오른쪽: 워드 용지(A4) 스타일 실시간 레이아웃 미리보기 */}
               {(viewMode === 'preview' || viewMode === 'split') && (
-                <div className={`h-full overflow-y-auto overflow-x-auto p-4 md:p-8 bg-slate-950 ${viewMode === 'split' ? 'w-full md:w-1/2' : 'w-full'}`}>
-                  <div className="w-full max-w-[760px] mx-auto bg-white text-slate-900 shadow-2xl rounded-sm p-8 md:p-12 font-serif text-sm leading-relaxed select-text min-h-fit mb-12">
-                    {docTitle && (
-                      <h1 className="text-2xl font-bold text-center border-b border-slate-200 pb-4 mb-6 text-slate-900">
-                        {docTitle}
-                      </h1>
-                    )}
+                <div className={`h-full overflow-y-auto bg-slate-900/50 p-6 flex justify-center ${viewMode === 'split' ? 'w-1/2' : 'w-full'}`}>
+                  <div className="w-full max-w-3xl bg-white text-slate-900 shadow-xl rounded-sm p-8 min-h-full">
+                    <h1 className="text-2xl font-bold border-b pb-2 mb-6 text-slate-900">{docTitle}</h1>
                     <div
-                      className="prose prose-slate max-w-none text-slate-900 prose-headings:font-serif prose-headings:text-slate-900 prose-p:my-2 [&_table]:w-full [&_table]:border-collapse [&_table]:my-4 [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-2.5 [&_th]:text-xs [&_th]:font-bold [&_th]:text-slate-800 [&_td]:border [&_td]:border-slate-300 [&_td]:p-2 [&_td]:text-xs [&_td]:text-slate-800"
-                      dangerouslySetInnerHTML={{ __html: marked.parse(content) as string }}
+                      className="prose prose-slate max-w-none text-sm leading-relaxed"
+                      dangerouslySetInnerHTML={{
+                        __html: marked.parse(content || '*문서 내용이 비어 있습니다.*') as string,
+                      }}
                     />
                   </div>
                 </div>
               )}
-            </>
+            </div>
           )}
         </div>
 
-        {/* 하단 상태 바 */}
-        <div className="px-4 py-2 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
-          <span>문서 글자 수: {content.length}자</span>
-          <span className="hidden sm:inline">💾 [저장 및 반영]을 클릭하면 워드(.docx) 규격으로 자동 인코딩되어 메모와 동기화됩니다.</span>
-        </div>
+        {/* 1. 닫기 전 변경사항 경고 모달 */}
+        {showExitConfirm && (
+          <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+              <div className="flex items-center gap-3 text-amber-400">
+                <AlertTriangle size={24} />
+                <h3 className="font-bold text-sm text-slate-100">저장되지 않은 변경사항</h3>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                수정된 워드 문서 내용이 아직 저장되지 않았습니다.<br />
+                저장하지 않고 닫으시면 변경된 서식과 텍스트가 모두 손실됩니다.
+              </p>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowExitConfirm(false)}
+                  className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200"
+                >
+                  계속 편집
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowExitConfirm(false);
+                    onClose();
+                  }}
+                  className="px-3 py-1.5 text-xs bg-rose-600/80 hover:bg-rose-600 text-white rounded-lg font-medium"
+                >
+                  저장 안 함
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowExitConfirm(false);
+                    triggerSave();
+                  }}
+                  className="px-3.5 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-semibold shadow-md"
+                >
+                  저장하고 닫기
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
-        {floating.resizeHandle}
+        {/* 2. 원본 되돌리기 확인 모달 */}
+        {showRestoreConfirm && (
+          <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+              <div className="flex items-center gap-3 text-amber-400">
+                <RotateCcw size={22} />
+                <h3 className="font-bold text-sm text-slate-100">원본 버전으로 되돌리기</h3>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                편집을 시작하기 전의 최초 워드 문서 원본 상태로 되돌립니다.<br />
+                <span className="text-slate-400 text-[11px] mt-1 block">
+                  (백업 시점: {originalDate || '편집 시작 전'})
+                </span>
+                되돌리기를 실행하면 현재 수정한 모든 내용이 취소됩니다. 진행하시겠습니까?
+              </p>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowRestoreConfirm(false)}
+                  className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteRestore}
+                  className="px-3.5 py-1.5 text-xs bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-semibold shadow-md"
+                >
+                  원본으로 되돌리기
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 3. 손실 경고 다이얼로그 */}
+        {showLossWarningModal && lossReport && (
+          <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-amber-500/30 rounded-xl max-w-md w-full p-5 shadow-2xl space-y-4">
+              <div className="flex items-center gap-3 text-amber-400">
+                <AlertTriangle size={24} className="shrink-0" />
+                <h3 className="font-bold text-sm text-slate-100">워드 서식 보존 주의 안내</h3>
+              </div>
+              <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
+                <p>
+                  이 워드 파일에는 웹 오피스 엔진에서 완벽히 보존되지 않을 수 있는 특수 요소가 포함되어 있습니다:
+                </p>
+                <ul className="list-disc list-inside bg-slate-950/60 p-2.5 rounded-lg border border-slate-800 text-amber-300/90 font-medium space-y-1">
+                  {lossReport.unsupportedList.map((item, idx) => (
+                    <li key={idx}>{item}</li>
+                  ))}
+                </ul>
+                <p className="text-[11px] text-slate-400">
+                  위 요소를 제외한 본문 문단 서식, 글꼴, 표, 이미지 등은 원본대로 안전하게 보존됩니다.
+                </p>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowLossWarningModal(false)}
+                  className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  onClick={executeSave}
+                  className="px-3.5 py-1.5 text-xs bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-semibold shadow-md"
+                >
+                  그래도 저장
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
