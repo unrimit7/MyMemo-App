@@ -343,16 +343,22 @@ export function App() {
           try { localStorage.setItem('mymemo_active_project_id', 'ALL'); } catch {}
         }
 
-        if (savedNoteId && loadedNotes.some((n) => n.id === savedNoteId)) {
+        const currentFolderId = (savedProjId && savedProjId !== 'ALL' && loadedProjects.some((p) => p.id === savedProjId))
+          ? savedProjId
+          : 'ALL';
+
+        const folderNotes = loadedNotes
+          .filter((n) => currentFolderId === 'ALL' || n.projectId === currentFolderId)
+          .sort((a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime());
+
+        if (savedNoteId && folderNotes.some((n) => n.id === savedNoteId)) {
           setActiveNoteId(savedNoteId);
-        } else if (loadedNotes.length > 0) {
-          // 선택된 폴더가 있다면 그 폴더 내의 첫 메모를 우선 선택
-          const notesInProj = savedProjId && savedProjId !== 'ALL'
-            ? loadedNotes.filter((n) => n.projectId === savedProjId)
-            : loadedNotes;
-          const targetNote = notesInProj[0] || loadedNotes[0];
-          setActiveNoteId(targetNote.id);
-          try { localStorage.setItem('mymemo_active_note_id', targetNote.id); } catch {}
+        } else if (folderNotes.length > 0) {
+          setActiveNoteId(folderNotes[0].id);
+          try { localStorage.setItem('mymemo_active_note_id', folderNotes[0].id); } catch {}
+        } else {
+          setActiveNoteId(null);
+          try { localStorage.removeItem('mymemo_active_note_id'); } catch {}
         }
 
         // 설정이 연결되어 있고 '앱 시작 시 자동 동기화(syncOnStartup)' 또는 '실시간 자동 동기화(autoSync)' 옵션이 켜져 있을 때만 앱 시작 시 동기화
@@ -1014,6 +1020,25 @@ export function App() {
       }
     } catch {}
     setIsCalendarOpen(false);
+
+    // 해당 폴더의 메모 목록 조회 (최신순 정렬)
+    const folderNotes = notes
+      .filter((n) => (id === 'ALL' ? true : n.projectId === id))
+      .sort((a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime());
+
+    if (folderNotes.length > 0) {
+      const latestNoteId = folderNotes[0].id;
+      setActiveNoteId(latestNoteId);
+      try {
+        localStorage.setItem('mymemo_active_note_id', latestNoteId);
+      } catch {}
+    } else {
+      // 해당 폴더에 메모가 없으면 에디터의 이전 메모 표시를 비움
+      setActiveNoteId(null);
+      try {
+        localStorage.removeItem('mymemo_active_note_id');
+      } catch {}
+    }
   };
 
   // 캘린더 메모카드 클릭 시 모달 미리보기 설정 (기본값: true)
@@ -1721,6 +1746,7 @@ export function App() {
               projects={projects}
               allNotes={notes}
               onSelectNote={handleSelectNote}
+              onCreateNote={handleCreateNote}
               onCreateNoteWithTitle={handleCreateNoteWithTitle}
               onSearchTag={handleSearchTag}
               onOpenQuickSwitcher={() => setIsQuickSwitcherOpen(true)}

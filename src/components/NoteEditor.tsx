@@ -116,6 +116,7 @@ interface NoteEditorProps {
   projects: Project[];
   allNotes?: Note[];
   onSelectNote?: (id: string) => void;
+  onCreateNote?: () => void;
   onCreateNoteWithTitle?: (title: string) => void;
   onSearchTag?: (tag: string) => void;
   onOpenQuickSwitcher?: () => void;
@@ -136,6 +137,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   projects,
   allNotes = [],
   onSelectNote,
+  onCreateNote,
   onCreateNoteWithTitle,
   onSearchTag,
   onOpenQuickSwitcher,
@@ -1215,10 +1217,23 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
   if (!note) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-slate-950 text-slate-500 p-6 text-center">
-        <Edit3 size={40} className="mb-3 opacity-30 text-indigo-400" />
-        <p className="text-sm font-medium">선택된 메모가 없습니다.</p>
-        <p className="text-xs text-slate-600 mt-1">좌측 목록에서 메모를 선택하거나 새 메모를 작성해 보세요.</p>
+      <div className="flex-1 flex flex-col items-center justify-center bg-slate-950 text-slate-500 p-6 text-center select-none">
+        <div className="w-16 h-16 rounded-2xl bg-slate-900/80 border border-slate-800/80 flex items-center justify-center mb-4 text-indigo-400/70 shadow-inner">
+          <Edit3 size={32} />
+        </div>
+        <p className="text-sm font-semibold text-slate-300">선택된 메모가 없습니다</p>
+        <p className="text-xs text-slate-500 mt-1.5 max-w-sm leading-relaxed">
+          좌측 목록에서 메모를 선택하거나, 아래 버튼을 눌러 새 메모를 작성해 보세요.
+        </p>
+        {onCreateNote && (
+          <button
+            onClick={onCreateNote}
+            className="mt-5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-all shadow-md hover:shadow-indigo-500/20 flex items-center gap-1.5 active:scale-95 cursor-pointer"
+          >
+            <Plus size={15} />
+            새 메모 작성
+          </button>
+        )}
       </div>
     );
   }
