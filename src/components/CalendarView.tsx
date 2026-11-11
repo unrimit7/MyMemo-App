@@ -4,6 +4,7 @@ import {
   ChevronLeft, 
   ChevronRight, 
   ChevronDown,
+  ChevronUp,
   Plus, 
   X, 
   Check, 
@@ -50,6 +51,37 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     const d = String(today.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
   });
+
+  // 특정 날짜 '+N개 더보기' 클릭 시 펼쳐서 표시할 날짜 (YYYY-MM-DD)
+  const [expandedDateStr, setExpandedDateStr] = useState<string | null>(null);
+  const expandedPanelRef = useRef<HTMLDivElement>(null);
+
+  // 확대된 날짜 목록 밖을 클릭하거나 Esc를 누르면 자동으로 접기
+  useEffect(() => {
+    if (!expandedDateStr) return;
+
+    const handlePointerDown = (e: MouseEvent | TouchEvent) => {
+      if (expandedPanelRef.current && !expandedPanelRef.current.contains(e.target as Node)) {
+        setExpandedDateStr(null);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setExpandedDateStr(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [expandedDateStr]);
 
   // 특정 폴더의 모든 하위(자식, 손자 등) 폴더 ID 목록 추출 헬퍼 함수
   const getFolderWithDescendants = useCallback((rootId: string): string[] => {
@@ -157,6 +189,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
 
   // 이전 달 / 다음 달 / 오늘 이동
   const handlePrevMonth = () => {
+    setExpandedDateStr(null);
     if (currentMonth === 0) {
       setCurrentYear((y) => y - 1);
       setCurrentMonth(11);
@@ -166,6 +199,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   };
 
   const handleNextMonth = () => {
+    setExpandedDateStr(null);
     if (currentMonth === 11) {
       setCurrentYear((y) => y + 1);
       setCurrentMonth(0);
@@ -175,6 +209,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   };
 
   const handleGoToday = () => {
+    setExpandedDateStr(null);
     const now = new Date();
     setCurrentYear(now.getFullYear());
     setCurrentMonth(now.getMonth());
@@ -608,6 +643,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           const isDragOver = dragOverDateStr === item.dateStr;
           const isSunday = idx % 7 === 0;
           const isSaturday = idx % 7 === 6;
+          const isExpanded = expandedDateStr === item.dateStr;
 
           return (
             <div
@@ -644,7 +680,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                 !item.isCurrentMonth ? 'bg-slate-950/40 opacity-40' : 'bg-slate-950 hover:bg-slate-900/50'
               } ${isSelected ? 'ring-2 ring-indigo-500/80 ring-inset bg-indigo-950/20' : ''} ${
                 isDragOver ? 'ring-2 ring-indigo-400 bg-indigo-950/70 scale-[1.01] z-20 shadow-xl' : ''
-              }`}
+              } ${isExpanded ? 'z-30' : ''}`}
             >
               {/* 날짜 상단 바 (숫자 + 추가 버튼) */}
               <div className="flex items-center justify-between mb-1">
@@ -730,18 +766,163 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                   );
                 })}
 
-                {/* 모바일에서는 1개 초과 시 '+N개' 배지 표시, 데스크톱에서는 3개 초과 시 표시 */}
+                {/* 모바일에서는 1개 초과 시 '+N개' 배지 버튼, 데스크톱에서는 3개 초과 시 '+N개 더보기' 버튼 */}
                 {dayNotes.length > 1 && (
-                  <span className="md:hidden text-[9px] text-indigo-400 font-bold px-1 py-0.5 bg-indigo-950/60 rounded border border-indigo-500/20 w-fit shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedDateStr(item.dateStr);
+                      setExpandedDateStr(isExpanded ? null : item.dateStr);
+                    }}
+                    className="md:hidden text-[9px] text-indigo-300 font-bold px-1 py-0.5 bg-indigo-950/80 hover:bg-indigo-900 rounded border border-indigo-500/30 w-fit shrink-0 active:scale-95 cursor-pointer"
+                    title="클릭하여 전체 메모 목록 아래로 펼치기"
+                  >
                     +{dayNotes.length - 1}개
-                  </span>
+                  </button>
                 )}
                 {dayNotes.length > 3 && (
-                  <span className="hidden md:inline text-[10px] text-indigo-400 font-semibold px-1">
-                    +{dayNotes.length - 3}개 더보기
-                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedDateStr(item.dateStr);
+                      setExpandedDateStr(isExpanded ? null : item.dateStr);
+                    }}
+                    className="hidden md:flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-200 font-bold px-1.5 py-0.5 rounded-md hover:bg-indigo-600/20 border border-transparent hover:border-indigo-500/30 transition-all text-left w-fit active:scale-95 cursor-pointer mt-0.5"
+                    title="클릭하여 전체 메모 목록 아래로 펼쳐보기"
+                  >
+                    <span>+{dayNotes.length - 3}개 더보기</span>
+                    <ChevronDown size={11} className="text-indigo-400" />
+                  </button>
                 )}
               </div>
+
+              {/* 아래로 확대 펼침 팝업 패널 */}
+              {isExpanded && (
+                <div
+                  ref={expandedPanelRef}
+                  onClick={(e) => e.stopPropagation()}
+                  className={`absolute top-0 z-40 bg-slate-900/98 backdrop-blur-md border-2 border-indigo-500 rounded-xl shadow-2xl p-2.5 flex flex-col gap-1.5 animate-in fade-in zoom-in-95 duration-150 ${
+                    idx % 7 >= 5 ? 'right-0' : 'left-0'
+                  }`}
+                  style={{ minWidth: '100%', width: 'max(100%, 220px)' }}
+                >
+                  {/* 상단 헤더: 날짜 뱃지 + 요일 + 개수 + 새 메모 / 닫기 버튼 */}
+                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 shrink-0">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span
+                        className={`text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full shrink-0 ${
+                          isToday
+                            ? 'bg-indigo-600 text-white font-black shadow-md shadow-indigo-600/30'
+                            : isSunday
+                              ? 'text-rose-400 bg-rose-500/10'
+                              : isSaturday
+                                ? 'text-sky-400 bg-sky-500/10'
+                                : 'text-slate-200 bg-slate-800'
+                        }`}
+                      >
+                        {item.dayNum}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-bold text-slate-100 flex items-center gap-1">
+                          <span>{item.dayNum}일 ({['일','월','화','수','목','금','토'][idx % 7]})</span>
+                          <span className="text-[10px] text-indigo-400 font-semibold bg-indigo-500/10 px-1 rounded border border-indigo-500/20">
+                            전체 {dayNotes.length}개
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => onCreateNoteForDate(item.dateStr, createFolderId)}
+                        className="p-1 text-slate-400 hover:text-indigo-400 hover:bg-slate-800 rounded transition-all"
+                        title={`${item.dateStr} 새 메모 추가`}
+                      >
+                        <Plus size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedDateStr(null)}
+                        className="p-1 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded transition-all"
+                        title="접기 (Esc)"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 전체 메모 카드 목록 (스크롤 가능, 모든 메모 클릭 및 드래그 지원) */}
+                  <div className="flex-1 flex flex-col gap-1 overflow-y-auto max-h-[260px] pr-0.5 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+                    {dayNotes.map((note) => {
+                      const hasUndoneTask = note.content.includes('- [ ]');
+                      const hasDoneTask = note.content.includes('- [x]') || note.content.includes('- [X]');
+                      const folder = projectMap[note.projectId];
+                      const isDraggingThis = draggedNoteId === note.id;
+
+                      return (
+                        <button
+                          key={note.id}
+                          type="button"
+                          draggable={true}
+                          onDragStart={(e) => {
+                            e.stopPropagation();
+                            e.dataTransfer.setData('text/plain', note.id);
+                            e.dataTransfer.effectAllowed = 'move';
+                            setDraggedNoteId(note.id);
+                          }}
+                          onDragEnd={() => {
+                            setDraggedNoteId(null);
+                            setDragOverDateStr(null);
+                          }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpandedDateStr(null);
+                            onSelectNote(note.id);
+                          }}
+                          className={`w-full text-left p-1.5 px-2 rounded-lg bg-slate-800/90 hover:bg-indigo-600/35 border border-slate-700/80 hover:border-indigo-500/60 transition-all flex items-center gap-1.5 group/card active:scale-98 shadow-xs cursor-grab active:cursor-grabbing ${
+                            isDraggingThis ? 'opacity-40 scale-95 ring-1 ring-indigo-400' : ''
+                          }`}
+                          title={`[${folder?.name || '폴더'}] ${note.title} (클릭하여 열기 / 다른 날짜로 드래그 이동)`}
+                        >
+                          {hasUndoneTask ? (
+                            <span className="text-amber-400 shrink-0 text-xs font-bold leading-none">☐</span>
+                          ) : hasDoneTask ? (
+                            <Check size={12} className="text-emerald-400 shrink-0" />
+                          ) : note.isLocalOnly ? (
+                            <Lock size={12} className="text-amber-400 shrink-0" />
+                          ) : (
+                            <span className="text-indigo-400 shrink-0 text-xs font-bold leading-none">•</span>
+                          )}
+
+                          <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                            {folder && (
+                              <span className="text-[10px] text-slate-400 font-mono truncate max-w-[80px] shrink-0">
+                                [{folder.name}]
+                              </span>
+                            )}
+                            <span className="truncate text-xs text-slate-200 group-hover/card:text-white font-medium flex-1">
+                              {note.title || '제목 없음'}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* 하단 접기 버튼 */}
+                  <button
+                    type="button"
+                    onClick={() => setExpandedDateStr(null)}
+                    className="w-full py-1 text-center text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold bg-indigo-950/50 hover:bg-indigo-900/60 rounded-lg border border-indigo-500/25 transition-all flex items-center justify-center gap-1 active:scale-98 mt-0.5"
+                  >
+                    <ChevronUp size={12} />
+                    <span>접기</span>
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
