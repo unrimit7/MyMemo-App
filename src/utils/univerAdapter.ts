@@ -194,7 +194,7 @@ export async function dataUrlToUniverWorkbook(
         if (col && col.width) {
           // 엑셀 width 단위를 픽셀로 변환 (약 width * 8 + 5)
           const pxWidth = Math.round(col.width * 8 + 5);
-          columnData[cIdx] = { w: Math.max(40, pxWidth) };
+          columnData[cIdx] = { w: Math.max(10, pxWidth) };
         }
       });
 
@@ -833,10 +833,88 @@ function deduplicateDataValidationsXml(xml: string): string {
   return xml.replace(fullBlock, newBlock);
 }
 
-async function cleanDuplicateDataValidations(buffer: ArrayBuffer | Uint8Array): Promise<Uint8Array> {
+interface DefaultFontInfo {
+  name: string;
+  sz?: string | null;
+  charset?: string | null;
+  family?: string | null;
+  scheme?: string | null;
+  isPyoJun?: boolean;
+}
+
+async function extractDefaultFontInfo(buffer: Uint8Array): Promise<DefaultFontInfo | null> {
+  try {
+    const zip = await JSZip.loadAsync(buffer);
+    const stylesFile = zip.file('xl/styles.xml');
+    if (!stylesFile) return null;
+    let xml = await stylesFile.async('string');
+    // x: 네임스페이스 접두어 정규화
+    xml = xml.replace(/<x:font\b/g, '<font').replace(/<\/x:font>/g, '</font>')
+             .replace(/<x:([A-Za-z0-9_]+)/g, '<$1').replace(/<\/x:([A-Za-z0-9_]+)>/g, '</$1>');
+    const fontsBlock = xml.match(/<fonts[^>]*>([\s\S]*?)<\/fonts>/);
+    if (!fontsBlock) return null;
+    const firstFont = fontsBlock[1].match(/<font\b[\s\S]*?<\/font>/)?.[0];
+    if (!firstFont) return null;
+    const name = firstFont.match(/<name\s+val="([^"]+)"/)?.[1] || null;
+    if (!name) return null;
+    const sz = firstFont.match(/<sz\s+val="([^"]+)"/)?.[1] || null;
+    const charset = firstFont.match(/<charset\s+val="([^"]+)"/)?.[1] || null;
+    const family = firstFont.match(/<family\s+val="([^"]+)"/)?.[1] || null;
+    const scheme = firstFont.match(/<scheme\s+val="([^"]+)"/)?.[1] || null;
+    const isPyoJun = xml.includes('name="표준"');
+    return { name, sz, charset, family, scheme, isPyoJun };
+  } catch {
+    return null;
+  }
+}
+
+function patchStylesXmlDefaultFont(stylesXml: string, fontInfo: DefaultFontInfo): string {
+  if (!fontInfo || !fontInfo.name) return stylesXml;
+  let newXml = stylesXml;
+
+  const fontsBlockMatch = newXml.match(/<fonts[^>]*>([\s\S]*?)<\/fonts>/);
+  if (fontsBlockMatch) {
+    const inner = fontsBlockMatch[1];
+    const firstFontMatch = inner.match(/<font\b[\s\S]*?<\/font>/);
+    if (firstFontMatch) {
+      let font0 = firstFontMatch[0];
+      if (font0.includes('<name')) {
+        font0 = font0.replace(/<name\s+val="[^"]*"\s*\/>/, `<name val="${fontInfo.name}"/>`);
+      } else {
+        font0 = font0.replace('</font>', `<name val="${fontInfo.name}"/></font>`);
+      }
+      if (fontInfo.sz && font0.includes('<sz')) {
+        font0 = font0.replace(/<sz\s+val="[^"]*"\s*\/>/, `<sz val="${fontInfo.sz}"/>`);
+      }
+      if (fontInfo.charset && !font0.includes('<charset')) {
+        font0 = font0.replace('</font>', `<charset val="${fontInfo.charset}"/></font>`);
+      }
+      if (fontInfo.family && font0.includes('<family')) {
+        font0 = font0.replace(/<family\s+val="[^"]*"\s*\/>/, `<family val="${fontInfo.family}"/>`);
+      }
+      if (fontInfo.scheme && font0.includes('<scheme')) {
+        font0 = font0.replace(/<scheme\s+val="[^"]*"\s*\/>/, `<scheme val="${fontInfo.scheme}"/>`);
+      }
+      newXml = newXml.replace(firstFontMatch[0], font0);
+    }
+  }
+
+  if (fontInfo.isPyoJun && newXml.includes('name="Normal"')) {
+    newXml = newXml.replace('name="Normal"', 'name="표준"');
+  }
+
+  return newXml;
+}
+
+async function cleanAndNormalizeWorkbookBuffer(
+  buffer: ArrayBuffer | Uint8Array,
+  origDefaultFont?: DefaultFontInfo | null
+): Promise<Uint8Array> {
   try {
     const zip = await JSZip.loadAsync(buffer);
     let changed = false;
+
+    // 1. 유효성 검사 중복 정리
     for (const [filename, fileObj] of Object.entries(zip.files)) {
       if (filename.startsWith('xl/worksheets/sheet') && filename.endsWith('.xml')) {
         const xml = await fileObj.async('string');
@@ -849,12 +927,26 @@ async function cleanDuplicateDataValidations(buffer: ArrayBuffer | Uint8Array): 
         }
       }
     }
+
+    // 2. styles.xml 기본 글꼴(font 0) 및 Normal 스타일명 복원
+    if (origDefaultFont) {
+      const stylesFile = zip.file('xl/styles.xml');
+      if (stylesFile) {
+        const stylesXml = await stylesFile.async('string');
+        const patchedXml = patchStylesXmlDefaultFont(stylesXml, origDefaultFont);
+        if (patchedXml !== stylesXml) {
+          zip.file('xl/styles.xml', patchedXml);
+          changed = true;
+        }
+      }
+    }
+
     if (!changed) {
       return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
     }
     return await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
   } catch (err) {
-    console.warn('dataValidations 중복 정리 실패 (무시 가능):', err);
+    console.warn('저장 후처리 정규화 실패 (무시 가능):', err);
     return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   }
 }
@@ -881,10 +973,12 @@ export async function univerSnapshotToDataUrl(
   try {
     const wb = new ExcelJS.Workbook();
     let isLoadedFromOriginal = false;
+    let origDefaultFont: DefaultFontInfo | null = null;
 
     if (originalDataOrUrl) {
       try {
         const origRawBytes = dataUrlToUint8Array(originalDataOrUrl);
+        origDefaultFont = await extractDefaultFontInfo(origRawBytes);
         const origBytes = await normalizeHancellXlsx(origRawBytes);
         await wb.xlsx.load(origBytes as any);
         isLoadedFromOriginal = true;
@@ -985,17 +1079,39 @@ export async function univerSnapshotToDataUrl(
         }
       });
 
+      // 0-0. 기존 병합을 먼저 모두 해제하여 각 셀이 독립적인 상태로 데이터를 쓸 수 있도록 준비
+      const existingMerges = [...((ws as any).model?.merges || [])];
+      for (const mStr of existingMerges) {
+        try {
+          (ws as any).unMergeCells(mStr);
+        } catch {}
+      }
+
+      // 0-1. Univer 스냅샷의 현재 병합 목록(uSheet.mergeData)을 기준으로 슬레이브 셀 좌표 Set 구축
+      const currentSlaveCells = new Set<string>();
+      if (uSheet.mergeData && Array.isArray(uSheet.mergeData)) {
+        uSheet.mergeData.forEach((m) => {
+          for (let r = m.startRow; r <= m.endRow; r++) {
+            for (let c = m.startColumn; c <= m.endColumn; c++) {
+              if (r !== m.startRow || c !== m.startColumn) {
+                currentSlaveCells.add(`${r},${c}`);
+              }
+            }
+          }
+        });
+      }
+
       const cellData = uSheet.cellData || {};
 
-      // 0-1. 원본 셀 값 비우기: 원본 워크시트 셀 중 Univer 스냅샷에 없거나 비어있는 셀의 값을 null로 초기화
+      // 0-2. 원본 셀 값 비우기: 원본 워크시트 셀 중 Univer 스냅샷에 없거나 비어있는 셀의 값을 null로 초기화
       ws.eachRow({ includeEmpty: false }, (row: any, rowNumber: number) => {
         const rIdx = rowNumber - 1; // 0-based
         row.eachCell({ includeEmpty: false }, (excelCell: any, colNumber: number) => {
-          // 머지 슬레이브 셀은 마스터의 프록시이므로 비우지 않음!
-          if (excelCell.isMerged && excelCell.master && excelCell.master.address !== excelCell.address) {
+          const cIdx = colNumber - 1; // 0-based
+          // Univer 현재 병합의 슬레이브 셀은 마스터의 영역이므로 임의로 비우지 않음
+          if (currentSlaveCells.has(`${rIdx},${cIdx}`)) {
             return;
           }
-          const cIdx = colNumber - 1; // 0-based
           const uCell = cellData[rIdx]?.[cIdx];
           const isUniverEmpty =
             !uCell ||
@@ -1007,15 +1123,22 @@ export async function univerSnapshotToDataUrl(
         });
       });
 
-      // 1. 열 너비 복원
+      // 1. 열 너비 복원: 사용자가 실제로 크기를 변경한 열만 덮어쓰고, 나머지는 원본 정밀 float 너비 유지
       const colData = uSheet.columnData;
       if (colData) {
         Object.keys(colData).forEach((cStr) => {
           const cIdx = parseInt(cStr, 10);
           const colInfo = colData[cIdx];
           if (colInfo && colInfo.w) {
-            const colWidth = Math.max(8, Math.round((colInfo.w - 5) / 8));
-            ws.getColumn(cIdx + 1).width = colWidth;
+            const col = ws.getColumn(cIdx + 1);
+            if (isLoadedFromOriginal && col.width !== undefined) {
+              const initPx = Math.round(col.width * 8 + 5);
+              if (Math.abs(colInfo.w - initPx) > 2) {
+                col.width = Math.max(1, Math.round(((colInfo.w - 5) / 8) * 100) / 100);
+              }
+            } else if (!isLoadedFromOriginal) {
+              col.width = Math.max(1, Math.round(((colInfo.w - 5) / 8) * 100) / 100);
+            }
           }
         });
       }
@@ -1031,8 +1154,17 @@ export async function univerSnapshotToDataUrl(
         const rowNum = r + 1; // 1-based
         const row = ws.getRow(rowNum);
 
+        // 행 높이: 사용자가 실제로 높이를 변경한 행만 덮어쓰고, 나머지는 원본 정밀 float 높이 유지
         if (uSheet.rowData && uSheet.rowData[r] && uSheet.rowData[r].h) {
-          row.height = Math.round(uSheet.rowData[r].h / 1.33);
+          const origH = row.height;
+          if (isLoadedFromOriginal && origH !== undefined) {
+            const initPxH = Math.round(origH * 1.33);
+            if (Math.abs(uSheet.rowData[r].h - initPxH) > 2) {
+              row.height = Math.round((uSheet.rowData[r].h / 1.33) * 100) / 100;
+            }
+          } else if (!isLoadedFromOriginal) {
+            row.height = Math.round(uSheet.rowData[r].h / 1.33);
+          }
         }
 
         const colKeys = Object.keys(rowObj);
@@ -1041,11 +1173,8 @@ export async function univerSnapshotToDataUrl(
           const cell = rowObj[c];
           if (!cell) continue;
 
-          const colNum = c + 1; // 1-based
-          const excelCell = ws.getCell(rowNum, colNum);
-
-          // 머지 슬레이브 셀은 마스터의 프록시이므로 쓰면 마스터를 덮어써서 오염시킴 -> 건너뜀
-          if (excelCell.isMerged && excelCell.master && excelCell.master.address !== excelCell.address) {
+          // Univer 현재 병합 목록의 슬레이브 위치인 셀은 마스터의 영역이므로 쓰기 건너뜀
+          if (currentSlaveCells.has(`${r},${c}`)) {
             continue;
           }
 
@@ -1053,6 +1182,9 @@ export async function univerSnapshotToDataUrl(
           if (cell.v === '[object Object]') {
             continue;
           }
+
+          const colNum = c + 1; // 1-based
+          const excelCell = ws.getCell(rowNum, colNum);
 
           // 값 및 수식 덮어쓰기
           if (cell.f) {
@@ -1156,14 +1288,8 @@ export async function univerSnapshotToDataUrl(
         }
       }
 
-      // 3. 셀 병합 적용: 기존 병합 해제 후 Univer 최신 병합 목록 적용
+      // 3. 셀 병합 적용: Univer 최신 병합 목록 적용
       if (uSheet.mergeData && Array.isArray(uSheet.mergeData)) {
-        const existingMerges = [...((ws as any).model?.merges || [])];
-        for (const mStr of existingMerges) {
-          try {
-            (ws as any).unMergeCells(mStr);
-          } catch {}
-        }
         uSheet.mergeData.forEach((m) => {
           try {
             ws.mergeCells(m.startRow + 1, m.startColumn + 1, m.endRow + 1, m.endColumn + 1);
@@ -1186,7 +1312,7 @@ export async function univerSnapshotToDataUrl(
     });
 
     const rawBuffer = await wb.xlsx.writeBuffer();
-    const uint8 = await cleanDuplicateDataValidations(rawBuffer);
+    const uint8 = await cleanAndNormalizeWorkbookBuffer(rawBuffer, origDefaultFont);
     let binary = '';
     const len = uint8.byteLength;
     for (let i = 0; i < len; i++) {

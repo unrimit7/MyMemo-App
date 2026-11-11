@@ -93,6 +93,19 @@ async function assertFullWorkbookFidelity(
           expect(savedCell.value).toEqual(origCell.value);
         }
 
+        // 글꼴 속성(이름, 크기, 색상) 검증
+        if (origCell.font) {
+          if (origCell.font.name) {
+            expect(savedCell.font?.name).toBe(origCell.font.name);
+          }
+          if (origCell.font.size) {
+            expect(savedCell.font?.size).toBe(origCell.font.size);
+          }
+          if (origCell.font.color) {
+            expect(savedCell.font?.color).toEqual(origCell.font.color);
+          }
+        }
+
         // 표시 형식(numFmt) 검증
         if (origCell.numFmt) {
           expect(savedCell.numFmt).toBe(origCell.numFmt);
@@ -100,12 +113,38 @@ async function assertFullWorkbookFidelity(
       });
     });
 
-    // 2. 병합(Merges) 개수 및 정확한 범위 일치 검증
+    // 2. 열 너비(Widths) 및 숨김(hidden) 일치 검증 (허용 오차 0.01)
+    const maxCol = Math.max(origWs.columnCount, savedWs.columnCount);
+    for (let c = 1; c <= maxCol; c++) {
+      const origCol = origWs.getColumn(c);
+      const savedCol = savedWs.getColumn(c);
+      if (origCol && origCol.width !== undefined) {
+        expect(savedCol.width).toBeDefined();
+        expect(Math.abs((savedCol.width || 0) - origCol.width)).toBeLessThanOrEqual(0.01);
+      }
+      if (origCol && origCol.hidden !== undefined) {
+        expect(savedCol.hidden).toBe(origCol.hidden);
+      }
+    }
+
+    // 3. 행 높이(Heights) 및 숨김(hidden) 일치 검증 (허용 오차 0.01)
+    origWs.eachRow({ includeEmpty: false }, (origRow, rowNum) => {
+      const savedRow = savedWs.getRow(rowNum);
+      if (origRow.height !== undefined) {
+        expect(savedRow.height).toBeDefined();
+        expect(Math.abs((savedRow.height || 0) - origRow.height)).toBeLessThanOrEqual(0.01);
+      }
+      if (origRow.hidden !== undefined) {
+        expect(savedRow.hidden).toBe(origRow.hidden);
+      }
+    });
+
+    // 4. 병합(Merges) 개수 및 정확한 범위 일치 검증
     const origMerges = [...((origWs as any).model?.merges || [])].sort();
     const savedMerges = [...((savedWs as any).model?.merges || [])].sort();
     expect(savedMerges).toEqual(origMerges);
 
-    // 3. 셀 메모(Notes) 개수 및 주소 일치 검증
+    // 5. 셀 메모(Notes) 개수 및 주소 일치 검증
     const origNotes: string[] = [];
     origWs.eachRow({ includeEmpty: false }, (r) => {
       r.eachCell({ includeEmpty: false }, (c) => {
@@ -121,7 +160,27 @@ async function assertFullWorkbookFidelity(
     expect(savedNotes.sort()).toEqual(origNotes.sort());
   }
 
-  // 4. 데이터 유효성 검사 XML 태그 개수 및 범위 일치 검증
+  // 6. 문서 기본 글꼴 및 Normal 스타일(styles.xml) 일치 검증
+  const zipOrig = await JSZip.loadAsync(origBuf);
+  const zipSaved = await JSZip.loadAsync(savedBuf);
+  const origStylesXml = (await zipOrig.file('xl/styles.xml')?.async('string')) || '';
+  const savedStylesXml = (await zipSaved.file('xl/styles.xml')?.async('string')) || '';
+  const normOrigStyles = origStylesXml.replace(/<x:font\b/g, '<font').replace(/<\/x:font>/g, '</font>')
+                                      .replace(/<x:([A-Za-z0-9_]+)/g, '<$1').replace(/<\/x:([A-Za-z0-9_]+)>/g, '</$1>');
+  const normSavedStyles = savedStylesXml.replace(/<x:font\b/g, '<font').replace(/<\/x:font>/g, '</font>')
+                                        .replace(/<x:([A-Za-z0-9_]+)/g, '<$1').replace(/<\/x:([A-Za-z0-9_]+)>/g, '</$1>');
+  const origFont0Match = normOrigStyles.match(/<fonts[^>]*>([\s\S]*?)<\/fonts>/)?.[1]?.match(/<font\b[\s\S]*?<\/font>/)?.[0];
+  const savedFont0Match = normSavedStyles.match(/<fonts[^>]*>([\s\S]*?)<\/fonts>/)?.[1]?.match(/<font\b[\s\S]*?<\/font>/)?.[0];
+  if (origFont0Match && savedFont0Match) {
+    const origName = origFont0Match.match(/<name\s+val="([^"]+)"/)?.[1];
+    const savedName = savedFont0Match.match(/<name\s+val="([^"]+)"/)?.[1];
+    expect(savedName).toBe(origName);
+  }
+  if (normOrigStyles.includes('name="표준"')) {
+    expect(normSavedStyles.includes('name="표준"')).toBe(true);
+  }
+
+  // 7. 데이터 유효성 검사 XML 태그 개수 및 범위 일치 검증
   const origDvs = await extractDataValidationsFromXml(origBuf);
   const savedDvs = await extractDataValidationsFromXml(savedBuf);
   for (const sheetKey of Object.keys(origDvs)) {
@@ -201,7 +260,49 @@ describe('Excel Full Cell-by-Cell & Feature Roundtrip Comparison Tests', () => {
     }
   });
 
-  // 3. 전체 셀 비교 (전수 검증): 실파일 4종
+  // 3. 병합 해제 후 슬레이브 셀 값 입력 및 저장 검증 (C5:E5 병합 해제 -> D5에 새 값 입력)
+  test('병합 해제 후 슬레이브 셀 값 입력 및 저장 검증 (C5:E5 병합 해제 -> D5에 새 값 입력)', async () => {
+    const origBuf = fs.readFileSync(path.join(samplesDir, 'real', '실파일B_견적서_MS엑셀.xlsx'));
+    const origDataUrl = bufferToDataUrl(origBuf);
+
+    // 1. Univer 모델 로드
+    const snapshot = await dataUrlToUniverWorkbook(origDataUrl, '실파일B_병합해제테스트');
+    const sheet = snapshot.sheets[snapshot.sheetOrder[0]];
+
+    // 견적서 시트의 C5:E5 병합 해제 시뮬레이션 (C5: row 4, col 2 / E5: row 4, col 4)
+    sheet.mergeData = (sheet.mergeData || []).filter(
+      (m) => !(m.startRow === 4 && m.endRow === 4 && m.startColumn === 2 && m.endColumn === 4)
+    );
+
+    // D5(row 4, col 3)에 사용자 새 값 입력
+    if (!sheet.cellData[4]) sheet.cellData[4] = {};
+    sheet.cellData[4][3] = { v: 'D5단독입력값' };
+
+    // 2. 저장 수행
+    const savedDataUrl = await univerSnapshotToDataUrl(snapshot, 'xlsx', 'exceljs', origDataUrl);
+    const savedBuf = dataUrlToBuffer(savedDataUrl);
+
+    // 3. 재로드 검증
+    const reloadedWb = new ExcelJS.Workbook();
+    await reloadedWb.xlsx.load(savedBuf);
+    const reWs = reloadedWb.worksheets[0];
+
+    // D5가 독립적으로 저장되었는지 확인
+    const d5Cell = reWs.getCell('D5');
+    expect(d5Cell.value).toBe('D5단독입력값');
+    expect(d5Cell.isMerged).toBe(false);
+
+    // C5의 수식도 정상 유지되는지 확인
+    const c5Cell = reWs.getCell('C5');
+    expect(c5Cell.formula).toBe('DATE(2026,11,11)');
+    expect(c5Cell.isMerged).toBe(false);
+
+    // 병합 목록에 C5:E5가 없음을 확인
+    const merges = (reWs as any).model?.merges || [];
+    expect(merges).not.toContain('C5:E5');
+  });
+
+  // 4. 전체 셀 비교 (전수 검증): 실파일 4종
   test('실파일 4종 전체 셀 비교 (값, 수식, 날짜, 서식, 병합, 메모, 유효성검사 전수 검증)', async () => {
     // 3-1. 실파일A MS
     {
