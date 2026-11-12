@@ -20,6 +20,8 @@ import {
   type PptxPresentation,
   type PptxSlide,
   type PptxSlideElement,
+  type PptxParagraph,
+  type PptxTextRun,
 } from '../utils/pptxViewer';
 import { useFloatingWindow } from './useFloatingWindow';
 
@@ -67,6 +69,26 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
   const [isDarkMode, setIsDarkMode] = useState<boolean>(false);
   const [renderMode, setRenderMode] = useState<'canvas' | 'outline'>('canvas'); // 'canvas': 2D 정밀 좌표 레이아웃, 'outline': 텍스트 개요 뷰
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [stageDimensions, setStageDimensions] = useState<{ width: number; height: number }>({
+    width: 900,
+    height: 600,
+  });
+
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          setStageDimensions({ width, height });
+        }
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isOpen, showSidebar]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const floating = useFloatingWindow({ id: 'pptx-viewer', defaultWidth: 940, defaultHeight: 820 });
@@ -186,6 +208,18 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
   const totalSlides = presentation?.slides.length || 0;
   const slideAspect = presentation?.aspectRatio || 16 / 9;
 
+  const availableWidth = Math.max(200, stageDimensions.width - (isSlideShow ? 8 : 32));
+  const availableHeight = Math.max(
+    150,
+    stageDimensions.height - (currentSlide?.notes && !isSlideShow ? 140 : isSlideShow ? 16 : 32)
+  );
+  let canvasW = availableWidth;
+  let canvasH = canvasW / slideAspect;
+  if (canvasH > availableHeight) {
+    canvasH = availableHeight;
+    canvasW = canvasH * slideAspect;
+  }
+
   // 2D 캔버스 요소 렌더러 (한쇼/파워포인트 원본 레이아웃 복원)
   const renderCanvasElement = (el: PptxSlideElement, isDark: boolean) => {
     if (el.type === 'shape') {
@@ -210,6 +244,91 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
 
       const hasBg = Boolean(el.fillColor && el.fillColor !== 'transparent');
       const isDarkBg = hasBg && isDarkColor(el.fillColor!);
+      const isRightArrow = el.shapeType === 'rightArrow';
+      const clipPath = isRightArrow
+        ? 'polygon(0% 25%, 65% 25%, 65% 0%, 100% 50%, 65% 100%, 65% 75%, 0% 75%)'
+        : undefined;
+
+      const renderParagraph = (p: PptxParagraph, pIdx: number) => {
+        const textAlign: any = p.align || 'left';
+        const isBlank = !p.text || !p.text.trim();
+        const indentPx =
+          p.level > 0
+            ? p.level * 16
+            : p.marL && p.marL > 0 && (!p.indent || p.indent >= 0)
+            ? Math.min(48, Math.round(p.marL / 12700))
+            : undefined;
+
+        if (isBlank) {
+          return (
+            <div
+              key={pIdx}
+              style={{ minHeight: '1.2em', whiteSpace: 'pre-wrap' }}
+              className="leading-snug select-none"
+            >
+              &nbsp;
+            </div>
+          );
+        }
+
+        return (
+          <div
+            key={pIdx}
+            style={{
+              textAlign,
+              whiteSpace: 'pre-wrap',
+              paddingLeft: indentPx ? `${indentPx}px` : undefined,
+            }}
+            className={`leading-snug ${el.isTitle ? 'font-extrabold' : ''}`}
+          >
+            {p.bulletChar && (
+              <span className="mr-1 text-slate-500 font-sans select-none">{p.bulletChar}</span>
+            )}
+            {p.runs.map((r: PptxTextRun, rIdx: number) => {
+              const textColor =
+                r.color ||
+                (hasBg ? (isDarkBg ? '#FFFFFF' : '#0F172A') : isDark ? '#F1F5F9' : '#0F172A');
+              const fontSize = r.fontSize
+                ? `${Math.max(10, Math.min(32, r.fontSize * 0.8))}px`
+                : el.isTitle
+                ? '24px'
+                : '12px';
+
+              return (
+                <span
+                  key={rIdx}
+                  style={{
+                    color: textColor,
+                    backgroundColor: r.highlightColor || undefined,
+                    fontSize,
+                    fontWeight: r.isBold || el.isTitle ? 'bold' : 'normal',
+                    fontStyle: r.isItalic ? 'italic' : 'normal',
+                    textDecoration: r.isStrike
+                      ? 'line-through'
+                      : r.isUnderline
+                      ? 'underline'
+                      : 'none',
+                    verticalAlign:
+                      r.baseline && r.baseline > 0
+                        ? 'super'
+                        : r.baseline && r.baseline < 0
+                        ? 'sub'
+                        : undefined,
+                  }}
+                  className={
+                    r.hyperlink
+                      ? 'underline text-blue-600 hover:text-blue-800 cursor-pointer'
+                      : undefined
+                  }
+                  title={r.hyperlink ? `링크: ${r.hyperlink}` : undefined}
+                >
+                  {r.text}
+                </span>
+              );
+            })}
+          </div>
+        );
+      };
 
       return (
         <div
@@ -221,100 +340,50 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
             width: `${el.width}%`,
             height: `${el.height}%`,
             backgroundColor: el.fillColor || 'transparent',
-            border: el.borderColor ? `${el.borderWidth || 1}px solid ${el.borderColor}` : undefined,
-            borderRadius: el.isRounded ? '16px' : el.shapeType === 'ellipse' ? '9999px' : '3px',
+            border:
+              !isRightArrow && el.borderColor
+                ? `${el.borderWidth || 1}px solid ${el.borderColor}`
+                : undefined,
+            borderRadius: isRightArrow
+              ? undefined
+              : el.isRounded
+              ? '16px'
+              : el.shapeType === 'ellipse'
+              ? '9999px'
+              : '3px',
+            clipPath,
             zIndex: el.zIndex,
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
             justifyContent:
-              el.verticalAlign === 'middle' ? 'center' : el.verticalAlign === 'bottom' ? 'flex-end' : 'flex-start',
-            padding: hasBg ? '8px 12px' : '2px 4px',
+              el.verticalAlign === 'middle'
+                ? 'center'
+                : el.verticalAlign === 'bottom'
+                ? 'flex-end'
+                : 'flex-start',
+            padding: hasBg ? (isRightArrow ? '8px 24px 8px 12px' : '8px 12px') : '2px 4px',
             boxSizing: 'border-box',
             transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
             transformOrigin: 'center center',
             writingMode: el.isVerticalText ? 'vertical-rl' : undefined,
-            columnCount: el.columnCount && el.columnCount > 1 ? el.columnCount : undefined,
-            columnGap: el.columnCount && el.columnCount > 1 ? '16px' : undefined,
           }}
           className="pointer-events-auto leading-normal select-text shadow-xs"
         >
-          {el.paragraphs.map((p, pIdx) => {
-            const textAlign: any = p.align || 'left';
-            const isBlank = !p.text || !p.text.trim();
-            const indentPx =
-              p.level > 0
-                ? p.level * 16
-                : p.marL && p.marL > 0 && (!p.indent || p.indent >= 0)
-                ? Math.min(48, Math.round(p.marL / 12700))
-                : undefined;
-
-            if (isBlank) {
-              return (
-                <div
-                  key={pIdx}
-                  style={{ minHeight: '1.2em', whiteSpace: 'pre-wrap' }}
-                  className="leading-snug select-none"
-                >
-                  &nbsp;
-                </div>
-              );
-            }
-
-            return (
-              <div
-                key={pIdx}
-                style={{
-                  textAlign,
-                  whiteSpace: 'pre-wrap',
-                  paddingLeft: indentPx ? `${indentPx}px` : undefined,
-                }}
-                className={`leading-snug ${el.isTitle ? 'font-extrabold' : ''}`}
-              >
-                {p.bulletChar && (
-                  <span className="mr-1 text-slate-500 font-sans select-none">{p.bulletChar}</span>
-                )}
-                {p.runs.map((r, rIdx) => {
-                  const textColor =
-                    r.color ||
-                    (hasBg ? (isDarkBg ? '#FFFFFF' : '#0F172A') : isDark ? '#F1F5F9' : '#0F172A');
-                  const fontSize = r.fontSize
-                    ? `${Math.max(10, Math.min(32, r.fontSize * 0.8))}px`
-                    : el.isTitle
-                    ? '24px'
-                    : '12px';
-
-                  return (
-                    <span
-                      key={rIdx}
-                      style={{
-                        color: textColor,
-                        backgroundColor: r.highlightColor || undefined,
-                        fontSize,
-                        fontWeight: r.isBold || el.isTitle ? 'bold' : 'normal',
-                        fontStyle: r.isItalic ? 'italic' : 'normal',
-                        textDecoration: r.isStrike
-                          ? 'line-through'
-                          : r.isUnderline
-                          ? 'underline'
-                          : 'none',
-                        verticalAlign:
-                          r.baseline && r.baseline > 0
-                            ? 'super'
-                            : r.baseline && r.baseline < 0
-                            ? 'sub'
-                            : undefined,
-                      }}
-                      className={r.hyperlink ? 'underline text-blue-600 hover:text-blue-800 cursor-pointer' : undefined}
-                      title={r.hyperlink ? `링크: ${r.hyperlink}` : undefined}
-                    >
-                      {r.text}
-                    </span>
-                  );
-                })}
-              </div>
-            );
-          })}
+          {el.columnCount && el.columnCount > 1 ? (
+            <div
+              style={{
+                columnCount: el.columnCount,
+                columnGap: '16px',
+                width: '100%',
+                display: 'block',
+              }}
+            >
+              {el.paragraphs.map(renderParagraph)}
+            </div>
+          ) : (
+            el.paragraphs.map(renderParagraph)
+          )}
         </div>
       );
     }
@@ -395,7 +464,7 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                             }}
                             className="mb-0.5 last:mb-0"
                           >
-                            {p.runs.map((r, rIdx) => {
+                            {p.runs.map((r: PptxTextRun, rIdx: number) => {
                               const textColor = r.color || (isDark ? '#E2E8F0' : '#0F172A');
                               const fontSize = r.fontSize
                                 ? `${Math.max(9, Math.min(18, r.fontSize * 0.7))}px`
@@ -951,30 +1020,26 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
             )}
 
             {/* 슬라이드 렌더링 영역 */}
-            <div className="flex-1 flex items-center justify-center p-2 sm:p-4 overflow-auto">
+            <div ref={stageRef} className="flex-1 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
               {currentSlide ? (
                 renderMode === 'canvas' && currentSlide.elements && currentSlide.elements.length > 0 ? (
                   /* 1. 한쇼/파워포인트 원본 2차원 절대 좌표 캔버스 렌더링 */
                   <div className="flex flex-col items-center justify-center w-full">
-                  <div
-                    data-testid="pptx-slide-canvas"
-                    data-slide-index={currentSlideIndex}
-                    style={{
-                      aspectRatio: `${slideAspect}`,
-                      maxHeight: isSlideShow ? '96vh' : '82vh',
-                      maxWidth: isSlideShow
-                        ? `min(98vw, calc(96vh * ${slideAspect}))`
-                        : `min(96vw, calc(82vh * ${slideAspect}))`,
-                      width: isSlideShow
-                        ? `min(98vw, calc(96vh * ${slideAspect}))`
-                        : `min(96vw, calc(82vh * ${slideAspect}))`,
-                      height: 'auto',
-                      backgroundColor: currentSlide.backgroundColor || (isDarkMode ? '#0F172A' : '#FFFFFF'),
-                    }}
-                    className={`rounded-2xl shadow-2xl relative overflow-hidden select-text border transition-all ${
-                      isDarkMode ? 'border-slate-800 text-slate-100' : 'border-slate-300 text-slate-900'
-                    }`}
-                  >
+                    <div
+                      data-testid="pptx-slide-canvas"
+                      data-slide-index={currentSlideIndex}
+                      style={{
+                        aspectRatio: `${slideAspect}`,
+                        width: `${Math.round(canvasW)}px`,
+                        height: `${Math.round(canvasH)}px`,
+                        maxWidth: '100%',
+                        maxHeight: '100%',
+                        backgroundColor: currentSlide.backgroundColor || (isDarkMode ? '#0F172A' : '#FFFFFF'),
+                      }}
+                      className={`rounded-2xl shadow-2xl relative overflow-hidden select-text border transition-all ${
+                        isDarkMode ? 'border-slate-800 text-slate-100' : 'border-slate-300 text-slate-900'
+                      }`}
+                    >
                     {/* 상단 얇은 슬라이드 액센트 바 */}
                     <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-orange-500 via-amber-500 to-indigo-600 z-30" />
 

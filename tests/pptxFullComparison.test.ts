@@ -15,6 +15,7 @@ import {
   reorderSlidesInPptx,
   savePptxPresentation,
 } from '../src/utils/pptxAdapter';
+import { parsePptxPresentation } from '../src/utils/pptxViewer';
 import { detectPptxUnsupportedFeatures } from '../src/utils/pptxLossDetector';
 
 function parseXmlDoc(xmlStr: string): Document {
@@ -300,5 +301,273 @@ describe('3단계 PPTX OpenXML In-Place 검증 테스트 스위트', () => {
     const origDirs = Object.keys(origZip.files).filter((k) => origZip.files[k].dir).sort();
     const savedDirs = Object.keys(savedZip.files).filter((k) => savedZip.files[k].dir).sort();
     expect(savedDirs).toEqual(origDirs);
+  });
+
+  it('7. 무변경 저장 테스트(zero-change roundtrip): 4개 파일 모두 편집 없이 저장했을 때 모든 slideN.xml 텍스트가 원본과 100% 동일해야 한다', async () => {
+    const sampleFiles = [
+      'PPT_A_사업보고_원본.pptx',
+      'PPT_A_사업보고_한쇼.pptx',
+      'PPT_B_교육자료_원본.pptx',
+      'PPT_B_교육자료_한쇼.pptx',
+    ];
+
+    for (const fileName of sampleFiles) {
+      const origBuf = fs.readFileSync(path.join(samplesDir, fileName));
+      const b64 = origBuf.toString('base64');
+      const dataUrl = `data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,${b64}`;
+
+      const pres = await parsePptxPresentation(dataUrl);
+      const editableSlides = pres.slides.map((s, idx) => {
+        const bodyLines = s.paragraphs
+          .filter((p) => !p.isTitle && p.text !== s.title)
+          .map((p) => {
+            const indent = '  '.repeat(Math.max(0, p.level));
+            return `${indent}• ${p.text}`;
+          });
+
+        const slideTables: { rows: string[][] }[] = [];
+        for (const el of s.elements) {
+          if (el.type === 'table') {
+            const tableRows = el.rows.map((row) =>
+              row.cells.map((cell) => cell.text)
+            );
+            slideTables.push({ rows: tableRows });
+          }
+        }
+
+        return {
+          slideNumber: s.slideNumber,
+          originalSlideIndex: idx,
+          title: s.title,
+          bodyText: bodyLines.join('\n'),
+          tables: slideTables,
+        };
+      });
+
+      // 무변경 상태로 저장 실행
+      const savedDataUrl = await savePptxPresentation(dataUrl, editableSlides);
+      const savedB64 = savedDataUrl.replace(/^data:[^;]+;base64,/, '');
+      const savedZip = await JSZip.loadAsync(Buffer.from(savedB64, 'base64'));
+      const origZip = await JSZip.loadAsync(origBuf);
+
+      const slideFiles = Object.keys(origZip.files).filter((f) =>
+        f.match(/^ppt\/slides\/slide\d+\.xml$/)
+      );
+
+      for (const sFile of slideFiles) {
+        const origXml = await origZip.file(sFile)!.async('text');
+        const savedXml = await savedZip.file(sFile)!.async('text');
+        // 변경이 없는 슬라이드는 원본 XML 텍스트가 바이트 단위로 100% 동일해야 함
+        expect(savedXml).toBe(origXml);
+      }
+    }
+  });
+
+  it('8. 4개 파일 실제 편집 저장 및 out/ 생성: PPT_A(빨강->파랑, 영업->영업(수정)) 및 PPT_B(세로쓰기예시->(수정), 첫째 항목->(수정))', async () => {
+    // 1) PPT_A_사업보고_원본
+    {
+      const origBuf = fs.readFileSync(path.join(samplesDir, 'PPT_A_사업보고_원본.pptx'));
+      const dataUrl = `data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,${origBuf.toString('base64')}`;
+      const pres = await parsePptxPresentation(dataUrl);
+      const editableSlides = pres.slides.map((s, idx) => ({
+        slideNumber: s.slideNumber,
+        originalSlideIndex: idx,
+        title: s.title,
+        bodyText: s.paragraphs
+          .filter((p) => !p.isTitle && p.text !== s.title)
+          .map((p) => `${'  '.repeat(Math.max(0, p.level))}• ${p.text}`)
+          .join('\n'),
+        tables: s.elements
+          .filter((el) => el.type === 'table')
+          .map((el: any) => ({ rows: el.rows.map((r: any) => r.cells.map((c: any) => c.text)) })),
+      }));
+
+      // Slide 2 본문 "빨강" -> "파랑"
+      editableSlides[1].bodyText = editableSlides[1].bodyText.replace('빨강', '파랑');
+      // Slide 3 표 셀 "영업" -> "영업(수정)"
+      if (editableSlides[2].tables && editableSlides[2].tables.length > 0) {
+        editableSlides[2].tables[0].rows[1][0] = '영업(수정)';
+      }
+
+      const savedUrl = await savePptxPresentation(dataUrl, editableSlides);
+      const outBuf = Buffer.from(savedUrl.replace(/^data:[^;]+;base64,/, ''), 'base64');
+      fs.writeFileSync(path.join(outDir, 'PPT_A_사업보고_원본_수정저장결과.pptx'), outBuf);
+    }
+
+    // 2) PPT_A_사업보고_한쇼
+    {
+      const origBuf = fs.readFileSync(path.join(samplesDir, 'PPT_A_사업보고_한쇼.pptx'));
+      const dataUrl = `data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,${origBuf.toString('base64')}`;
+      const pres = await parsePptxPresentation(dataUrl);
+      const editableSlides = pres.slides.map((s, idx) => ({
+        slideNumber: s.slideNumber,
+        originalSlideIndex: idx,
+        title: s.title,
+        bodyText: s.paragraphs
+          .filter((p) => !p.isTitle && p.text !== s.title)
+          .map((p) => `${'  '.repeat(Math.max(0, p.level))}• ${p.text}`)
+          .join('\n'),
+        tables: s.elements
+          .filter((el) => el.type === 'table')
+          .map((el: any) => ({ rows: el.rows.map((r: any) => r.cells.map((c: any) => c.text)) })),
+      }));
+
+      editableSlides[1].bodyText = editableSlides[1].bodyText.replace('빨강', '파랑');
+      if (editableSlides[2].tables && editableSlides[2].tables.length > 0) {
+        editableSlides[2].tables[0].rows[1][0] = '영업(수정)';
+      }
+
+      const savedUrl = await savePptxPresentation(dataUrl, editableSlides);
+      const outBuf = Buffer.from(savedUrl.replace(/^data:[^;]+;base64,/, ''), 'base64');
+      fs.writeFileSync(path.join(outDir, 'PPT_A_사업보고_한쇼_수정저장결과.pptx'), outBuf);
+    }
+
+    // 3) PPT_B_교육자료_원본
+    {
+      const origBuf = fs.readFileSync(path.join(samplesDir, 'PPT_B_교육자료_원본.pptx'));
+      const dataUrl = `data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,${origBuf.toString('base64')}`;
+      const pres = await parsePptxPresentation(dataUrl);
+      const editableSlides = pres.slides.map((s, idx) => ({
+        slideNumber: s.slideNumber,
+        originalSlideIndex: idx,
+        title: s.title,
+        bodyText: s.paragraphs
+          .filter((p) => !p.isTitle && p.text !== s.title)
+          .map((p) => `${'  '.repeat(Math.max(0, p.level))}• ${p.text}`)
+          .join('\n'),
+        tables: s.elements
+          .filter((el) => el.type === 'table')
+          .map((el: any) => ({ rows: el.rows.map((r: any) => r.cells.map((c: any) => c.text)) })),
+      }));
+
+      editableSlides[1].bodyText = editableSlides[1].bodyText.replace('세로쓰기예시', '세로쓰기예시(수정)');
+      editableSlides[3].bodyText = editableSlides[3].bodyText.replace('첫째 항목', '첫째 항목(수정)');
+
+      const savedUrl = await savePptxPresentation(dataUrl, editableSlides);
+      const outBuf = Buffer.from(savedUrl.replace(/^data:[^;]+;base64,/, ''), 'base64');
+      fs.writeFileSync(path.join(outDir, 'PPT_B_교육자료_원본_수정저장결과.pptx'), outBuf);
+    }
+
+    // 4) PPT_B_교육자료_한쇼
+    {
+      const origBuf = fs.readFileSync(path.join(samplesDir, 'PPT_B_교육자료_한쇼.pptx'));
+      const dataUrl = `data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,${origBuf.toString('base64')}`;
+      const pres = await parsePptxPresentation(dataUrl);
+      const editableSlides = pres.slides.map((s, idx) => ({
+        slideNumber: s.slideNumber,
+        originalSlideIndex: idx,
+        title: s.title,
+        bodyText: s.paragraphs
+          .filter((p) => !p.isTitle && p.text !== s.title)
+          .map((p) => `${'  '.repeat(Math.max(0, p.level))}• ${p.text}`)
+          .join('\n'),
+        tables: s.elements
+          .filter((el) => el.type === 'table')
+          .map((el: any) => ({ rows: el.rows.map((r: any) => r.cells.map((c: any) => c.text)) })),
+      }));
+
+      editableSlides[1].bodyText = editableSlides[1].bodyText.replace('세로쓰기예시', '세로쓰기예시(수정)');
+      editableSlides[3].bodyText = editableSlides[3].bodyText.replace('첫째 항목', '첫째 항목(수정)');
+
+      const savedUrl = await savePptxPresentation(dataUrl, editableSlides);
+      const outBuf = Buffer.from(savedUrl.replace(/^data:[^;]+;base64,/, ''), 'base64');
+      fs.writeFileSync(path.join(outDir, 'PPT_B_교육자료_한쇼_수정저장결과.pptx'), outBuf);
+    }
+  });
+
+  it('9. 슬라이드별 전체 텍스트 비교: 수정한 문단 외의 모든 슬라이드/문단/표 텍스트가 원본과 100% 일치해야 한다', async () => {
+    const filePairs = [
+      {
+        orig: 'PPT_A_사업보고_원본.pptx',
+        edited: 'PPT_A_사업보고_원본_수정저장결과.pptx',
+        isA: true,
+      },
+      {
+        orig: 'PPT_A_사업보고_한쇼.pptx',
+        edited: 'PPT_A_사업보고_한쇼_수정저장결과.pptx',
+        isA: true,
+      },
+      {
+        orig: 'PPT_B_교육자료_원본.pptx',
+        edited: 'PPT_B_교육자료_원본_수정저장결과.pptx',
+        isA: false,
+      },
+      {
+        orig: 'PPT_B_교육자료_한쇼.pptx',
+        edited: 'PPT_B_교육자료_한쇼_수정저장결과.pptx',
+        isA: false,
+      },
+    ];
+
+    for (const pair of filePairs) {
+      const origBuf = fs.readFileSync(path.join(samplesDir, pair.orig));
+      const editBuf = fs.readFileSync(path.join(outDir, pair.edited));
+      const origPres = await parsePptxPresentation(`data:application/vnd.ms-powerpoint;base64,${origBuf.toString('base64')}`);
+      const editPres = await parsePptxPresentation(`data:application/vnd.ms-powerpoint;base64,${editBuf.toString('base64')}`);
+
+      expect(editPres.slides.length).toBe(origPres.slides.length);
+
+      for (let sIdx = 0; sIdx < origPres.slides.length; sIdx++) {
+        const oSlide = origPres.slides[sIdx];
+        const eSlide = editPres.slides[sIdx];
+
+        // 1. 모든 슬라이드의 제목은 100% 유지되어야 함 (‹#›나 다른 텍스트로 덮어써지지 않음)
+        expect(eSlide.title).toBe(oSlide.title);
+        expect(eSlide.title).not.toBe('‹#›');
+        expect(eSlide.title).not.toBe('<#>');
+
+        // 2. 표(Table) 검사
+        const oTables = oSlide.elements.filter((el) => el.type === 'table') as any[];
+        const eTables = eSlide.elements.filter((el) => el.type === 'table') as any[];
+        expect(eTables.length).toBe(oTables.length);
+
+        for (let tIdx = 0; tIdx < oTables.length; tIdx++) {
+          const ot = oTables[tIdx];
+          const et = eTables[tIdx];
+          expect(et.rows.length).toBe(ot.rows.length);
+
+          for (let r = 0; r < ot.rows.length; r++) {
+            expect(et.rows[r].cells.length).toBe(ot.rows[r].cells.length);
+            for (let c = 0; c < ot.rows[r].cells.length; c++) {
+              const otText = ot.rows[r].cells[c].text;
+              const etText = et.rows[r].cells[c].text;
+
+              if (pair.isA && sIdx === 2 && r === 1 && c === 0) {
+                // 수정된 셀: "영업" -> "영업(수정)"
+                expect(etText).toBe('영업(수정)');
+                expect(otText).toBe('영업');
+              } else {
+                // 그 외 모든 셀은 100% 원본과 동일해야 함
+                expect(etText).toBe(otText);
+              }
+            }
+          }
+        }
+
+        // 3. 문단(Paragraphs) 검사
+        const oParas = oSlide.paragraphs.filter((p) => !p.isTitle && p.text !== oSlide.title);
+        const eParas = eSlide.paragraphs.filter((p) => !p.isTitle && p.text !== eSlide.title);
+        expect(eParas.length).toBe(oParas.length);
+
+        for (let pIdx = 0; pIdx < oParas.length; pIdx++) {
+          const opText = oParas[pIdx].text;
+          const epText = eParas[pIdx].text;
+
+          if (pair.isA && sIdx === 1 && opText.includes('빨강')) {
+            // PPT_A 슬라이드 2 수정 문단
+            expect(epText).toBe(opText.replace('빨강', '파랑'));
+          } else if (!pair.isA && sIdx === 1 && opText.includes('세로쓰기예시')) {
+            // PPT_B 슬라이드 2 수정 문단
+            expect(epText).toBe(opText.replace('세로쓰기예시', '세로쓰기예시(수정)'));
+          } else if (!pair.isA && sIdx === 3 && opText.includes('첫째 항목')) {
+            // PPT_B 슬라이드 4 수정 문단
+            expect(epText).toBe(opText.replace('첫째 항목', '첫째 항목(수정)'));
+          } else {
+            // 수정하지 않은 모든 문단은 100% 동일해야 함
+            expect(epText).toBe(opText);
+          }
+        }
+      }
+    }
   });
 });

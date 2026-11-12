@@ -150,6 +150,12 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
 
         univerAPI.createWorkbook(workbookData);
 
+        if (typeof window !== 'undefined') {
+          (window as any).__excelUniverAPI = univerAPI;
+          (window as any).__excelModalExecuteSave = () => executeSave();
+          (window as any).__excelIsReady = () => Boolean(univerAPIRef.current);
+        }
+
         // 창 크기 변경에 따른 Univer 리사이즈 동기화
         const resizeObserver = new ResizeObserver(() => {
           window.dispatchEvent(new Event('resize'));

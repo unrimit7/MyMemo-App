@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { parsePptxPresentation } from './pptxViewer';
 
 export function bufferToDataUrl(
   buf: Buffer | Uint8Array,
@@ -387,9 +388,99 @@ export async function savePptxPresentation(
     if (id && target) relMap.set(id, target);
   }
 
-  // 3. 각 슬라이드의 본문 및 표 데이터 갱신 (diff -> run 단위)
+  // 3. 원본 프레젠테이션 구조 파싱 (변경 여부 정밀 비교 및 shapeId/placeholder 매핑용)
+  const origPres = await parsePptxPresentation(originalDataUrl);
+
   for (let sIdx = 0; sIdx < slides.length; sIdx++) {
     if (sIdx >= sldIds.length) break;
+
+    const updatedSlide = slides[sIdx];
+    const origSlideIdx =
+      updatedSlide.originalSlideIndex !== undefined ? updatedSlide.originalSlideIndex : sIdx;
+    const origSlide =
+      origSlideIdx >= 0 && origSlideIdx < origPres.slides.length
+        ? origPres.slides[origSlideIdx]
+        : undefined;
+
+    // 변경 여부 정밀 검사
+    const titleChanged = origSlide
+      ? updatedSlide.title !== origSlide.title
+      : updatedSlide.title !== undefined;
+
+    const origBodyParas = origSlide
+      ? origSlide.paragraphs.filter(
+          (p) => !p.isTitle && p.text !== origSlide.title && p.shapeId !== origSlide.titleShapeId
+        )
+      : [];
+    const origBodyLineTexts = origBodyParas.map((p) => p.text.trim());
+    const updatedBodyLines =
+      updatedSlide.bodyText !== undefined
+        ? updatedSlide.bodyText
+            .split('\n')
+            .map((l) => l.trim().replace(/^[-*•▪\u2022\u25AA\s]+/, '').trim())
+            .filter(Boolean)
+        : [];
+
+    let bodyChanged = false;
+    if (origSlide) {
+      if (updatedBodyLines.length !== origBodyLineTexts.length) {
+        bodyChanged = true;
+      } else {
+        for (let i = 0; i < updatedBodyLines.length; i++) {
+          if (updatedBodyLines[i] !== origBodyLineTexts[i]) {
+            bodyChanged = true;
+            break;
+          }
+        }
+      }
+    } else if (updatedSlide.bodyText !== undefined) {
+      bodyChanged = true;
+    }
+
+    let tablesChanged = false;
+    const origTables = origSlide ? origSlide.elements.filter((el) => el.type === 'table') : [];
+    if (updatedSlide.tables && updatedSlide.tables.length > 0) {
+      if (origSlide) {
+        if (updatedSlide.tables.length !== origTables.length) {
+          tablesChanged = true;
+        } else {
+          for (let tIdx = 0; tIdx < updatedSlide.tables.length; tIdx++) {
+            const updRows = updatedSlide.tables[tIdx].rows;
+            const origT = origTables[tIdx];
+            if (origT && origT.type === 'table') {
+              if (updRows.length !== origT.rows.length) {
+                tablesChanged = true;
+                break;
+              }
+              for (let r = 0; r < updRows.length; r++) {
+                if (updRows[r].length !== origT.rows[r].cells.length) {
+                  tablesChanged = true;
+                  break;
+                }
+                for (let c = 0; c < updRows[r].length; c++) {
+                  if (updRows[r][c] !== origT.rows[r].cells[c].text) {
+                    tablesChanged = true;
+                    break;
+                  }
+                }
+                if (tablesChanged) break;
+              }
+            } else {
+              tablesChanged = true;
+              break;
+            }
+            if (tablesChanged) break;
+          }
+        }
+      } else {
+        tablesChanged = true;
+      }
+    }
+
+    // 변경된 항목이 전혀 없는 슬라이드는 원본 XML 파일을 절대 건드리지 않음 (100% 원본 유지)
+    if (!titleChanged && !bodyChanged && !tablesChanged) {
+      continue;
+    }
 
     const sldEl = sldIds[sIdx];
     const rId = sldEl.getAttribute('r:id');
@@ -407,25 +498,27 @@ export async function savePptxPresentation(
 
     const sXmlText = await slideFile.async('text');
     const slideDoc = parseXml(sXmlText);
-    const updatedSlide = slides[sIdx];
     let slideModified = false;
 
-    // (A) 제목(Title) 수정
-    if (updatedSlide.title !== undefined) {
-      const spList = slideDoc.getElementsByTagName('p:sp');
+    // (A) 제목(Title) 수정: shapeId 매핑 우선
+    if (titleChanged && updatedSlide.title !== undefined) {
+      const spList = Array.from(slideDoc.getElementsByTagName('p:sp'));
       let titleSp: Element | null = null;
-      for (let i = 0; i < spList.length; i++) {
-        const phList = spList[i].getElementsByTagName('p:ph');
-        if (phList.length > 0) {
-          const pType = phList[0].getAttribute('type');
-          if (pType === 'title' || pType === 'ctrTitle') {
-            titleSp = spList[i];
-            break;
-          }
-        }
+      if (origSlide?.titleShapeId) {
+        titleSp =
+          spList.find((sp) => {
+            const cNvPr = sp.getElementsByTagName('p:cNvPr')[0];
+            return cNvPr?.getAttribute('id') === origSlide.titleShapeId;
+          }) || null;
       }
-      if (!titleSp && spList.length > 0) titleSp = spList[0];
-
+      if (!titleSp) {
+        titleSp =
+          spList.find((sp) => {
+            const ph = sp.getElementsByTagName('p:ph')[0];
+            const pType = ph?.getAttribute('type');
+            return pType === 'title' || pType === 'ctrTitle';
+          }) || null;
+      }
       if (titleSp) {
         const titlePs = titleSp.getElementsByTagName('a:p');
         if (titlePs.length > 0) {
@@ -435,71 +528,86 @@ export async function savePptxPresentation(
       }
     }
 
-    // (B) 본문(Body) 문단 수정 (diff -> run)
-    if (updatedSlide.bodyText !== undefined) {
-      const spList = slideDoc.getElementsByTagName('p:sp');
-      // 제목이 아닌 본문 텍스트 상자 찾기
-      let bodySp: Element | null = null;
-      for (let i = 0; i < spList.length; i++) {
-        const phList = spList[i].getElementsByTagName('p:ph');
-        if (phList.length > 0) {
-          const pType = phList[0].getAttribute('type');
-          if (pType === 'body' || pType === 'subTitle') {
-            bodySp = spList[i];
-            break;
-          }
-        }
-      }
-      if (!bodySp) {
-        // 플레이스홀더가 없는 일반 도형 중 문단 텍스트가 있는 도형 찾기
-        for (let i = 0; i < spList.length; i++) {
-          const phList = spList[i].getElementsByTagName('p:ph');
-          const isTitle =
-            phList.length > 0 &&
-            (phList[0].getAttribute('type') === 'title' ||
-              phList[0].getAttribute('type') === 'ctrTitle');
-          if (!isTitle && spList[i].getElementsByTagName('a:p').length > 0) {
-            bodySp = spList[i];
-            break;
-          }
-        }
-      }
+    // (B) 본문(Body) 문단 수정: 각 문단별 shapeId 및 pIndex 정확 매핑
+    if (bodyChanged && updatedSlide.bodyText !== undefined) {
+      const spList = Array.from(slideDoc.getElementsByTagName('p:sp'));
+      for (let lIdx = 0; lIdx < updatedBodyLines.length; lIdx++) {
+        const newLine = updatedBodyLines[lIdx];
+        if (lIdx < origBodyParas.length) {
+          const origPara = origBodyParas[lIdx];
+          if (newLine === origPara.text.trim()) continue; // 변경 없는 문단은 건너뜀
 
-      if (bodySp) {
-        const bodyLines = updatedSlide.bodyText
-          .split('\n')
-          .map((l) => l.trim().replace(/^[-*•▪\u2022\u25AA\s]+/, '').trim())
-          .filter(Boolean);
+          let targetSp: Element | null = null;
+          if (origPara.shapeId) {
+            targetSp =
+              spList.find((sp) => {
+                const cNvPr = sp.getElementsByTagName('p:cNvPr')[0];
+                return cNvPr?.getAttribute('id') === origPara.shapeId;
+              }) || null;
+          }
+          if (!targetSp) {
+            targetSp =
+              spList.find((sp) => {
+                const ph = sp.getElementsByTagName('p:ph')[0];
+                const pType = ph?.getAttribute('type');
+                return pType === 'body' || pType === 'subTitle';
+              }) || null;
+          }
 
-        const pElements = bodySp.getElementsByTagName('a:p');
-        for (let lIdx = 0; lIdx < bodyLines.length; lIdx++) {
-          if (lIdx < pElements.length) {
-            const mod = updateParagraphElementWithDiff(pElements[lIdx], bodyLines[lIdx]);
-            if (mod) slideModified = true;
+          if (targetSp) {
+            const txBody =
+              targetSp.getElementsByTagName('p:txBody')[0] ||
+              targetSp.getElementsByTagName('a:txBody')[0];
+            const pElements = txBody
+              ? txBody.getElementsByTagName('a:p')
+              : targetSp.getElementsByTagName('a:p');
+            const targetPIdx =
+              origPara.pIndex !== undefined && origPara.pIndex < pElements.length
+                ? origPara.pIndex
+                : Math.min(lIdx, pElements.length - 1);
+            if (targetPIdx >= 0 && targetPIdx < pElements.length) {
+              const mod = updateParagraphElementWithDiff(pElements[targetPIdx], newLine);
+              if (mod) slideModified = true;
+            }
           }
         }
       }
     }
 
-    // (C) 표(Table) 셀 데이터 수정 (diff -> run)
-    if (updatedSlide.tables && updatedSlide.tables.length > 0) {
-      const tblList = slideDoc.getElementsByTagName('a:tbl');
+    // (C) 표(Table) 셀 데이터 수정: hMerge/vMerge 연속 셀 제외 후 정확한 컬럼 매핑
+    if (tablesChanged && updatedSlide.tables && updatedSlide.tables.length > 0) {
+      const tblList = Array.from(slideDoc.getElementsByTagName('a:tbl'));
       for (let tIdx = 0; tIdx < updatedSlide.tables.length; tIdx++) {
         if (tIdx >= tblList.length) break;
         const tbl = tblList[tIdx];
         const trList = tbl.getElementsByTagName('a:tr');
         const updatedRows = updatedSlide.tables[tIdx].rows;
+        const origT =
+          tIdx < origTables.length && origTables[tIdx].type === 'table'
+            ? (origTables[tIdx] as any)
+            : null;
 
         for (let rIdx = 0; rIdx < updatedRows.length; rIdx++) {
           if (rIdx >= trList.length) break;
           const tr = trList[rIdx];
-          const tcList = tr.getElementsByTagName('a:tc');
+          // 중요: hMerge="1" 또는 vMerge="1"인 병합 연속 셀은 뷰어에서 제외되었으므로 매핑 시에도 제외
+          const allTcs = Array.from(tr.getElementsByTagName('a:tc'));
+          const visibleTcs = allTcs.filter((tc) => {
+            const hm = tc.getAttribute('hMerge');
+            const vm = tc.getAttribute('vMerge');
+            return hm !== '1' && hm !== 'true' && vm !== '1' && vm !== 'true';
+          });
           const rowData = updatedRows[rIdx];
 
           for (let cIdx = 0; cIdx < rowData.length; cIdx++) {
-            if (cIdx >= tcList.length) break;
-            const tc = tcList[cIdx];
+            if (cIdx >= visibleTcs.length) break;
             const newCellText = rowData[cIdx];
+            const origCellText = origT?.rows?.[rIdx]?.cells?.[cIdx]?.text;
+            if (origCellText !== undefined && newCellText === origCellText) {
+              continue; // 수정되지 않은 셀은 건너뜀
+            }
+
+            const tc = visibleTcs[cIdx];
             const pElements = tc.getElementsByTagName('a:p');
             if (pElements.length > 0) {
               const mod = updateParagraphElementWithDiff(pElements[0], newCellText);

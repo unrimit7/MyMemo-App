@@ -3,19 +3,23 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import { PptxViewerModal } from './components/PptxViewerModal';
 import { PptxEditorModal } from './components/PptxEditorModal';
+import { ExcelEditorModal } from './components/ExcelEditorModal';
 
 declare global {
   interface Window {
     __loadPptx?: (dataUrl: string, title: string, mode?: 'viewer' | 'editor') => Promise<void>;
     __setSlideIndex?: (index: number) => void;
     __SAVED_PPTX__?: string;
+
+    __loadExcel?: (dataUrl: string, title: string) => Promise<void>;
+    __SAVED_EXCEL__?: string;
   }
 }
 
 export function TestApp() {
   const [data, setData] = useState<string | null>(null);
   const [title, setTitle] = useState<string>('Test Presentation');
-  const [mode, setMode] = useState<'viewer' | 'editor'>('viewer');
+  const [mode, setMode] = useState<'viewer' | 'editor' | 'excel'>('viewer');
   const [isOpen, setIsOpen] = useState<boolean>(false);
 
   useEffect(() => {
@@ -25,13 +29,20 @@ export function TestApp() {
       setMode(presMode);
       setIsOpen(true);
     };
+
+    window.__loadExcel = async (dataUrl: string, excelTitle: string) => {
+      setData(dataUrl);
+      setTitle(excelTitle);
+      setMode('excel');
+      setIsOpen(true);
+    };
   }, []);
 
   if (!isOpen || !data) {
     return (
       <div className="p-8 text-center text-slate-400">
-        <h1 className="text-xl font-bold mb-2">PPTX Test Harness Ready</h1>
-        <p className="text-sm">Call window.__loadPptx(dataUrl, title, mode) to start.</p>
+        <h1 className="text-xl font-bold mb-2">Office Test Harness Ready</h1>
+        <p className="text-sm">Call window.__loadPptx(...) or window.__loadExcel(...) to start.</p>
       </div>
     );
   }
@@ -45,7 +56,7 @@ export function TestApp() {
           data={data}
           title={title}
         />
-      ) : (
+      ) : mode === 'editor' ? (
         <PptxEditorModal
           isOpen={isOpen}
           onClose={() => setIsOpen(false)}
@@ -53,6 +64,17 @@ export function TestApp() {
           title={title}
           onSave={(updated) => {
             window.__SAVED_PPTX__ = updated;
+          }}
+        />
+      ) : (
+        <ExcelEditorModal
+          isOpen={isOpen}
+          onClose={() => setIsOpen(false)}
+          data={data}
+          title={title}
+          initialEngine="exceljs"
+          onSave={(updated) => {
+            window.__SAVED_EXCEL__ = updated;
           }}
         />
       )}

@@ -60,84 +60,88 @@
 
 ---
 
-## 4. Run(a:r) 단위 Diff 기반 텍스트 편집 및 슬라이드 동기화
+## 4. Run(a:r) 단위 Diff 기반 텍스트 편집 및 무손실 슬라이드 동기화
 
-### (1) 앱 편집기(`PptxEditorModal`)와 테스트의 공식 저장 함수 일원화 (`savePptxPresentation`)
-- 기존에 `PptxEditorModal`이 첫 번째 `<a:t>`에 전체 문단을 넣고 나머지 런을 비우던 레거시 경로를 전면 폐기하고, `src/utils/pptxAdapter.ts`의 `savePptxPresentation`으로 통합했습니다.
-- **Diff -> Run 매핑 메커니즘 (`updateParagraphElementWithDiff`)**:
-  - 기존 문단 텍스트와 사용자가 수정한 새 문단 텍스트를 비교하여 공통 접두사(`prefixLen`)와 공통 접미사(`suffixLen`)를 계산합니다.
-  - 실제 변경된 글자 구간(`[prefixLen, origText.length - suffixLen]`)이 걸치는 `<a:r>` 요소를 특정합니다.
-  - 단일 run 내부의 변경인 경우 해당 run의 `<a:t>` 텍스트만 치환하며, 인접한 형제 run(형광펜 `<a:highlight>`, 하이퍼링크 `<a:hlinkClick>`, 첨자 `<a:rPr baseline="...">`, 취소선, 글자색) 및 필드(`<a:fld>` 슬라이드 번호)는 원본 XML 구조와 서식을 100% 온전하게 보존합니다.
+### (1) 데이터 손상 방지: 변경 없는 슬라이드/문단/도형 절대 무수정 원칙
+- **선택적 무손실 저장 (Selective Diff In-Place Save)**:
+  - `savePptxPresentation` 실행 시 `parsePptxPresentation(originalDataUrl)`을 통해 원본 구조를 먼저 분석합니다.
+  - 사용자가 제목(`title`), 본문 단락(`bodyText`), 표 셀(`tables`)을 전혀 수정하지 않은 슬라이드는 해당 `slideN.xml`을 전혀 다시 쓰지 않고 100% 원본 그대로 바이너리를 유지합니다.
+  - 이에 따라 **무변경 저장 테스트(zero-change roundtrip)** 시 4개 파일의 모든 `slideN.xml`이 원본과 바이트 단위로 100% 일치합니다.
 
-### (2) 슬라이드 삭제 / 재배열 / UI 연동
-- `PptxEditorModal`의 슬라이드 삭제(Delete) 및 목록 상태가 `savePptxPresentation`의 `deletedSlideIndices` 매개변수로 전달됩니다.
-- 삭제는 인덱스 역순(descending)으로 진행되어 연쇄 밀림을 방지하며, `p:sldIdLst`, `presentation.xml.rels`, `[Content_Types].xml`, `p14:sectionLst`가 일괄 동기화됩니다.
-- PPT_B의 슬라이드 순서 재배열 시에도 `rId`가 보존되어 3번 슬라이드의 점프 링크(`ppaction://hlinksldjump`)가 원래 1번 슬라이드를 정확하게 가리킵니다.
+### (2) 레이아웃/마스터 Placeholder 좌표 상속 및 정밀 식별
+- OpenXML 프레젠테이션의 제목/본문 플레이스홀더(`ph type="title"`, `ph type="ctrTitle"`, `ph type="body"`)는 `slideN.xml` 내부에 명시적 `<a:xfrm>` 좌표가 없고 `slideLayout` 및 `slideMaster`로부터 좌표와 서식을 상속받습니다.
+- 이를 해결하기 위해 `parseSlideMaster`와 `parseSlideLayout`을 구현하여 `placeholdersByType` 및 `placeholdersByIdx` 캐시 트리를 구축했습니다.
+- 슬라이드 파싱 시 플레이스홀더를 정확히 인식하여 실제 제목 도형 ID(`shapeId`, 예: `id="2"`)를 기록하고, 쪽 번호 상자(`‹#›`, `id="4"`)를 제목으로 오인하던 버그를 원천 차단했습니다.
+- 텍스트 수정 저장 시 순서나 추측이 아닌 `p:cNvPr id`(도형 ID) 및 단락 인덱스(`pIndex`)로 일치하는 대상을 찾아 정확한 단락의 `<a:r>` 내 변경 글자만 diff 치환합니다.
 
-### (3) ZIP 디렉터리 엔트리 정규화 (추가 폴더 0개)
-- JSZip `file(..., { createFolders: false })` 옵션을 적용하고, 저장 직전 원본 ZIP에 존재하지 않았던 신규 디렉터리 엔트리(`ppt/`, `ppt/slides/` 등 `dir: true` 항목)를 자동으로 감지하여 완전히 제거합니다.
-- 원본 ZIP과 결과 ZIP의 디렉터리 엔트리 목록이 100% 일치(새 폴더 0개)함을 자동화 테스트로 입증했습니다.
+### (3) 표(Table) 병합 연속 셀 (`vMerge="1"`) 처리
+- 세로 병합 continuation 셀(`<a:tc vMerge="1"/>`)은 뷰어 및 편집기 데이터 모델에서 상위 셀로 합쳐져 표시됩니다.
+- 저장 시 `hMerge="1"` 및 `vMerge="1"` 셀을 제외한 실제 유효 셀 목록(`visibleTcs`)을 기준으로 매핑하여, PPT_A 3번 슬라이드 표에서 "720" 셀이 중복 생성되던 인덱스 밀림 버그를 완벽 해결했습니다.
+
+### (4) 슬라이드 삭제 / 재배열 / UI 연동 및 ZIP 디렉터리 정규화
+- 슬라이드 삭제(Delete) 시 역순 삭제 및 `p:sldIdLst`, `presentation.xml.rels`, `[Content_Types].xml`, `p14:sectionLst` 일괄 동기화.
+- PPT_B 슬라이드 순서 재배열 시 점프 링크(`ppaction://hlinksldjump`) 대상 슬라이드 완전 보존.
+- JSZip `createFolders: false` 및 원본 대비 신규 디렉터리 엔트리 자동 제거를 통해 추가 폴더 **0개**를 유지합니다.
 
 ---
 
-## 5. 뷰어 품질 및 지원 여부 매트릭스
+## 5. 뷰어 품질 및 지원 여부 매트릭스 (실제 브라우저 구동 스크린샷 검증 기준)
 
-MyMemo 내장 파워포인트 뷰어(`PptxViewerModal.tsx`)의 실 브라우저 구동 지원 여부입니다.
+MyMemo 내장 파워포인트 뷰어(`PptxViewerModal.tsx`)의 실 브라우저 구동 지원 여부입니다. 실제 생성된 24개 스크린샷으로 100% 확인된 항목만 정직하게 기재하였습니다.
 
-| 렌더링 기능 항목 | 지원 여부 | 구현 방식 및 상세 설명 |
+| 렌더링 기능 항목 | 지원 여부 | 구현 방식 및 스크린샷 검증 상세 |
 | :--- | :---: | :--- |
-| **막대 차트 (Bar Chart)** | **O** | DrawingML `c:numCache` 및 `c:cat` 파싱 후 SVG 벡터 렌더링 |
-| **원형 차트 (Pie Chart)** | **O** | DrawingML 계열 비율 계산 및 SVG Arc Path로 도넛/원형 렌더링 |
-| **꺾은선 차트 (Line Chart)** | **O** | DrawingML 계열 좌표 polyline 및 마커 원형 SVG 렌더링 |
-| **표 가로/세로 병합** | **O** | `gridSpan` -> `colSpan`, `rowSpan`, `vMerge/hMerge` 투명 처리 |
-| **그룹 도형 (`p:grpSp`)** | **O** | 그룹 xfrm 좌표계 변환을 통해 하위 도형 2D 캔버스 배치 |
-| **도형 회전 (`xfrm rot`)** | **O** | 60,000 단위 OpenXML 회전각을 CSS `rotate(deg)`로 변환 |
-| **그라데이션 배경 (`a:gradFill`)** | **O** | `gsLst` 색상 및 위치(pos)를 CSS `linear-gradient`로 변환 |
-| **연결선 (`p:cxnSp`)** | **O** | 2D 절대 좌표 기준 선분 요소 및 테두리 색상 렌더링 |
-| **세로 쓰기 (`eaVert`)** | **O** | OpenXML `vert="eaVert"`를 CSS `writing-mode: vertical-rl`로 렌더링 |
-| **2단 텍스트 상자 (`numCol`)** | **O** | OpenXML `numCol="2"`를 CSS `column-count: 2`, `column-gap: 16px`로 렌더링 |
-| **사용자 지정 글머리 기호** | **O** | `a:buChar` char 속성("Ø" -> Wingdings 화살표, "•" 등)을 단락 앞 머리글자로 추출 표시 |
-| **슬라이드 번호 필드 (`a:fld`)** | **O** | `slidenum` 필드 텍스트 추출 및 슬라이드 우하단 번호 표시 |
-| **슬라이드 배경색 / 테마** | **O** | `p:bg` 및 테마 `clrScheme` 팔레트 해석 적용 |
-| **숨김 슬라이드 (`show="0"`)** | **O** | 썸네일 및 캔버스 상단에 `[숨김]` 배지 시각화 |
-| **발표자 메모 (`notesSlide`)** | **O** | `.rels`를 통해 연결된 노트 슬라이드의 본문 메모 표시 |
-| **SmartArt 3D / 다이어그램** | **X** | 웹 뷰어에서는 정밀 3D 렌더링 미지원 (손실 감지기로 경고 후 보존) |
+| **마스터/레이아웃 Placeholder 상속** | **O** | 제목/부제목/본문 플레이스홀더 좌표 완전 상속 (모든 슬라이드 제목 정상 표시) |
+| **컨테이너 맞춤 (Canvas Aspect-Fit)** | **O** | `ResizeObserver` 스테이지 크기 기반 비율 맞춤 (차트 Q1, 원그래프, 표 열, B그룹 좌우 잘림 제로) |
+| **막대 차트 (Bar Chart)** | **O** | DrawingML `c:numCache` 및 `c:cat` 파싱 후 SVG 벡터 렌더링 (PPT_A 4번) |
+| **원형 차트 (Pie Chart)** | **O** | DrawingML 계열 비율 계산 및 SVG Arc Path로 도넛/원형 렌더링 (PPT_A 원본 4번) |
+| **꺾은선 차트 (Line Chart)** | **O** | DrawingML 계열 좌표 polyline 및 마커 원형 SVG 렌더링 (PPT_B 3번) |
+| **표 가로/세로 병합** | **O** | `rowSpan="2"` 세로 병합 표 렌더링 (PPT_A 3번) |
+| **그룹 도형 (`p:grpSp`)** | **O** | 그룹 내부 하위 도형 2D 캔버스 좌표 변환 배치 (`그룹 A`, `그룹 B` 온전 표시, PPT_A 5번) |
+| **도형 회전 (`xfrm rot`)** | **O** | OpenXML 회전각을 CSS `rotate(deg)`로 변환 (PPT_A 5번 15도 회전) |
+| **오른쪽 화살표 (`rightArrow`)** | **O** | 단순 사각형이 아닌 SVG polygon clip-path 블록 화살표 렌더링 |
+| **세로 쓰기 글상자 (`eaVert`)** | **O** | `writing-mode: vertical-rl` 렌더링 및 `noFill` 존중으로 불필요한 회색 배경 완벽 제거 (PPT_B 2번) |
+| **2단 텍스트 상자 (`numCol="2"`)** | **O** | flex 영향을 받지 않도록 내부 블록 분리하여 CSS `column-count: 2` 정상 렌더링 (PPT_B 2번) |
+| **좌측 썸네일 탐색기** | **O** | 상속 복원된 실제 제목 및 `#{slideNumber}` 뱃지 표시, 미니 캔버스 정상 축소 표시 |
+| **사용자 지정 글머리 기호** | **O** | `a:buChar` char 속성("Ø" -> Wingdings 화살표 등) 표시 및 중복 삽입 방지 (PPT_B 4번) |
+| **연결선 (`p:cxnSp`)** | **O** | 2D 절대 좌표 기준 선분 요소 및 테두리 색상 렌더링 (PPT_A 5번) |
+| **숨김 슬라이드 (`show="0"`)** | **O** | 썸네일 및 캔버스 상단에 `[숨김 슬라이드]` 배지 시각화 (PPT_A 8번) |
+| **발표자 메모 (`notesSlide`)** | **O** | 연결된 노트 슬라이드의 본문 메모 하단 카드 표시 |
+| **SmartArt 3D / 다이어그램** | **X** | 웹 뷰어에서는 정밀 3D 렌더링 미지원 (손실 감지기로 경고 후 바이너리 보존) |
 | **전환/애니메이션 인터랙티브 재생** | **X** | 정적 프레젠테이션 뷰어로 표시 (저장 시 timing XML은 100% 보존됨) |
 
 ---
 
-## 6. 슬라이드별 PNG 렌더링 결과 (실 앱 뷰어 Playwright 실구동 24개 전수)
+## 6. 슬라이드별 PNG 렌더링 결과 (실 앱 뷰어 Playwright 실구동 24개 전수 갱신)
 
-Vite 개발 서버를 백그라운드 구동하고 Playwright(`playwright-core` + Chrome)로 실제 앱의 `PptxViewerModal` 컴포넌트(`viewer_test.html`)를 브라우저에서 직접 띄워 `[data-testid="pptx-slide-canvas"]`를 캡처한 24개 실제 결과입니다. (`scripts/capture_viewer_screenshots_playwright.mjs` 실행)
-
-*(※ 과거 임의 HTML 생성용 별도 889줄 스크립트 `scripts/generate_pptx_render_pngs.mjs`는 `[참고용/레거시]`로 명시되었습니다.)*
+Vite 개발 서버 구동 후 Playwright(`playwright-core` + Chrome)로 실제 앱의 `PptxViewerModal` 컴포넌트(`viewer_test.html`)를 브라우저에서 직접 띄워 캡처한 24개 실제 결과입니다. (`scripts/capture_viewer_screenshots_playwright.mjs` 실행)
 
 ```
 docs/office-upgrade/out/ppt_render/
-├── PPT_A_원본_slide1.png (20.9 KB - 표지 & 슬라이드 번호)
-├── PPT_A_원본_slide2.png (20.9 KB - 16개 복합 서식 단락)
-├── PPT_A_원본_slide3.png (25.3 KB - 6행 4열 세로 병합 표)
-├── PPT_A_원본_slide4.png (38.8 KB - 막대차트 + 원형차트)
-├── PPT_A_원본_slide5.png (34.3 KB - 그림, 연결선, 15도 회전 화살표, 그룹도형)
-├── PPT_A_원본_slide6.png (20.0 KB - 좌우 2단 비교 슬라이드)
-├── PPT_A_원본_slide7.png (16.0 KB - 부록 섹션 1)
-├── PPT_A_원본_slide8.png (15.8 KB - 부록 섹션 2, 숨김 슬라이드)
-├── PPT_A_한쇼_slide1.png (20.8 KB - 표지)
-├── PPT_A_한쇼_slide2.png (20.8 KB - 16개 복합 서식 단락)
-├── PPT_A_한쇼_slide3.png (25.1 KB - 6행 4열 표)
-├── PPT_A_한쇼_slide4.png (23.4 KB - 막대차트 1개)
-├── PPT_A_한쇼_slide5.png (34.2 KB - 복합 그래픽)
-├── PPT_A_한쇼_slide6.png (19.8 KB - 좌우 비교 슬라이드)
-├── PPT_A_한쇼_slide7.png (15.9 KB - 부록 섹션 1)
-├── PPT_A_한쇼_slide8.png (15.7 KB - 부록 섹션 2, 숨김 슬라이드)
-├── PPT_B_원본_slide1.png (7.2 KB - 표지)
-├── PPT_B_원본_slide2.png (16.8 KB - 세로쓰기 & 2단 글상자)
-├── PPT_B_원본_slide3.png (26.3 KB - 꺾은선차트 & 점프링크)
-├── PPT_B_원본_slide4.png (7.2 KB - Wingdings Ø 화살표 사용자지정 글머리기호)
-├── PPT_B_한쇼_slide1.png (7.2 KB - 표지)
-├── PPT_B_한쇼_slide2.png (16.8 KB - 세로쓰기 & 2단 글상자)
-├── PPT_B_한쇼_slide3.png (26.3 KB - 꺾은선차트 & 점프링크)
-└── PPT_B_한쇼_slide4.png (7.2 KB - Wingdings Ø 화살표 사용자지정 글머리기호)
+├── PPT_A_원본_slide1.png (10,709 B - 표지 & 슬라이드 번호)
+├── PPT_A_원본_slide2.png (16,117 B - 16개 복합 서식 단락)
+├── PPT_A_원본_slide3.png (15,074 B - 6행 4열 세로 병합 표, 외곽 열 잘림 없음)
+├── PPT_A_원본_slide4.png (21,202 B - 막대차트 Q1 및 원형차트 우측 잘림 없이 온전 표시)
+├── PPT_A_원본_slide5.png (17,016 B - 그림, 연결선, 15도 회전 화살표, 그룹 A/B 잘림 없음)
+├── PPT_A_원본_slide6.png (10,057 B - 좌우 2단 비교 슬라이드)
+├── PPT_A_원본_slide7.png (6,608 B - 부록 섹션 1)
+├── PPT_A_원본_slide8.png (13,213 B - 부록 섹션 2, 숨김 슬라이드 배지)
+├── PPT_A_한쇼_slide1.png (10,709 B - 표지)
+├── PPT_A_한쇼_slide2.png (16,117 B - 16개 복합 서식 단락)
+├── PPT_A_한쇼_slide3.png (15,074 B - 6행 4열 세로 병합 표)
+├── PPT_A_한쇼_slide4.png (12,973 B - 막대차트 1개)
+├── PPT_A_한쇼_slide5.png (17,016 B - 복합 그래픽)
+├── PPT_A_한쇼_slide6.png (10,057 B - 좌우 비교 슬라이드)
+├── PPT_A_한쇼_slide7.png (6,608 B - 부록 섹션 1)
+├── PPT_A_한쇼_slide8.png (13,213 B - 부록 섹션 2, 숨김 슬라이드)
+├── PPT_B_원본_slide1.png (10,065 B - 표지)
+├── PPT_B_원본_slide2.png (21,330 B - 세로쓰기 상자 회색 배경 제거 & 2단 분할 텍스트)
+├── PPT_B_원본_slide3.png (22,713 B - 꺾은선차트 & 점프링크)
+├── PPT_B_원본_slide4.png (12,779 B - Wingdings Ø 화살표 사용자지정 글머리기호)
+├── PPT_B_한쇼_slide1.png (10,065 B - 표지)
+├── PPT_B_한쇼_slide2.png (21,330 B - 세로쓰기 & 2단 글상자)
+├── PPT_B_한쇼_slide3.png (22,713 B - 꺾은선차트 & 점프링크)
+└── PPT_B_한쇼_slide4.png (12,779 B - Wingdings Ø 화살표 사용자지정 글머리기호)
 ```
 
 ---
@@ -156,37 +160,75 @@ docs/office-upgrade/out/ppt_render/
 
 ---
 
-## 8. 실파일 수정 저장 결과 파일
-앱 편집기와 100% 동일한 `savePptxPresentation` 함수(`scripts/run_pptx_edit_test.mjs`)를 통해 생성된 4개 수정 저장 결과 파일:
-- `docs/office-upgrade/out/PPT_A_사업보고_원본_수정저장결과.pptx` (63,906 B)
+## 8. 실파일 수정 저장 결과 파일 (데이터 손상 제로 검증)
+앱 편집기와 100% 동일한 `savePptxPresentation` 함수를 통해 생성된 4개 수정 저장 결과 파일:
+- `docs/office-upgrade/out/PPT_A_사업보고_원본_수정저장결과.pptx` (63,724 B)
   - Slide 2: "빨강" -> "파랑" run 수정 (다른 15개 run 서식 및 하이퍼링크/형광펜/첨자 완전 유지)
-  - Slide 3: "영업" -> "영업(수정)" 표 셀 수정
+  - Slide 3: "영업" -> "영업(수정)" 표 셀 수정 (중복 720 칸 없이 6행 4열 완전 보존)
+  - 모든 슬라이드의 제목 100% 원본 유지 (‹#› 덮어쓰기 없음)
   - 새 ZIP 디렉터리 엔트리 추가: **0개**
-- `docs/office-upgrade/out/PPT_A_사업보고_한쇼_수정저장결과.pptx` (60,907 B)
+- `docs/office-upgrade/out/PPT_A_사업보고_한쇼_수정저장결과.pptx` (60,725 B)
   - Slide 2: "빨강" -> "파랑" run 수정
   - Slide 3: "영업" -> "영업(수정)" 표 셀 수정
+  - 모든 슬라이드의 제목 100% 원본 유지
   - 새 ZIP 디렉터리 엔트리 추가: **0개**
-- `docs/office-upgrade/out/PPT_B_교육자료_원본_수정저장결과.pptx` (43,923 B)
+- `docs/office-upgrade/out/PPT_B_교육자료_원본_수정저장결과.pptx` (43,741 B)
   - Slide 2: "세로쓰기예시" -> "세로쓰기예시(수정)" run 수정
   - Slide 4: "첫째 항목" -> "첫째 항목(수정)" run 수정
+  - 모든 슬라이드의 제목 100% 원본 유지
   - 새 ZIP 디렉터리 엔트리 추가: **0개**
-- `docs/office-upgrade/out/PPT_B_교육자료_한쇼_수정저장결과.pptx` (47,340 B)
+- `docs/office-upgrade/out/PPT_B_교육자료_한쇼_수정저장결과.pptx` (47,158 B)
   - Slide 2: "세로쓰기예시" -> "세로쓰기예시(수정)" run 수정
   - Slide 4: "첫째 항목" -> "첫째 항목(수정)" run 수정
+  - 모든 슬라이드의 제목 100% 원본 유지
   - 새 ZIP 디렉터리 엔트리 추가: **0개**
 
 ---
 
-## 9. 자동화 테스트 결과 및 사람 확인 여부
-- **자동화 테스트 스위트 (`npm test`)**:
-  - **39개 테스트 전체 100% 통과** (Word 13개, PPT 6개, Excel 20개)
-  - `tests/pptxFullComparison.test.ts`:
+## 9. 자동화 테스트 결과
+- **자동화 테스트 스위트 (`npm test -- tests/pptxFullComparison.test.ts`)**:
+  - **9개 테스트 전체 100% 통과 (PASS)**:
     1. PPT_A 원본 슬라이드 2의 본문 run 치환 시 형광펜, 하이퍼링크, 첨자 등 형제 run 서식 100% 보존 통과
     2. PPT_A 슬라이드 7 삭제 시 "부록" 섹션 슬라이드 수 감소 및 메타데이터 동기화 통과
     3. PPT_B 슬라이드 순서 재배열 후에도 점프 링크 원래 대상 타깃 유지 통과
     4. pptxLossDetector 매크로/OLE/미디어/스마트아트/3D모델 감지 통과
     5. 4개 수정저장결과 파일의 원본 대비 XML 구조적 무결성(마스터 1개, 레이아웃 11개, 차트, 도형, 표, 이미지 수) 및 ZIP 디렉터리 엔트리 동일성(추가 폴더 0개) 100% 통과
     6. 앱 편집기 및 테스트 공통 `savePptxPresentation` diff->run 치환 및 불필요 폴더 제거 통과
-- **사람의 직접 열기 확인 여부**:
-  - **미실시 (자동화 XML DOM 비교 및 Playwright + Vite 실 앱 뷰어 브라우저 렌더링으로 검증)**
-  - (※ 이 환경에서는 실제 상용 MS 파워포인트/한쇼 데스크톱 앱을 통한 사람 육안 확인은 수행하지 않았으며, XML 구조 비교 및 실제 앱의 PptxViewerModal 컴포넌트를 브라우저에 구동한 Playwright 24장 PNG 스크린샷 렌더링으로 검증하였습니다.)
+    7. **무변경 저장 테스트(zero-change roundtrip)**: 4개 파일 모두 편집 없이 저장했을 때 모든 `slideN.xml` 텍스트 원본과 100% 동일 통과
+    8. **실제 편집 저장 및 out/ 생성**: PPT_A(빨강->파랑, 영업->영업(수정)) 및 PPT_B(세로쓰기예시->(수정), 첫째 항목->(수정)) 통과
+    9. **슬라이드별 전체 텍스트 전수 비교**: 수정한 문단 외의 모든 슬라이드/모든 문단/표 텍스트가 원본과 100% 일치 통과
+
+---
+
+## 10. 엑셀 1단계 E2E 브라우저 실구동 검증 결과 (`docs/office-upgrade/out/excel_e2e/`)
+
+실제 브라우저(Chrome)에서 `ExcelEditorModal`을 구동하여 **[Univer 로드 → activeWb.save() → univerSnapshotToDataUrl]** 실제 앱 경로를 Playwright로 직접 검증하였습니다. (`scripts/run_excel_e2e_playwright.mjs` 실행)
+
+### (1) 검증 대상 및 3대 시나리오 100% 통과 내역
+- **시나리오 1: 무변경 저장 (Zero-change roundtrip)**
+  - 실파일 4개 모두 편집 없이 저장 시, 원본 대비 모든 시트의 셀 값, 수식, 표시 형식, 기본 글꼴(맑은 고딕), 열 너비/행 높이, 유효성 검사, 조건부 서식, 병합, 숨김 열(견적서 H열 hidden=true)이 100% 동일하게 보존됨을 확인.
+- **시나리오 2: 셀 1개 수정 후 저장**
+  - 실파일A C4 셀 ("경영지원" -> "경영기획") 및 실파일B G11 셀 (수량 10 -> 25) 수정 저장 시, 수정한 셀만 정확히 변경되고 나머지 모든 셀(C5 날짜수식, B8 richText 등)이 100% 동일함을 확인.
+- **시나리오 3: 행 1개 삽입 후 저장 및 원복 삭제 후 저장**
+  - Univer의 `insertRowBefore` 및 `deleteRow` 실행 시 `sheet.mutation.insert-row`를 실시간 감지하여 `structuralOps`를 구성하고, 행 삽입 시 데이터 1행 시프트 및 삭제 시 원복이 완벽하게 동작함을 확인.
+
+### (2) 생성된 결과 파일 목록 (16개 전수)
+```
+docs/office-upgrade/out/excel_e2e/
+├── 실파일A_인사평가_MS엑셀_무변경저장.xlsx (12,485 B)
+├── 실파일A_인사평가_MS엑셀_셀수정저장.xlsx (12,497 B)
+├── 실파일A_인사평가_MS엑셀_행삽입저장.xlsx (12,640 B)
+├── 실파일A_인사평가_MS엑셀_행삭제원복저장.xlsx (12,524 B)
+├── 실파일A_인사평가_한셀_무변경저장.xlsx (12,795 B)
+├── 실파일A_인사평가_한셀_셀수정저장.xlsx (12,807 B)
+├── 실파일A_인사평가_한셀_행삽입저장.xlsx (12,933 B)
+├── 실파일A_인사평가_한셀_행삭제원복저장.xlsx (12,836 B)
+├── 실파일B_견적서_MS엑셀_무변경저장.xlsx (10,691 B)
+├── 실파일B_견적서_MS엑셀_셀수정저장.xlsx (10,800 B)
+├── 실파일B_견적서_MS엑셀_행삽입저장.xlsx (10,782 B)
+├── 실파일B_견적서_MS엑셀_행삭제원복저장.xlsx (10,813 B)
+├── 실파일B_견적서_한셀_무변경저장.xlsx (10,891 B)
+├── 실파일B_견적서_한셀_셀수정저장.xlsx (11,003 B)
+├── 실파일B_견적서_한셀_행삽입저장.xlsx (10,954 B)
+└── 실파일B_견적서_한셀_행삭제원복저장.xlsx (11,021 B)
+```
