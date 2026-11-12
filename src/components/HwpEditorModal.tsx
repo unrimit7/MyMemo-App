@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Save, Download, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
 import { createEditor, type RhwpEditor } from '@rhwp/editor';
 import { useFloatingWindow } from './useFloatingWindow';
-import { postProcessHwpx, hasHwpTrackChanges } from '../utils/hwpxAdapter';
+import { postProcessHwpx, postProcessHwp, hasHwpTrackChanges } from '../utils/hwpxAdapter';
 
 interface HwpEditorModalProps {
   isOpen: boolean;
@@ -237,6 +237,8 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
         bytes = isHwpx ? await editor.exportHwpx() : await editor.exportHwp();
         if (isHwpx) {
           bytes = await postProcessHwpx(bytes, originalBytes);
+        } else {
+          bytes = postProcessHwp(bytes);
         }
       }
 
@@ -296,6 +298,8 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
         bytes = isHwpx ? await editor.exportHwpx() : await editor.exportHwp();
         if (isHwpx) {
           bytes = await postProcessHwpx(bytes, originalBytes);
+        } else {
+          bytes = postProcessHwp(bytes);
         }
       }
 

@@ -163,6 +163,107 @@ async function verifyHwpZeroChange(origBuf, savedBuf, fileName) {
   savedDoc.free();
 }
 
+function verifyHwpBit14AndStreams(savedBuf, fileName) {
+  const sig = Buffer.from('HWP Document File');
+  const idx = savedBuf.indexOf(sig);
+  assertTrue(idx >= 0, `${fileName}: HWP Document File 시그니처 존재 확인`);
+  const props = savedBuf.readUInt32LE(idx + 36);
+  const bit14 = (props & 0x4000) !== 0;
+  const viewTextSig = Buffer.from('ViewText', 'utf16le');
+  const hasViewText = savedBuf.indexOf(viewTextSig) >= 0;
+
+  if (bit14) {
+    assertTrue(hasViewText, `${fileName}: bit 14(0x4000)가 켜져 있으면 ViewText 스트림이 반드시 존재해야 함`);
+  } else {
+    assertTrue(!hasViewText, `${fileName}: ViewText 스트림이 없으므로 bit 14(0x4000)가 반드시 해제(0)되어 있어야 함`);
+  }
+}
+
+async function verifyHwpxTrackChangesMetadata(origBuf, savedBuf, fileName) {
+  const origZip = await JSZip.loadAsync(origBuf);
+  const savedZip = await JSZip.loadAsync(savedBuf);
+
+  const origHdrXml = await origZip.file('Contents/header.xml')?.async('text');
+  const savedHdrXml = await savedZip.file('Contents/header.xml')?.async('text');
+
+  if (!origHdrXml || !savedHdrXml) return;
+
+  const parser = new DOMParser();
+  const origHdrDoc = parser.parseFromString(origHdrXml, 'application/xml');
+  const savedHdrDoc = parser.parseFromString(savedHdrXml, 'application/xml');
+
+  const origTCList = origHdrDoc.getElementsByTagName('hh:trackChanges');
+  const origTCAList = origHdrDoc.getElementsByTagName('hh:trackChangeAuthors');
+
+  if (origTCList.length > 0) {
+    const savedTCList = savedHdrDoc.getElementsByTagName('hh:trackChanges');
+    assertTrue(savedTCList.length > 0, `${fileName}: header.xml 내 hh:trackChanges 보존 확인`);
+
+    // refList 내 위치 검증
+    const savedRefList = savedHdrDoc.getElementsByTagName('hh:refList')[0];
+    assertTrue(Boolean(savedRefList), `${fileName}: hh:refList 존재 확인`);
+    let isTCInsideRefList = false;
+    for (let i = 0; i < savedRefList.childNodes.length; i++) {
+      if (savedRefList.childNodes[i].nodeName === 'hh:trackChanges') {
+        isTCInsideRefList = true;
+        break;
+      }
+    }
+    assertTrue(isTCInsideRefList, `${fileName}: hh:trackChanges가 hh:refList 내부에 올바르게 위치함`);
+
+    // trackChangeAuthor 검증
+    if (origTCAList.length > 0) {
+      const savedTCAList = savedHdrDoc.getElementsByTagName('hh:trackChangeAuthors');
+      assertTrue(savedTCAList.length > 0, `${fileName}: header.xml 내 hh:trackChangeAuthors 보존 확인`);
+
+      let isTCAInsideRefList = false;
+      for (let i = 0; i < savedRefList.childNodes.length; i++) {
+        if (savedRefList.childNodes[i].nodeName === 'hh:trackChangeAuthors') {
+          isTCAInsideRefList = true;
+          break;
+        }
+      }
+      assertTrue(isTCAInsideRefList, `${fileName}: hh:trackChangeAuthors가 hh:refList 내부에 올바르게 위치함`);
+
+      // 작성자 ID 목록 추출
+      const authorEls = Array.from(savedHdrDoc.getElementsByTagName('hh:trackChangeAuthor'));
+      const authorIds = new Set(authorEls.map(a => a.getAttribute('id')));
+      assertTrue(authorIds.size > 0, `${fileName}: hh:trackChangeAuthor 작성자 ID 추출 성공`);
+
+      // trackChange ID 및 authorID 매핑 검증
+      const tcEls = Array.from(savedHdrDoc.getElementsByTagName('hh:trackChange'));
+      const tcIds = new Set(tcEls.map(t => t.getAttribute('id')));
+
+      assertEqual(tcEls.length, Array.from(origHdrDoc.getElementsByTagName('hh:trackChange')).length, `${fileName}: hh:trackChange 항목 수 원본과 일치`);
+      assertEqual(authorEls.length, Array.from(origHdrDoc.getElementsByTagName('hh:trackChangeAuthor')).length, `${fileName}: hh:trackChangeAuthor 항목 수 원본과 일치`);
+
+      for (const tc of tcEls) {
+        const aId = tc.getAttribute('authorID');
+        assertTrue(authorIds.has(aId), `${fileName}: trackChange (id=${tc.getAttribute('id')})의 authorID(${aId})가 trackChangeAuthors에 등록되어 있어야 함`);
+      }
+
+      // section*.xml 내 모든 TcId가 header.xml의 tcIds에 유효하게 존재하는지 전수 검사
+      for (const fname of Object.keys(savedZip.files)) {
+        if (fname.startsWith('Contents/section') && fname.endsWith('.xml')) {
+          const secXml = await savedZip.file(fname).async('text');
+          const secDoc = parser.parseFromString(secXml, 'application/xml');
+          const insBegins = Array.from(secDoc.getElementsByTagName('hp:insertBegin'));
+          const delBegins = Array.from(secDoc.getElementsByTagName('hp:deleteBegin'));
+
+          for (const ib of insBegins) {
+            const tcId = ib.getAttribute('TcId');
+            assertTrue(tcIds.has(tcId), `${fileName}: ${fname}의 insertBegin TcId(${tcId})가 header.xml trackChanges에 유효하게 존재함`);
+          }
+          for (const db of delBegins) {
+            const tcId = db.getAttribute('TcId');
+            assertTrue(tcIds.has(tcId), `${fileName}: ${fname}의 deleteBegin TcId(${tcId})가 header.xml trackChanges에 유효하게 존재함`);
+          }
+        }
+      }
+    }
+  }
+}
+
 async function main() {
   console.log('================================================================================');
   console.log('  [4단계 한글(HWP/HWPX) 완전 오프라인 셀프호스팅 및 무손실 보존 E2E 검증]');
@@ -331,12 +432,16 @@ async function main() {
         assertEqual(savedDelCount, origDelCount, `${item.name}: 수정하지 않은 변경 추적 문단의 deleteBegin 개수 유지 (${origDelCount}개)`);
         console.log(`    ✓ HWPX 검증: 미수정 변경 추적 마크업 유지 (insertBegin: ${savedInsCount}개, deleteBegin: ${savedDelCount}개)`);
       }
+
+      await verifyHwpxTrackChangesMetadata(origBuf, savedBuf2, item.name);
+      console.log(`    ✓ HWPX 검증: header.xml 내 trackChanges/trackChangeAuthors 및 section TcId 유효성 100% 일치 확인`);
     } else {
       const savedDoc = new HwpDocument(savedBuf2);
       const text = savedDoc.getTextFileText();
       assertTrue(text.includes('추진 배경 및 필요성'), `${item.name}: 수정 텍스트 반영 확인`);
       savedDoc.free();
-      console.log(`    ✓ HWP 검증: 3페이지 유지 & 수정된 텍스트('추진 배경 및 필요성') 반영 확인`);
+      verifyHwpBit14AndStreams(savedBuf2, item.name);
+      console.log(`    ✓ HWP 검증: 3페이지 유지, '추진 배경 및 필요성' 반영, ViewText 부재 시 FileHeader bit14(0x4000) 자동 해제 검증 완료`);
     }
 
     scenarioResults.push({
@@ -398,12 +503,16 @@ async function main() {
         assertEqual(savedDelCount, origDelCount, `${item.name}: 수정하지 않은 변경 추적 문단의 deleteBegin 개수 유지 (${origDelCount}개)`);
         console.log(`    ✓ HWPX 검증: 미수정 변경 추적 마크업 유지 (insertBegin: ${savedInsCount}개, deleteBegin: ${savedDelCount}개)`);
       }
+
+      await verifyHwpxTrackChangesMetadata(origBuf, savedBuf3, item.name);
+      console.log(`    ✓ HWPX 검증: header.xml 내 trackChanges/trackChangeAuthors 및 section TcId 유효성 100% 일치 확인`);
     } else {
       const savedDoc = new HwpDocument(savedBuf3);
       const text = savedDoc.getTextFileText();
       assertTrue(text.includes('영업기획'), `${item.name}: 표 셀 내 '영업기획' 반영 확인`);
       savedDoc.free();
-      console.log(`    ✓ HWP 검증: 표 셀 텍스트 '영업기획' 성공적 치환 및 3페이지 유지`);
+      verifyHwpBit14AndStreams(savedBuf3, item.name);
+      console.log(`    ✓ HWP 검증: 표 셀 '영업기획' 치환, 3페이지 유지, ViewText 부재 시 FileHeader bit14(0x4000) 자동 해제 검증 완료`);
     }
 
     scenarioResults.push({

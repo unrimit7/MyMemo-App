@@ -142,22 +142,59 @@ export async function postProcessHwpx(
       modified = true;
     }
 
-    // 2. Contents/header.xml의 hh:trackChanges 보존
+    // 2. Contents/header.xml 내 변경 추적 메타데이터(hh:trackChanges, hh:trackChangeAuthors, 설정) 원본 복원
     const origHdrFile = origZip.file('Contents/header.xml');
     const expHdrFile = expZip.file('Contents/header.xml');
     if (origHdrFile && expHdrFile) {
       const origHdrXml = await origHdrFile.async('string');
-      if (origHdrXml.includes('trackChanges')) {
+      if (origHdrXml.includes('trackChanges') || origHdrXml.includes('trackChangeAuthors')) {
         const expHdrXml = await expHdrFile.async('string');
-        if (!expHdrXml.includes('trackChanges')) {
-          const docOrigHdr = parser.parseFromString(origHdrXml, 'application/xml');
-          const docExpHdr = parser.parseFromString(expHdrXml, 'application/xml');
-          const tcList = findElements(docOrigHdr, 'hh:trackChanges');
-          if (tcList.length > 0) {
-            docExpHdr.documentElement.appendChild(tcList[0]);
-            expZip.file('Contents/header.xml', serializer.serializeToString(docExpHdr));
-            modified = true;
+        const docOrigHdr = parser.parseFromString(origHdrXml, 'application/xml');
+        const docExpHdr = parser.parseFromString(expHdrXml, 'application/xml');
+
+        let hdrChanged = false;
+        const expRefLists = findElements(docExpHdr, 'hh:refList');
+        const expRefList = expRefLists[0];
+
+        if (expRefList) {
+          // 기존에 잘못 붙었을 수 있는 docExpHdr 내부 trackChanges/trackChangeAuthors 정리
+          const existingExpTC = findElements(docExpHdr, 'hh:trackChanges');
+          const existingExpTCA = findElements(docExpHdr, 'hh:trackChangeAuthors');
+          for (const el of existingExpTC) {
+            if (el.parentNode) el.parentNode.removeChild(el);
           }
+          for (const el of existingExpTCA) {
+            if (el.parentNode) el.parentNode.removeChild(el);
+          }
+
+          // docOrigHdr에서 trackChanges와 trackChangeAuthors 추출하여 expRefList 끝에 원본 순서대로 삽입
+          const origTC = findElements(docOrigHdr, 'hh:trackChanges');
+          const origTCA = findElements(docOrigHdr, 'hh:trackChangeAuthors');
+
+          if (origTC.length > 0) {
+            const imported = docExpHdr.importNode ? docExpHdr.importNode(origTC[0], true) : origTC[0];
+            expRefList.appendChild(imported);
+            hdrChanged = true;
+          }
+          if (origTCA.length > 0) {
+            const imported = docExpHdr.importNode ? docExpHdr.importNode(origTCA[0], true) : origTCA[0];
+            expRefList.appendChild(imported);
+            hdrChanged = true;
+          }
+        }
+
+        // trackchageConfig / trackchangeConfig 복원 (docExpHdr.documentElement 직계)
+        const origConfigs = findElements(docOrigHdr, 'hh:trackchageConfig').concat(findElements(docOrigHdr, 'hh:trackchangeConfig'));
+        const expConfigs = findElements(docExpHdr, 'hh:trackchageConfig').concat(findElements(docExpHdr, 'hh:trackchangeConfig'));
+        if (origConfigs.length > 0 && expConfigs.length === 0) {
+          const imported = docExpHdr.importNode ? docExpHdr.importNode(origConfigs[0], true) : origConfigs[0];
+          docExpHdr.documentElement.appendChild(imported);
+          hdrChanged = true;
+        }
+
+        if (hdrChanged) {
+          expZip.file('Contents/header.xml', serializer.serializeToString(docExpHdr));
+          modified = true;
         }
       }
     }
@@ -232,6 +269,65 @@ export async function postProcessHwpx(
     return exportedBytes;
   } catch (err) {
     console.warn('HWPX 후처리 중 오류 (원본 export 유지):', err);
+    return exportedBytes;
+  }
+}
+
+/**
+ * HWP 5.0 CFB 내보내기 후처리:
+ * ViewText 스트림이 없는데 FileHeader의 bit 14(0x4000, 변경 추적 문서 플래그)가 켜져 있으면
+ * 한글 2018 등 데스크톱 프로그램에서 "%1을(를) 찾지 못했습니다" 오류를 발생시킵니다.
+ * ViewText가 없으면 bit 14를 해제(props &= ~0x4000)하여 정상 열람되도록 합니다.
+ */
+export function postProcessHwp(exportedBytes: Uint8Array): Uint8Array {
+  try {
+    const buf = new Uint8Array(exportedBytes);
+    // 1. ViewText 스트림 존재 여부 확인 (UTF-16LE: 'V\0i\0e\0w\0T\0e\0x\0t\0')
+    const viewTextBytes = [0x56, 0x00, 0x69, 0x00, 0x65, 0x00, 0x77, 0x00, 0x54, 0x00, 0x65, 0x00, 0x78, 0x00, 0x74, 0x00];
+    let hasViewText = false;
+    for (let i = 0; i <= buf.length - viewTextBytes.length; i++) {
+      let match = true;
+      for (let j = 0; j < viewTextBytes.length; j++) {
+        if (buf[i + j] !== viewTextBytes[j]) {
+          match = false;
+          break;
+        }
+      }
+      if (match) {
+        hasViewText = true;
+        break;
+      }
+    }
+
+    if (hasViewText) {
+      return exportedBytes;
+    }
+
+    // 2. FileHeader 시그니처("HWP Document File") 검색
+    const sigBytes = [0x48, 0x57, 0x50, 0x20, 0x44, 0x6F, 0x63, 0x75, 0x6D, 0x65, 0x6E, 0x74, 0x20, 0x46, 0x69, 0x6C, 0x65];
+    for (let i = 0; i <= buf.length - 40; i++) {
+      let match = true;
+      for (let j = 0; j < sigBytes.length; j++) {
+        if (buf[i + j] !== sigBytes[j]) {
+          match = false;
+          break;
+        }
+      }
+      if (match) {
+        const propsOffset = i + 36;
+        const currentProps = buf[propsOffset] | (buf[propsOffset + 1] << 8) | (buf[propsOffset + 2] << 16) | (buf[propsOffset + 3] << 24);
+        if ((currentProps & 0x4000) !== 0) {
+          const newProps = currentProps & ~0x4000;
+          buf[propsOffset] = newProps & 0xff;
+          buf[propsOffset + 1] = (newProps >> 8) & 0xff;
+          buf[propsOffset + 2] = (newProps >> 16) & 0xff;
+          buf[propsOffset + 3] = (newProps >> 24) & 0xff;
+        }
+      }
+    }
+    return buf;
+  } catch (err) {
+    console.warn('HWP 후처리 중 오류:', err);
     return exportedBytes;
   }
 }
