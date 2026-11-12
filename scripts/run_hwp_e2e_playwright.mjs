@@ -37,6 +37,18 @@ function assertEqual(actual, expected, message) {
   }
 }
 
+function safeWriteFileSync(filePath, data) {
+  try {
+    fs.writeFileSync(filePath, data);
+  } catch (err) {
+    if (err.code === 'EBUSY') {
+      console.warn(`    ⚠️ 파일이 외부 프로그램(한글 등)에서 열려 있어 디스크 쓰기를 건너뛰고 메모리에서 검증을 계속합니다: ${path.basename(filePath)}`);
+    } else {
+      throw err;
+    }
+  }
+}
+
 async function performReplaceAll(page, findText, replaceText) {
   await page.evaluate(async ({ find, replace }) => {
     const frame = document.querySelector('iframe');
@@ -362,7 +374,7 @@ async function main() {
 
     const savedBuf1 = await executeEditorSave(page);
     const outPath1 = path.join(OUT_DIR, `${baseName}_무변경저장.${ext}`);
-    fs.writeFileSync(outPath1, savedBuf1);
+    safeWriteFileSync(outPath1, savedBuf1);
     console.log(`    -> 저장 완료: ${path.basename(outPath1)} (${savedBuf1.length.toLocaleString()} 바이트)`);
 
     if (item.isHwpx) {
@@ -391,7 +403,7 @@ async function main() {
     await performReplaceAll(page, '추진 배경', '추진 배경 및 필요성');
     const savedBuf2 = await executeEditorSave(page);
     const outPath2 = path.join(OUT_DIR, `${baseName}_문단수정저장.${ext}`);
-    fs.writeFileSync(outPath2, savedBuf2);
+    safeWriteFileSync(outPath2, savedBuf2);
     console.log(`    -> 저장 완료: ${path.basename(outPath2)} (${savedBuf2.length.toLocaleString()} 바이트)`);
 
     if (item.isHwpx) {
@@ -462,7 +474,7 @@ async function main() {
     await performReplaceAll(page, '영업', '영업기획');
     const savedBuf3 = await executeEditorSave(page);
     const outPath3 = path.join(OUT_DIR, `${baseName}_표수정저장.${ext}`);
-    fs.writeFileSync(outPath3, savedBuf3);
+    safeWriteFileSync(outPath3, savedBuf3);
     console.log(`    -> 저장 완료: ${path.basename(outPath3)} (${savedBuf3.length.toLocaleString()} 바이트)`);
 
     if (item.isHwpx) {
@@ -552,8 +564,8 @@ async function main() {
     return btn?.closest('.rounded-2xl')?.textContent || '';
   });
   assertTrue(warningText.includes('변경 추적 손실 주의'), '경고 모달 제목 확인');
-  assertTrue(warningText.includes('이 문서에서는 변경 추적이 일반 텍스트로 합쳐집니다'), '경고 모달 문구 확인');
-  console.log('  ✓ 변경 추적 경고 모달 표시 확인: "변경 추적 손실 주의" ("이 문서에서는 변경 추적이 일반 텍스트로 합쳐집니다")');
+  assertTrue(warningText.includes('변경 추적이 걸린 문단을 직접 수정하면 그 문단의 변경 추적이 일반 텍스트로 합쳐질 수 있습니다'), '경고 모달 문구 확인');
+  console.log('  ✓ 변경 추적 경고 모달 표시 확인: "변경 추적 손실 주의" ("변경 추적이 걸린 문단을 직접 수정하면 그 문단의 변경 추적이 일반 텍스트로 합쳐질 수 있습니다")');
 
   // [취소] 클릭 시 저장 중단 확인
   console.log('  2. [취소] 버튼 클릭 시 저장 취소 검증...');

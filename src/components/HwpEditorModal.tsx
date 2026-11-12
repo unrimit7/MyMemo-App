@@ -540,7 +540,7 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
             </div>
 
             <p className="text-xs text-slate-300 leading-relaxed bg-slate-800/60 p-3 rounded-xl border border-slate-700/50">
-              이 문서에는 변경 추적(삽입/삭제 이력)이 포함되어 있습니다. 수정 후 저장 시 <strong>이 문서에서는 변경 추적이 일반 텍스트로 합쳐집니다</strong>. 그래도 저장하시겠습니까?
+              이 문서에는 변경 추적(삽입/삭제 이력)이 포함되어 있습니다. <strong>변경 추적이 걸린 문단을 직접 수정하면 그 문단의 변경 추적이 일반 텍스트로 합쳐질 수 있습니다</strong>. (.hwp로 저장하면 변경 내용이 수락된 상태로 저장됩니다) 그래도 저장하시겠습니까?
             </p>
 
             <div className="flex flex-col sm:flex-row gap-2 pt-1">
