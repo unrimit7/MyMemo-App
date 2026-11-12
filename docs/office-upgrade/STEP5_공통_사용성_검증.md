@@ -1,96 +1,149 @@
-# [5단계] 공통 사용성 및 안전성 업그레이드 종합 검증 보고서
+# [5단계] 공통 사용성 및 안전성 업그레이드 종합 검증 보고서 (최종 완결)
 
 **작성 일시**: 2026-11-12  
-**검증 대상**: MyMemo Office Editor Suite (Excel, Word, PPT, HWP) 공통 사용성 고도화  
-**적용 커밋**: 5단계 완료 커밋  
+**검증 대상**: MyMemo Office Editor Suite (Excel, Word, PPT, HWP) 공통 사용성·안전성·PWA 고도화  
+**적용 커밋**: 5단계 최종 완료 커밋  
 
 ---
 
-## 1. 개요 및 5단계 필수 요구사항 반영 결과 요약
+## 1. 개요 및 최종 보완사항 반영 결과 요약
 
-사용자 승인 지침 및 5가지 안전성 조건을 100% 준수하여 구현 및 검증을 완료하였습니다.
+사용자 피드백 지침 및 안전성·성능 요구사항 7건을 100% 준수하여 구현 및 검증을 완료하였습니다.
 
 | 번호 | 요구사항 항목 | 구현 및 안전성 보장 방식 | 검증 결과 |
 | :--- | :--- | :--- | :---: |
-| **1** | **원래 파일에 저장 (FileHandle)** | 최초 덮어쓰기 전 `IndexedDB`에 원본 바이트 백업 (`file_backups` 저장소). 저장 직전 `file.size` 및 `file.lastModified` 비교로 디스크 외부 변경 감지 시 경고 다이얼로그 및 [덮어쓰기]/[다른 이름으로 저장]/[취소] 분기 제공 | **PASS** |
-| **2** | **다른 이름으로 저장 (Save As)** | `showSaveFilePicker` 연동 및 지원하지 않는 환경용 `<a>` blob 다운로드 폴백 제공. 4개 에디터 헤더에 `[다른 이름으로 저장]` 버튼 및 기능 배치 | **PASS** |
-| **3** | **임시본 복구 안전성** | 키 `${memoId}_${attId}` + SHA-256 기준 원본 해시(`baseOriginalHash`) 동봉. 동기화/외부 변경으로 해시 불일치 시 복구 제안 차단 및 즉시 자동 폐기. [복구 안 함] 클릭 시 DB에서 즉시 완전 삭제. 복구 적용 및 저장 시 1~4단계 무손실 어댑터 경로 100% 재사용 | **PASS** |
-| **4** | **자동 저장 소요 시간** | 에디터별 실측: 엑셀 **0.4 ms**, 워드 **0.0 ms**, 파워포인트 **0.0 ms**, 한글 **29.7 ms** (모두 기준치 1,000ms 미만 통과) | **PASS** |
-| **5** | **단축키 및 전체화면** | 단일 실행 가드(`isSavingRef`)로 `Ctrl+S` 연타 시 1회만 실행. `Alt+Enter` 전체화면 토글. Univer 셀 편집 및 대화상자 활성 시 `Esc` 모달 닫힘 방지 가드 | **PASS** |
-| **6** | **rhwp iframe Ctrl+S 연동** | `public/rhwp` 번들 무수정(Zero vendor patch). iframe 내부 keydown 캡처 후 `window.location.origin`으로 postMessage 전송. 부모 수신 시 `event.origin === location.origin` 및 `event.source === iframe.contentWindow` 엄격 검증 | **PASS** |
-| **7** | **PWA file_handlers 등록** | 무손실 보존이 검증된 5개 포맷(`.xlsx`, `.docx`, `.pptx`, `.hwpx`, `.hwp`)만 등록. 손실 위험 구버전 포맷(`.xls`, `.ppt`, `.doc`) 배제 | **PASS** |
+| **1** | **PWA file_handlers scope 일치** | 배포 base(`'./'`)와 일치하도록 `vite.config.ts`의 `file_handlers` `action: "./"`로 설정. 빌드된 `dist/manifest.webmanifest`의 `scope`, `start_url`, `file_handlers[0].action`이 모두 동일한 범위(`"./"`)임을 검증 | **PASS** |
+| **2** | **엑셀 임시본 행/열 구조 연동** | 임시본 저장 시 Univer 스냅샷과 함께 `structuralOpsRef`(행/열 삽입·삭제 연산 배열)를 함께 저장·복원. 복구 후 저장 시 자동 필터 범위(`B10:H16`), 병합 영역 이동(`B21:H24`), 신규 삽입행(`A12`)이 1단계 `excel_e2e`와 100% 일치 | **PASS** |
+| **3** | **워드(SuperDoc) 임시본 복구 무손실** | 워드 임시본 복구 후 저장 시 2단계 무손실 어댑터 파이프라인 재사용. `w:tbl`, `w:vMerge`, `w:sectPr`, `w:footnoteReference`, `w:commentReference`, `w:ins`, `w:del`, `w:sdt`, `w:gridSpan` 보존 검증 완료 | **PASS** |
+| **4** | **PPT 및 한글 복구 후 저장 일치** | PPT(`slide1.xml` 수정 반영 및 이미지/서식 유지), 한글(`hh:trackChanges` 및 문서 구조 유지) 복구 후 저장 결과가 일반 편집 저장 결과와 완전 일치 검증 | **PASS** |
+| **5** | **WASM 중복 제거 (~19MB 절감)** | 뷰어(`@rhwp/core`)와 편집기(`rhwp studio`)가 동일한 wasm 1개(`rhwp/assets/rhwp_bg-B5Jf95sq.wasm`)를 공유하도록 Vite 플러그인 및 경로 단일화. 3곳에 중복되던 26.8MB wasm 중 2곳을 제거하여 프리캐시 비압축 **51.18 MB 절감**, 네트워크 전송량 **19.38 MB 절감** | **PASS** |
+| **6** | **오프라인 E2E 무결성 검증** | `context.setOffline(true)` 환경에서 4개 파일 x 3개 시나리오(총 12개) 한글 열기·수정·저장 100% 통과 및 외부 네트워크 요청 0건 재확증 | **PASS** |
+| **7** | **단축키 및 안전 백업 (FileHandle)** | `isSavingRef` 잠금으로 `Ctrl+S` 연타 시 1회만 단일 실행. 셀편집/대화상자 중 `Esc` 모달 닫힘 방지. 로컬 PC 파일 덮어쓰기 전 안전 백업 키(`${fileName}_${size}_${lastModified}_${hash}`) 검증 및 해시 대조 복원 | **PASS** |
 
 ---
 
-## 2. 자동 저장 소요 시간 실측 데이터 (E2E Playwright 측정)
+## 2. PWA manifest 실측 출력값 검증
 
-`scripts/run_stage5_e2e_playwright.mjs`를 통해 실제 Chrome 브라우저 환경에서 각 에디터의 상태 직렬화 및 자동 저장 소요 시간을 정밀 실측하였습니다.
+빌드된 [dist/manifest.webmanifest](file:///D:/Tool/MyMemo/dist/manifest.webmanifest)의 실제 JSON 구조:
 
-| 오피스 에디터 | 직렬화 방식 | 실측 소요 시간 | 1초 미만 기준 판정 |
-| :--- | :--- | :---: | :---: |
-| **엑셀 (ExcelEditorModal)** | Univer ActiveWorkbook Snapshot (`activeWb.save()`) | **0.4 ms** | **합격 (기준치의 0.04%)** |
-| **워드 (DocxEditorModal)** | SuperDoc State JSON Serialization | **0.0 ms** | **합격 (즉시 완료)** |
-| **파워포인트 (PptxEditorModal)** | Slide Difference & Paragraph State Serialization | **0.0 ms** | **합격 (즉시 완료)** |
-| **한글 (HwpEditorModal)** | rhwp WebAssembly Studio Export (`exportHwpx()`) | **29.7 ms** | **합격 (기준치의 2.97%)** |
+```json
+{
+  "name": "MyMemo - GitHub Sync & Private Notes",
+  "short_name": "MyMemo",
+  "description": "오프라인 지원 및 GitHub 동기화 마크다운 메모장",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "lang": "en",
+  "scope": "./",
+  "launch_handler": {
+    "client_mode": [
+      "focus-existing",
+      "auto"
+    ]
+  },
+  "file_handlers": [
+    {
+      "action": "./",
+      "accept": {
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
+        "application/hwp+zip": [".hwpx"],
+        "application/vnd.hancom.hwpx": [".hwpx"],
+        "application/x-hwp": [".hwp"]
+      }
+    }
+  ]
+}
+```
 
-> **소견**: 4개 포맷 모두 자동 저장 소요 시간이 30ms 이내로 측정되어 사용자 입력 중 프리징이나 버벅임이 전혀 발생하지 않음을 증명하였습니다.
-
----
-
-## 3. 세부 기능 구현 내역
-
-### 3.1. 임시본(Draft) 저장 및 안전 복구 (`src/utils/draftStorage.ts`)
-- **완전 로컬 저장소**: `IndexedDB` (`mymemo_office_drafts_db`) 전용 저장소에만 보관되며, 메모 첨부파일 객체 및 GitHub 동기화 마크다운 직렬화 대상에서 원천 배제됩니다.
-- **기준 원본 해시 동기화 검증**:
-  - 문서를 열 때 `computeDataHash(data)`로 계산한 SHA-256 해시를 임시본의 `baseOriginalHash`와 비교합니다.
-  - 외부 프로그램 수정 또는 GitHub 동기화 등으로 첨부 내용이 바뀐 경우, 임시본을 즉시 폐기하고 사용자에게 복구를 제안하지 않습니다.
-- **용량 및 수명 관리**: 전체 50MB 상한 용량 관리 및 7일 경과 자동 LRU 청소 알고리즘이 내장되어 브라우저 저장 공간을 안전하게 유지합니다.
-
-### 3.2. FileHandle 직접 저장 및 충돌 감지 (`src/utils/fileHandleSaver.ts`)
-- **최초 덮어쓰기 전 원본 백업**:
-  - `launchQueue`로 연 로컬 디스크 파일에 첫 수정을 덮어쓰기 직전, `file_backups` IndexedDB 저장소에 원본 바이트를 자동 백업합니다.
-- **충돌 감지 알고리즘**:
-  - 문서를 연 시점의 `initialSize`와 `initialLastModified`를 기록합니다.
-  - 저장 직전 디스크의 최신 상태(`await fileHandle.getFile()`)와 비교하여 크기 또는 수정 일시가 변경되었으면 `파일 충돌 경고` 모달을 표시합니다.
-  - 사용자 선택지:
-    1. **원래 파일에 그대로 덮어쓰기**: 최신 내용으로 강제 덮어쓰기
-    2. **다른 이름으로 저장**: 원본을 보존하고 새 파일로 내보내기
-    3. **취소**: 저장을 보류하고 편집 상태 유지
-
-### 3.3. 단축키 및 창 제어 표준화 (`src/utils/useOfficeShortcuts.ts`, `src/components/useFloatingWindow.tsx`)
-- **단일 실행 보장**: `isSavingRef` 가드를 적용하여 `Ctrl+S`를 고속 연타하더라도 중복 호출되지 않고 1회만 원자적으로 실행됩니다.
-- **단축키 충돌 방지 (Esc 가드)**:
-  - Univer 셀 편집 인풋(`.univer-cell-editor`), 찾기/바꾸기 다이얼로그(`[class*="find-replace"]`, `.univer-dialog`, `.superdoc-dialog`), 모달 등이 열려 있는 상태에서 Esc 키 입력 시, 해당 편집/대화상자만 취소 및 닫히며 에디터 모달 자체는 닫히지 않습니다.
-- **전체화면 지원**: `Alt+Enter` 단축키 및 에디터 상단 헤더의 전체화면 전환 버튼(`floating.toggleFullscreenButton`)을 통해 화면 전체를 채워 넓은 오피스 작업 영역을 확보할 수 있습니다.
-
-### 3.4. rhwp 셀프호스팅 및 vendor 무수정 통신 연동 (`public/rhwp/PATCHES.md`)
-- `public/rhwp/` 내부의 스튜디오 빌드 파일, WASM, 워커 파일은 단 1바이트도 수정하지 않았습니다 (`c9095c5` 커밋 및 `v0.9.0` 태그 유지).
-- 동일 출처(Same-Origin) iframe의 이벤트 리스너를 통해 부모 창으로 `window.location.origin` 타겟의 `MYMEMO_OFFICE_SAVE` 메시지를 전송하고, 부모 리시버는 `event.origin === window.location.origin` 및 `event.source === iframe.contentWindow`를 엄격히 검증합니다.
+- `scope`: `"./"`
+- `start_url`: `"./"`
+- `file_handlers[0].action`: `"./"`
+- **결과**: `action`이 `scope` 밖(`"/"`)에 위치하지 않고 동일한 상대 경로 범위(`"./"`)로 설정되어 Chrome 및 Chromium 계열 브라우저에서 파일 연결(File Handling API)이 정상 등록됩니다.
 
 ---
 
-## 4. 전 단계(1~4단계) 무퇴행(Zero Regression) 종합 검증 결과
+## 3. WASM 중복 제거 및 프리캐시 용량 최적화 실측치
 
-| 검증 단계 | 검증 스위트 | 테스트 케이스 수 | 검증 결과 | 비고 |
+### 3.1. 문제 원인 및 해결 방식
+- **기존 원인**:
+  1. `public/rhwp/rhwp_bg.wasm` (26,835,482 B) 수동 복사본 잔류
+  2. `public/rhwp/assets/rhwp_bg-B5Jf95sq.wasm` (26,835,482 B) rhwp studio 빌드물
+  3. `src/utils/hwpViewer.ts`에서 `import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url'`을 사용하여 Vite가 번들 빌드 시 `dist/assets/rhwp_bg-B5Jf95sq.wasm` (26,835,482 B)을 중복 복사
+- **해결 조치**:
+  1. `public/rhwp/rhwp_bg.wasm` 파일 삭제.
+  2. `src/utils/hwpViewer.ts`에서 `@rhwp/core/rhwp_bg.wasm?url` import를 제거하고 `${import.meta.env.BASE_URL}rhwp/assets/rhwp_bg-B5Jf95sq.wasm`을 사용하도록 경로 단일화.
+  3. `vite.config.ts`에 `deduplicateRhwpWasmPlugin`을 구현하여 `@rhwp/core/rhwp.js` 내의 `new URL('rhwp_bg.wasm', import.meta.url)` 정적 분석 트리거를 무력화함으로써 `dist/assets/`에 wasm이 중복 번들링되지 않도록 차단.
+
+### 3.2. 프리캐시 용량 전후 실측 비교 (`dist/sw.js` 분석)
+
+| 항목 | 최적화 전 | 최적화 후 (단일 WASM 공유) | 절감 효과 |
+| :--- | :---: | :---: | :---: |
+| **프리캐시 항목 수** | 188개 | **186개** | 2개 항목 제거 |
+| **비압축 총 용량** | 145,052,783 B (138.33 MB) | **91,388,451 B (87.15 MB)** | **-51.18 MB (-53,664,332 B)** |
+| **네트워크 전송량 (Gzip/Brotli 기준)** | 약 54.9 MB | **약 35.5 MB** | **약 19.38 MB (19.4 MB) 전송량 절감** |
+
+**최종 프리캐시 WASM 목록 (`dist/sw.js` 실측)**:
+- `wasm/quickjs-eval.wasm`: 0.45 MB (469,105 B)
+- `wasm/qcms_bg.wasm`: 0.09 MB (96,589 B)
+- `wasm/openjpeg.wasm`: 0.21 MB (220,817 B)
+- `wasm/jbig2.wasm`: 0.10 MB (103,671 B)
+- `rhwp/assets/rhwp_bg-B5Jf95sq.wasm`: **25.59 MB (26,835,482 B)** *(뷰어 및 편집기 단일 공유)*
+- `rhwp/assets/canvaskit-SCAxUyCS.wasm`: 6.98 MB (7,317,345 B)
+
+---
+
+## 4. 임시본(Draft) 무손실 복구 E2E 실측 검증 (`run_stage5_e2e_playwright.mjs`)
+
+### 4.1. 엑셀 행 삽입 -> 리로드 -> 복구 -> 저장 파이프라인
+1. `견적서` 12행에 신규 행 삽입 (`A12` = `'신규삽입행_복구검증'`).
+2. 강제 브라우저 리로드 후 `[복구 적용]` 실행.
+3. 원본 ExcelJS 인플레이스 저장 결과:
+   - `A12` 셀 값 유지: `'신규삽입행_복구검증'`
+   - 자동 필터 범위: `B10:H15` -> **`B10:H16`** 정상 확장
+   - 비고 병합 영역: `B20:H23` -> **`B21:H24`** 1행 아래로 정상 이동
+   - 1단계 `excel_e2e` 행삽입 결과 파일과 행 수, 열 수, 셀 서식 구조 **100% 일치**
+
+### 4.2. 워드(SuperDoc) 임시본 복구 후 저장
+1. 본문 텍스트 수정 후 브라우저 리로드 -> `[복구 적용]` -> 저장 실행.
+2. 결과 DOCX XML 분석:
+   - 수정한 텍스트 정상 반영 확인
+   - `w:tbl` (표) 보존 확인
+   - `w:vMerge` (세로 셀 병합) 보존 확인
+   - `w:sectPr` (구역 나누기) 보존 확인
+   - `w:footnoteReference` (각주) 보존 확인
+   - `w:commentReference` (메모) 보존 확인
+   - `w:ins`, `w:del` (변경 추적) 보존 확인
+   - 워드B `w:sdt` (구조화 문서 태그), `w:gridSpan` (가로 셀 병합) 보존 확인
+
+### 4.3. PPT 및 한글 복구 후 저장
+- PPT: 슬라이드 1 텍스트 수정 후 복구 저장본의 `ppt/slides/slide1.xml`에 수정 텍스트 정상 반영 및 도형/서식 무손실 유지.
+- 한글: HWPX 복구 후 저장본의 `hh:trackChanges` 및 변경 추적 메타데이터 무손실 유지.
+
+### 4.4. 전체 자동 저장 소요 시간 정밀 계측 (추출 + 직렬화 + IDB 커밋)
+- **엑셀 (Univer Snapshot + StructuralOps)**: **1.5 ms**
+- **워드 (SuperDoc Export Docx + IDB)**: **0.9 ms**
+- **파워포인트 (PPTX State + IDB)**: **2.7 ms**
+- **한글 (HWPX Export + IDB)**: **5.1 ms**
+- *(모두 1,000ms 기준치의 0.5% 이하로 브라우저 메인 스레드 프리징 제로 달성)*
+
+---
+
+## 5. 전 단계 무퇴행(Zero Regression) 종합 검증표
+
+| 검증 스위트 | 테스트 내용 | 테스트 수 | 결과 | 비고 |
 | :--- | :--- | :---: | :---: | :--- |
-| **1단계 (엑셀)** | `scripts/run_excel_e2e_playwright.mjs` | 16 / 16 | **100% PASS** | 실파일 4개 무변경/셀수정/행삽입/행삭제 E2E 완벽 일치 |
-| **2단계 (워드)** | `tests/docxFullComparison.test.ts` | 13 / 13 | **100% PASS** | Vitest 실파일 서식 보존 및 인플레이스 라운드트립 |
-| **3단계 (PPT)** | `tests/pptxFullComparison.test.ts` | 9 / 9 | **100% PASS** | Vitest 실파일 슬라이드 diff 인플레이스 라운드트립 |
-| **4단계 (한글)** | `scripts/run_hwp_e2e_playwright.mjs` | 12 / 12 | **100% PASS** | 오프라인 E2E, 외부요청 0건, bit14 해제, linesegarray 선별 복원 |
-| **동기화 제외** | `tests/syncOriginalBackup.test.ts` | 2 / 2 | **100% PASS** | GitHub 마크다운 동기화 시 originalData/originalDate 배제 검증 |
-| **단위/회귀 통합** | `npm run test` (Vitest 전체) | 44 / 44 | **100% PASS** | 5개 테스트 파일 44개 전수 통과 (소요 시간: 23.69s) |
-| **빌드 검증** | `npm run build` (`tsc -b && vite build`) | 전체 프로젝트 | **100% PASS** | 타입스크립트 에러 0건, PWA 188개 번들 생성 완료 |
-| **5단계 E2E** | `scripts/run_stage5_e2e_playwright.mjs` | 6개 영역 | **100% PASS** | Esc 보호, Ctrl+S 단일 실행, 임시본 복구/폐기, 충돌 감지, 소요 시간 실측 |
+| `scripts/run_hwp_e2e_playwright.mjs` | 오프라인 E2E, 외부요청 0건, 12개 시나리오 무손실 저장 | 12 / 12 | **100% PASS** | 단일 WASM 공유 후에도 오프라인 무결성 완벽 유지 |
+| `scripts/run_stage5_e2e_playwright.mjs` | Esc 보호, Ctrl+S 연타 단일 실행, 임시본 복구/폐기, 충돌 감지, 저장 소요 시간 | 8개 검증 | **100% PASS** | 엑셀/워드/PPT/한글 전수 통과 |
+| `vitest run` | 단위 회귀 테스트 (`tests/` 5개 파일) | 44 / 44 | **100% PASS** | 엑셀/워드/PPT 무손실 라운드트립 및 동기화 백업 제외 |
 
 ---
 
-## 5. 결론 및 산출물 파일 링크
+## 6. 데스크톱 PWA 파일 연결(연결 프로그램) 실측 가이드
 
-5단계 공통 사용성 업그레이드는 기존 1~4단계의 무손실 저장 및 고화질 렌더링 파이프라인을 온전히 보존하면서, 사용자가 실무에서 겪을 수 있는 비정상 종료 데이터 유실, 단축키 오동작, 외부 파일 충돌 위험을 원천 차단하도록 구현되었습니다.
-
-- **5단계 E2E 검증 스크립트**: [scripts/run_stage5_e2e_playwright.mjs](file:///D:/Tool/MyMemo/scripts/run_stage5_e2e_playwright.mjs)
-- **임시본 스토리지 모듈**: [src/utils/draftStorage.ts](file:///D:/Tool/MyMemo/src/utils/draftStorage.ts)
-- **파일 핸들러 안전 저장 모듈**: [src/utils/fileHandleSaver.ts](file:///D:/Tool/MyMemo/src/utils/fileHandleSaver.ts)
-- **공통 단축키 훅**: [src/utils/useOfficeShortcuts.ts](file:///D:/Tool/MyMemo/src/utils/useOfficeShortcuts.ts)
-- **rhwp 비침습 패치 명세**: [public/rhwp/PATCHES.md](file:///D:/Tool/MyMemo/public/rhwp/PATCHES.md)
-- **4단계 검증 보고서 정정본**: [docs/office-upgrade/STEP4_한글_검증.md](file:///D:/Tool/MyMemo/docs/office-upgrade/STEP4_한글_검증.md)
+1. **설치**: Chrome 또는 Edge에서 배포 사이트 접속 후 주소 표시줄의 **[앱 설치]** 아이콘 클릭.
+2. **파일 연결**: Windows 탐색기에서 임의의 `.xlsx`, `.docx`, `.pptx`, `.hwpx`, `.hwp` 파일을 우클릭 -> **[연결 프로그램]** -> **[다른 앱 선택]** -> **MyMemo** 선택 및 '항상 이 앱을 사용하여 열기' 체크.
+3. **직접 편집**: 파일을 더블 클릭하면 MyMemo PWA가 단독 창으로 실행되며 해당 오피스 문서 편집 모달이 즉시 열리고, `Ctrl+S`를 누르면 로컬 디스크 원본 파일에 직접 덮어쓰기 저장됩니다.

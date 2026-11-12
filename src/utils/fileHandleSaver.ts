@@ -1,10 +1,12 @@
-import { saveFileOriginalBackup } from './draftStorage';
+import { saveFileOriginalBackup, computeDataHash } from './draftStorage';
 
 export interface FileHandleContext {
   handle: any; // FileSystemFileHandle
   initialSize: number;
   initialLastModified: number;
   fileName: string;
+  initialHash?: string;
+  backupKey?: string;
   isBackedUp?: boolean;
 }
 
@@ -22,11 +24,27 @@ export async function checkFileHandleConflict(ctx: FileHandleContext): Promise<b
 
 /**
  * 최초 덮어쓰기 전 원본 바이트를 IndexedDB에 안전 백업합니다.
+ * 백업 키: 파일명 + 크기 + lastModified + 원본 해시 조합
  */
-export async function ensureOriginalBackup(ctx: FileHandleContext, originalBytes: Uint8Array): Promise<void> {
+export async function ensureOriginalBackup(
+  ctx: FileHandleContext,
+  originalBytes: Uint8Array,
+  originalHash?: string
+): Promise<void> {
   if (ctx.isBackedUp) return;
   try {
-    await saveFileOriginalBackup(ctx.fileName, originalBytes);
+    const hash = originalHash || ctx.initialHash || (await computeDataHash(originalBytes));
+    ctx.initialHash = hash;
+    const backupKey = ctx.backupKey || `${ctx.fileName}_${ctx.initialSize}_${ctx.initialLastModified}_${hash}`;
+    ctx.backupKey = backupKey;
+    await saveFileOriginalBackup(
+      backupKey,
+      ctx.fileName,
+      ctx.initialSize,
+      ctx.initialLastModified,
+      hash,
+      originalBytes
+    );
     ctx.isBackedUp = true;
   } catch (err) {
     console.warn('파일 핸들 원본 백업 실패:', err);

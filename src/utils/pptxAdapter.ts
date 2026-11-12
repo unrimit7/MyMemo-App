@@ -2,17 +2,32 @@ import JSZip from 'jszip';
 import { parsePptxPresentation } from './pptxViewer';
 
 export function bufferToDataUrl(
-  buf: Buffer | Uint8Array,
+  buf: Uint8Array | ArrayBuffer | any,
   mime: string = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 ): string {
-  const base64 = Buffer.isBuffer(buf) ? buf.toString('base64') : Buffer.from(buf).toString('base64');
-  return `data:${mime};base64,${base64}`;
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer && Buffer.isBuffer(buf)) {
+    return `data:${mime};base64,${buf.toString('base64')}`;
+  }
+  const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let binary = '';
+  const len = u8.byteLength;
+  const chunk = 8192;
+  for (let i = 0; i < len; i += chunk) {
+    binary += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + chunk, len)) as any);
+  }
+  return `data:${mime};base64,${btoa(binary)}`;
 }
 
-export function dataUrlToBuffer(dataUrl: string): Buffer {
+export function dataUrlToBuffer(dataUrl: string): any {
   const commaIdx = dataUrl.indexOf(',');
   const b64 = commaIdx !== -1 ? dataUrl.slice(commaIdx + 1) : dataUrl;
-  return Buffer.from(b64, 'base64');
+  if (typeof Buffer !== 'undefined' && typeof Buffer.from === 'function') {
+    return Buffer.from(b64, 'base64');
+  }
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
 export function dataUrlToUint8Array(dataUrl: string): Uint8Array {

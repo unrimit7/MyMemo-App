@@ -22,7 +22,7 @@ export interface OfficeDraft {
 }
 
 const DB_NAME = 'mymemo_office_drafts_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const DRAFT_STORE = 'drafts';
 const FILE_BACKUP_STORE = 'file_backups';
 const MAX_TOTAL_BYTES = 50 * 1024 * 1024; // 50MB
@@ -43,9 +43,10 @@ function getDb(): Promise<IDBDatabase> {
         if (!db.objectStoreNames.contains(DRAFT_STORE)) {
           db.createObjectStore(DRAFT_STORE, { keyPath: 'draftKey' });
         }
-        if (!db.objectStoreNames.contains(FILE_BACKUP_STORE)) {
-          db.createObjectStore(FILE_BACKUP_STORE, { keyPath: 'fileName' });
+        if (db.objectStoreNames.contains(FILE_BACKUP_STORE)) {
+          db.deleteObjectStore(FILE_BACKUP_STORE);
         }
+        db.createObjectStore(FILE_BACKUP_STORE, { keyPath: 'backupKey' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => {
@@ -94,23 +95,39 @@ export async function computeDataHash(data: string | Uint8Array): Promise<string
 
 /**
  * 임시본을 IndexedDB에 저장합니다 (전체 용량 및 오래된 임시본 자동 청소 포함).
+ * @param draft 임시본 데이터
+ * @param startTime 임시본 생성 시작 시각 (performance.now()), 미지정 시 현재 시각 기준
+ * @returns 전체 저장 소요 시간 (ms)
  */
-export async function saveOfficeDraft(draft: OfficeDraft): Promise<void> {
+export async function saveOfficeDraft(draft: OfficeDraft, startTime?: number): Promise<number> {
+  const t0 = startTime ?? performance.now();
   try {
     const db = await getDb();
     const tx = db.transaction([DRAFT_STORE], 'readwrite');
     const store = tx.objectStore(DRAFT_STORE);
-    store.put(draft);
+
+    // IDB 쓰기 직전까지의 소요 시간(추출, 직렬화 등)을 포함하여 draft에 기록
+    const prepDuration = Math.max(0.1, Number((performance.now() - t0).toFixed(1)));
+    const record: OfficeDraft = {
+      ...draft,
+      saveDurationMs: prepDuration,
+    };
+    store.put(record);
 
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
 
+    const totalDuration = Math.max(0.1, Number((performance.now() - t0).toFixed(1)));
+
     // 백그라운드에서 오래된 임시본 정리
     cleanOldOfficeDrafts().catch(() => {});
+
+    return totalDuration;
   } catch (err) {
     console.warn('[DraftStorage] 임시본 저장 실패 (무시됨):', err);
+    return Math.max(0.1, Number((performance.now() - t0).toFixed(1)));
   }
 }
 
@@ -206,13 +223,34 @@ export async function cleanOldOfficeDrafts(): Promise<void> {
 // FileSystemFileHandle 연동 파일 백업 (원래 파일 저장 전 원본 바이트 보관)
 // ----------------------------------------------------------------------------
 
-export async function saveFileOriginalBackup(fileName: string, bytes: Uint8Array): Promise<void> {
+export interface FileBackupRecord {
+  backupKey: string;
+  fileName: string;
+  fileSize: number;
+  lastModified: number;
+  originalHash: string;
+  bytes: Uint8Array;
+  savedAt: number;
+}
+
+export async function saveFileOriginalBackup(
+  backupKey: string,
+  fileName: string,
+  fileSize: number,
+  lastModified: number,
+  originalHash: string,
+  bytes: Uint8Array
+): Promise<void> {
   try {
     const db = await getDb();
     const tx = db.transaction([FILE_BACKUP_STORE], 'readwrite');
     const store = tx.objectStore(FILE_BACKUP_STORE);
     store.put({
+      backupKey,
       fileName,
+      fileSize,
+      lastModified,
+      originalHash,
       bytes,
       savedAt: Date.now(),
     });
@@ -226,19 +264,19 @@ export async function saveFileOriginalBackup(fileName: string, bytes: Uint8Array
   }
 }
 
-export async function getFileOriginalBackup(fileName: string): Promise<Uint8Array | null> {
+export async function getFileOriginalBackup(backupKey: string): Promise<FileBackupRecord | null> {
   try {
     const db = await getDb();
     const tx = db.transaction([FILE_BACKUP_STORE], 'readonly');
     const store = tx.objectStore(FILE_BACKUP_STORE);
-    const req = store.get(fileName);
+    const req = store.get(backupKey);
 
-    const res = await new Promise<any>((resolve, reject) => {
-      req.onsuccess = () => resolve(req.result);
+    const res = await new Promise<FileBackupRecord | null>((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result || null);
       req.onerror = () => reject(req.error);
     });
 
-    return res?.bytes || null;
+    return res;
   } catch {
     return null;
   }

@@ -1,5 +1,7 @@
 import init, { HwpDocument } from '@rhwp/core';
-import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
+
+// 편집기(rhwp studio)와 동일한 wasm 1개를 공유하여 번들 중복 및 프리캐시 19MB 낭비 방지
+const wasmUrl = `${import.meta.env.BASE_URL}rhwp/assets/rhwp_bg-B5Jf95sq.wasm`;
 
 let isInitialized = false;
 let initPromise: Promise<any> | null = null;

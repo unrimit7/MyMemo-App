@@ -18,6 +18,7 @@ import {
   getOfficeDraft,
   deleteOfficeDraft,
   computeDataHash,
+  getFileOriginalBackup,
   type OfficeDraft,
 } from '../utils/draftStorage';
 import { useOfficeShortcuts } from '../utils/useOfficeShortcuts';
@@ -104,23 +105,39 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
   const isHwpx = title.toLowerCase().endsWith('.hwpx');
   const mimeType = isHwpx ? 'application/vnd.hancom.hwpx' : 'application/x-hwp';
 
+  // 원본 해시 1회 계산 캐시
+  const baseOriginalHashRef = useRef<string>('');
+  useEffect(() => {
+    if (!data) return;
+    let isCancelled = false;
+    computeDataHash(data).then((h) => {
+      if (!isCancelled) baseOriginalHashRef.current = h;
+    });
+    return () => {
+      isCancelled = true;
+    };
+  }, [data]);
+
   // FileHandle 초기화
   useEffect(() => {
     if (!fileHandle) return;
     (async () => {
       try {
         const file = await fileHandle.getFile();
+        const hash = baseOriginalHashRef.current || (await computeDataHash(data));
         fileContextRef.current = {
           handle: fileHandle,
           initialSize: file.size,
           initialLastModified: file.lastModified,
           fileName: title,
+          initialHash: hash,
+          backupKey: `${title}_${file.size}_${file.lastModified}_${hash}`,
         };
       } catch (err) {
         console.warn('FileHandle 초기화 실패:', err);
       }
     })();
-  }, [fileHandle, title]);
+  }, [fileHandle, title, data]);
 
   // 임시본 검사 및 원본 해시 일치 판별 (불일치 시 자동 폐기)
   useEffect(() => {
@@ -131,7 +148,7 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
       const draft = await getOfficeDraft(draftKey);
       if (!draft || isCancelled) return;
 
-      const currentHash = await computeDataHash(data);
+      const currentHash = baseOriginalHashRef.current || (await computeDataHash(data));
       if (draft.baseOriginalHash !== currentHash) {
         await deleteOfficeDraft(draftKey);
       } else {
@@ -146,21 +163,24 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
   }, [isOpen, data, draftKey]);
 
   // 30초 주기 + visibilitychange / blur 자동 저장
+  // 재귀 setTimeout 기반으로 1초 초과 시 60초 동적 연장 및 전체 소요 시간 정확히 계측
   useEffect(() => {
-    if (!isOpen || !hasChanges || !editorRef.current) return;
+    if (!isOpen) return;
 
-    let autoSaveIntervalMs = 30000;
+    let isDisposed = false;
+    let timerId: any = null;
+    let currentIntervalMs = 30000;
 
-    const performDraftSave = async () => {
-      if (!hasChanges || !editorRef.current) return;
+    const performDraftSave = async (force?: boolean): Promise<number> => {
+      if (!editorRef.current) return 0;
+      if (!hasChanges && !force) return 0;
       try {
         const t0 = performance.now();
         const bytes = isHwpx ? await editorRef.current.exportHwpx() : await editorRef.current.exportHwp();
-        const duration = performance.now() - t0;
         const draftDataUrl = await uint8ArrayToDataUrl(bytes, mimeType);
-        const baseHash = await computeDataHash(data);
+        const baseHash = baseOriginalHashRef.current || (await computeDataHash(data));
 
-        await saveOfficeDraft({
+        const totalDuration = await saveOfficeDraft({
           draftKey,
           attId,
           title,
@@ -170,33 +190,49 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
           dataType: 'data_url',
           updatedAt: Date.now(),
           byteLength: bytes.length,
-          saveDurationMs: Math.round(duration),
-        });
+          saveDurationMs: 0,
+        }, t0);
 
-        if (duration >= 1000) {
-          autoSaveIntervalMs = 60000;
-        }
+        return totalDuration;
       } catch (err) {
         console.warn('[Hwp] 임시본 자동 저장 오류:', err);
+        return 0;
       }
     };
 
-    const interval = setInterval(performDraftSave, autoSaveIntervalMs);
+    const scheduleNext = () => {
+      if (isDisposed) return;
+      timerId = setTimeout(async () => {
+        const duration = await performDraftSave();
+        if (duration >= 1000) {
+          currentIntervalMs = 60000;
+        }
+        scheduleNext();
+      }, currentIntervalMs);
+    };
+
+    scheduleNext();
 
     const handleVisibility = () => {
       if (document.visibilityState === 'hidden') {
-        performDraftSave();
+        clearTimeout(timerId);
+        performDraftSave().then(() => scheduleNext());
       }
     };
     const handleBlur = () => {
-      performDraftSave();
+      clearTimeout(timerId);
+      performDraftSave().then(() => scheduleNext());
     };
+
+    (window as any).__hwpTriggerDraftSave = performDraftSave;
 
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('blur', handleBlur);
 
     return () => {
-      clearInterval(interval);
+      isDisposed = true;
+      delete (window as any).__hwpTriggerDraftSave;
+      clearTimeout(timerId);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('blur', handleBlur);
     };
@@ -533,6 +569,25 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
 
   const handleConfirmRestore = async () => {
     setShowRestoreConfirm(false);
+    if (fileContextRef.current?.backupKey) {
+      const backup = await getFileOriginalBackup(fileContextRef.current.backupKey);
+      if (backup && backup.originalHash === fileContextRef.current.initialHash) {
+        await saveToFileHandle(fileContextRef.current, backup.bytes);
+        if (onRestoreOriginal) {
+          await onRestoreOriginal();
+        }
+        if (editorRef.current) {
+          await editorRef.current.loadFile(backup.bytes, title, { suppressDialogs: true, skipUnsavedGuard: true });
+        }
+        setHasChanges(false);
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 3000);
+        return;
+      } else {
+        alert('원본 해시가 일치하는 안전 백업본을 찾을 수 없습니다.');
+        return;
+      }
+    }
     if (onRestoreOriginal) {
       await onRestoreOriginal();
     }

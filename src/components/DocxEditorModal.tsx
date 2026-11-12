@@ -34,6 +34,7 @@ import {
   getOfficeDraft,
   deleteOfficeDraft,
   computeDataHash,
+  getFileOriginalBackup,
   type OfficeDraft,
 } from '../utils/draftStorage';
 import { useOfficeShortcuts } from '../utils/useOfficeShortcuts';
@@ -105,23 +106,39 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
   const [showFileConflictModal, setShowFileConflictModal] = useState<boolean>(false);
   const fileContextRef = useRef<FileHandleContext | null>(null);
 
+  // 원본 해시 1회 계산 캐시
+  const baseOriginalHashRef = useRef<string>('');
+  useEffect(() => {
+    if (!data) return;
+    let isCancelled = false;
+    computeDataHash(data).then((h) => {
+      if (!isCancelled) baseOriginalHashRef.current = h;
+    });
+    return () => {
+      isCancelled = true;
+    };
+  }, [data]);
+
   // FileHandle 초기화
   useEffect(() => {
     if (!fileHandle) return;
     (async () => {
       try {
         const file = await fileHandle.getFile();
+        const hash = baseOriginalHashRef.current || (await computeDataHash(data));
         fileContextRef.current = {
           handle: fileHandle,
           initialSize: file.size,
           initialLastModified: file.lastModified,
           fileName: title,
+          initialHash: hash,
+          backupKey: `${title}_${file.size}_${file.lastModified}_${hash}`,
         };
       } catch (err) {
         console.warn('FileHandle 초기화 실패:', err);
       }
     })();
-  }, [fileHandle, title]);
+  }, [fileHandle, title, data]);
 
   // 임시본 검사 및 원본 해시 일치 판별 (불일치 시 자동 폐기)
   useEffect(() => {
@@ -132,7 +149,7 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
       const draft = await getOfficeDraft(draftKey);
       if (!draft || isCancelled) return;
 
-      const currentHash = await computeDataHash(data);
+      const currentHash = baseOriginalHashRef.current || (await computeDataHash(data));
       if (draft.baseOriginalHash !== currentHash) {
         await deleteOfficeDraft(draftKey);
       } else {
@@ -147,60 +164,85 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
   }, [isOpen, data, draftKey]);
 
   // 30초 주기 + visibilitychange / blur 자동 저장
+  // 재귀 setTimeout 기반으로 1초 초과 시 60초 동적 연장 및 전체 소요 시간 정확히 계측
   useEffect(() => {
-    if (!isOpen || !hasChanges) return;
+    if (!isOpen) return;
 
-    let autoSaveIntervalMs = 30000;
+    let isDisposed = false;
+    let timerId: any = null;
+    let currentIntervalMs = 30000;
 
-    const performDraftSave = async () => {
-      if (!hasChanges) return;
+    const performDraftSave = async (force?: boolean): Promise<number> => {
+      if (!hasChanges && !force) return 0;
       try {
         const t0 = performance.now();
-        let draftData: any = content;
+        let draftDataUrl: string = '';
         if (engine === 'superdoc' && superdocRef.current) {
-          draftData = (superdocRef.current as any).editor?.getJSON?.() || (superdocRef.current as any).getContent?.() || content;
+          const exportedBlob = await superdocRef.current.export({ exportType: ['docx'], triggerDownload: false });
+          const reader = new FileReader();
+          draftDataUrl = await new Promise<string>((resolve, reject) => {
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(exportedBlob);
+          });
+        } else {
+          draftDataUrl = content;
         }
-        const duration = performance.now() - t0;
-        const baseHash = await computeDataHash(data);
-        const dataStr = typeof draftData === 'string' ? draftData : JSON.stringify(draftData);
+        const baseHash = baseOriginalHashRef.current || (await computeDataHash(data));
 
-        await saveOfficeDraft({
+        const totalDuration = await saveOfficeDraft({
           draftKey,
           attId,
           title,
           fileType: 'docx',
           baseOriginalHash: baseHash,
-          data: draftData,
-          dataType: engine === 'superdoc' ? 'superdoc_json' : 'data_url',
+          data: draftDataUrl,
+          dataType: 'data_url',
           updatedAt: Date.now(),
-          byteLength: dataStr.length,
-          saveDurationMs: Math.round(duration),
-        });
+          byteLength: draftDataUrl.length,
+          saveDurationMs: 0,
+        }, t0);
 
-        if (duration >= 1000) {
-          autoSaveIntervalMs = 60000;
-        }
+        return totalDuration;
       } catch (err) {
         console.warn('[Docx] 임시본 자동 저장 오류:', err);
+        return 0;
       }
     };
 
-    const interval = setInterval(performDraftSave, autoSaveIntervalMs);
+    const scheduleNext = () => {
+      if (isDisposed) return;
+      timerId = setTimeout(async () => {
+        const duration = await performDraftSave();
+        if (duration >= 1000) {
+          currentIntervalMs = 60000;
+        }
+        scheduleNext();
+      }, currentIntervalMs);
+    };
+
+    scheduleNext();
 
     const handleVisibility = () => {
       if (document.visibilityState === 'hidden') {
-        performDraftSave();
+        clearTimeout(timerId);
+        performDraftSave().then(() => scheduleNext());
       }
     };
     const handleBlur = () => {
-      performDraftSave();
+      clearTimeout(timerId);
+      performDraftSave().then(() => scheduleNext());
     };
+
+    (window as any).__docxTriggerDraftSave = performDraftSave;
 
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('blur', handleBlur);
 
     return () => {
-      clearInterval(interval);
+      isDisposed = true;
+      delete (window as any).__docxTriggerDraftSave;
+      clearTimeout(timerId);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('blur', handleBlur);
     };
@@ -299,6 +341,8 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
         superdoc.on('ready', () => {
           if (!isDisposed) {
             setIsLoading(false);
+            (window as any).__currentSuperDoc = superdoc;
+            (window as any).__docxIsReady = () => Boolean(superdocRef.current);
           }
         });
 
@@ -434,6 +478,13 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
     }
   };
 
+  useEffect(() => {
+    (window as any).__docxModalExecuteSave = () => executeSave();
+    return () => {
+      delete (window as any).__docxModalExecuteSave;
+    };
+  });
+
   // 다운로드 핸들러
   const handleDownload = async () => {
     try {
@@ -483,12 +534,28 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
     }
   };
 
-  // 5단계 임시본 복구 적용 및 폐기
+  // 5단계 임시본 복구 적용 및 폐기 (SuperDoc은 내보낸 DOCX 바이너리로 완전 무손실 복구)
   const handleApplyDraftRecovery = () => {
     if (!draftToRecover) return;
     try {
-      if (engine === 'superdoc' && superdocRef.current && typeof draftToRecover.data === 'object') {
-        (superdocRef.current as any).editor?.commands?.setContent?.(draftToRecover.data);
+      if (engine === 'superdoc' && containerRef.current && typeof draftToRecover.data === 'string' && draftToRecover.data.startsWith('data:')) {
+        const restoredBlob = dataUrlToBlob(draftToRecover.data);
+        if (superdocRef.current) {
+          try {
+            superdocRef.current.destroy();
+          } catch {}
+          superdocRef.current = null;
+        }
+        containerRef.current.innerHTML = '';
+        const superdoc = new SuperDoc({
+          selector: containerRef.current,
+          document: restoredBlob,
+          documentMode: 'editing',
+        });
+        superdocRef.current = superdoc;
+        superdoc.on('ready', () => setIsLoading(false));
+        superdoc.on('editor-update', () => setHasChanges(true));
+        superdoc.on('history-change', () => setHasChanges(true));
       } else if (typeof draftToRecover.data === 'string') {
         setContent(draftToRecover.data);
       }
@@ -532,9 +599,46 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
     toggleFullscreen: floating.toggleFullscreen,
   });
 
-  // 원본으로 되돌리기 실행
+  // 원본으로 되돌리기 실행 (해시 검증 완료된 안전 백업만 적용)
   const handleExecuteRestore = async () => {
     setShowRestoreConfirm(false);
+    if (fileContextRef.current?.backupKey) {
+      const backup = await getFileOriginalBackup(fileContextRef.current.backupKey);
+      if (backup && backup.originalHash === fileContextRef.current.initialHash) {
+        await saveToFileHandle(fileContextRef.current, backup.bytes);
+        if (onRestoreOriginal) {
+          await onRestoreOriginal();
+        }
+        if (engine === 'superdoc' && containerRef.current) {
+          if (superdocRef.current) {
+            try {
+              superdocRef.current.destroy();
+            } catch {}
+            superdocRef.current = null;
+          }
+          containerRef.current.innerHTML = '';
+          const blob = new Blob([backup.bytes as any], {
+            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          });
+          const superdoc = new SuperDoc({
+            selector: containerRef.current,
+            document: blob,
+            documentMode: 'editing',
+          });
+          superdocRef.current = superdoc;
+          superdoc.on('ready', () => setIsLoading(false));
+          superdoc.on('editor-update', () => setHasChanges(true));
+          superdoc.on('history-change', () => setHasChanges(true));
+        }
+        setHasChanges(false);
+        setSaveToast('원본 버전으로 되돌렸습니다.');
+        setTimeout(() => setSaveToast(null), 3000);
+        return;
+      } else {
+        alert('원본 해시가 일치하는 안전 백업본을 찾을 수 없습니다.');
+        return;
+      }
+    }
     if (onRestoreOriginal) {
       try {
         await onRestoreOriginal();

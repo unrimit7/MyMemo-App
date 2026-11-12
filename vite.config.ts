@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -114,10 +114,33 @@ if (typeof WeakMap !== 'undefined') {
   };
 }
 
+// @rhwp/core의 new URL('rhwp_bg.wasm', import.meta.url) 패턴을 제거하여
+// Vite가 dist/assets/rhwp_bg-*.wasm을 중복 복사하지 않고, rhwp/assets/rhwp_bg-B5Jf95sq.wasm 1개만 공유하도록 함 (~19MB 절감)
+function deduplicateRhwpWasmPlugin(): Plugin {
+  return {
+    name: 'deduplicate-rhwp-wasm',
+    transform(code: string, id: string) {
+      if (id.includes('@rhwp/core') || id.includes('rhwp.js')) {
+        if (code.includes("new URL('rhwp_bg.wasm', import.meta.url)")) {
+          return {
+            code: code.replace(
+              "new URL('rhwp_bg.wasm', import.meta.url)",
+              "/* rhwp wasm deduplicated */ undefined"
+            ),
+            map: null,
+          };
+        }
+      }
+      return null;
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
     patchPdfWorkerPlugin(),
+    deduplicateRhwpWasmPlugin(),
     react(),
     tailwindcss(),
     VitePWA({
@@ -168,7 +191,7 @@ export default defineConfig({
         // 무손실 편집이 검증된 5개 오피스 포맷 파일 연결 (구버전 .xls/.ppt/.doc 배제)
         file_handlers: [
           {
-            action: '/',
+            action: './',
             accept: {
               'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
               'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],

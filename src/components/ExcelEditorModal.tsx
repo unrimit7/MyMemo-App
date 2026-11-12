@@ -25,6 +25,7 @@ import {
   getOfficeDraft,
   deleteOfficeDraft,
   computeDataHash,
+  getFileOriginalBackup,
   type OfficeDraft,
 } from '../utils/draftStorage';
 import { useOfficeShortcuts } from '../utils/useOfficeShortcuts';
@@ -77,6 +78,7 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
   const [showRestoreConfirm, setShowRestoreConfirm] = useState<boolean>(false);
   const [showLossWarningModal, setShowLossWarningModal] = useState<boolean>(false);
   const [lossReport, setLossReport] = useState<UnsupportedFeatureReport | null>(null);
+  const [hasConfirmedLoss, setHasConfirmedLoss] = useState<boolean>(false);
 
   // 5단계 임시본 복구 모달 및 파일 핸들러 충돌 모달 상태
   const draftKey = `excel_${attId || ''}_${title}`;
@@ -85,23 +87,39 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
   const [showFileConflictModal, setShowFileConflictModal] = useState<boolean>(false);
   const fileContextRef = useRef<FileHandleContext | null>(null);
 
-  // FileHandle 초기화 및 최초 덮어쓰기 전 백업 준비
+  // 원본 해시 1회 계산 캐시
+  const baseOriginalHashRef = useRef<string>('');
+  useEffect(() => {
+    if (!data) return;
+    let isCancelled = false;
+    computeDataHash(data).then((h) => {
+      if (!isCancelled) baseOriginalHashRef.current = h;
+    });
+    return () => {
+      isCancelled = true;
+    };
+  }, [data]);
+
+  // FileHandle 초기화 및 최초 덮어쓰기 전 백업 키 설정
   useEffect(() => {
     if (!fileHandle) return;
     (async () => {
       try {
         const file = await fileHandle.getFile();
+        const hash = baseOriginalHashRef.current || (await computeDataHash(data));
         fileContextRef.current = {
           handle: fileHandle,
           initialSize: file.size,
           initialLastModified: file.lastModified,
           fileName: title,
+          initialHash: hash,
+          backupKey: `${title}_${file.size}_${file.lastModified}_${hash}`,
         };
       } catch (err) {
         console.warn('FileHandle 초기화 실패:', err);
       }
     })();
-  }, [fileHandle, title]);
+  }, [fileHandle, title, data]);
 
   // 임시본 검사 및 원본 해시 일치 판별 (불일치 시 자동 폐기)
   useEffect(() => {
@@ -112,7 +130,7 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
       const draft = await getOfficeDraft(draftKey);
       if (!draft || isCancelled) return;
 
-      const currentHash = await computeDataHash(data);
+      const currentHash = baseOriginalHashRef.current || (await computeDataHash(data));
       if (draft.baseOriginalHash !== currentHash) {
         // 동기화 등으로 원본이 바뀐 경우 임시본 폐기 (복구 제안 원천 차단)
         await deleteOfficeDraft(draftKey);
@@ -127,61 +145,83 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
     };
   }, [isOpen, data, draftKey]);
 
-  // 30초 주기 + visibilitychange / blur 시점에만 동작하는 안전 자동 저장 (IndexedDB 전용)
+  // 30초 주기 + visibilitychange / blur 시점에 동작하는 안전 자동 저장 (IndexedDB 전용)
+  // 재귀 setTimeout 기반으로 1초 초과 시 60초 동적 주기 연장 정상 반영
   useEffect(() => {
-    if (!isOpen || !hasChanges) return;
+    if (!isOpen) return;
 
-    let autoSaveIntervalMs = 30000;
+    let isDisposed = false;
+    let timerId: any = null;
+    let currentIntervalMs = 30000;
 
-    const performDraftSave = async () => {
-      if (!univerRef.current || !hasChanges) return;
+    const performDraftSave = async (force?: boolean): Promise<number> => {
+      const api = univerAPIRef.current;
+      if (!api || (!hasChanges && !force)) return 0;
       try {
         const t0 = performance.now();
-        const activeWb = univerRef.current.getActiveWorkbook();
-        if (!activeWb) return;
+        const activeWb = api.getActiveWorkbook();
+        if (!activeWb) return 0;
         const snapshot = activeWb.save();
-        const duration = performance.now() - t0;
-        const baseHash = await computeDataHash(data);
-        const snapshotStr = JSON.stringify(snapshot);
+        const draftPayload = {
+          snapshot,
+          structuralOps: structuralOpsRef.current || [],
+        };
+        const baseHash = baseOriginalHashRef.current || (await computeDataHash(data));
+        const snapshotStr = JSON.stringify(draftPayload);
 
-        await saveOfficeDraft({
+        const totalDuration = await saveOfficeDraft({
           draftKey,
           attId,
           title,
           fileType: 'excel',
           baseOriginalHash: baseHash,
-          data: snapshot,
+          data: draftPayload,
           dataType: 'univer_snapshot',
           updatedAt: Date.now(),
           byteLength: snapshotStr.length,
-          saveDurationMs: Math.round(duration),
-        });
+          saveDurationMs: 0,
+        }, t0);
 
-        // 1초 이상 걸리면 주기 60초로 자동 연장
-        if (duration >= 1000) {
-          autoSaveIntervalMs = 60000;
-        }
+        return totalDuration;
       } catch (err) {
         console.warn('[Excel] 임시본 자동 저장 오류:', err);
+        return 0;
       }
     };
 
-    const interval = setInterval(performDraftSave, autoSaveIntervalMs);
+    const scheduleNext = () => {
+      if (isDisposed) return;
+      timerId = setTimeout(async () => {
+        const duration = await performDraftSave();
+        if (duration >= 1000) {
+          currentIntervalMs = 60000;
+        }
+        scheduleNext();
+      }, currentIntervalMs);
+    };
+
+    scheduleNext();
 
     const handleVisibility = () => {
       if (document.visibilityState === 'hidden') {
-        performDraftSave();
+        clearTimeout(timerId);
+        performDraftSave().then(() => scheduleNext());
       }
     };
     const handleBlur = () => {
-      performDraftSave();
+      clearTimeout(timerId);
+      performDraftSave().then(() => scheduleNext());
     };
+
+    (window as any).__excelTriggerDraftSave = performDraftSave;
 
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('blur', handleBlur);
 
     return () => {
-      clearInterval(interval);
+      isDisposed = true;
+      delete (window as any).__excelTriggerDraftSave;
+      clearTimeout(timerId);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('blur', handleBlur);
     };
@@ -281,6 +321,7 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
           (window as any).__excelUniverAPI = univerAPI;
           (window as any).__excelModalExecuteSave = () => executeSave();
           (window as any).__excelIsReady = () => Boolean(univerAPIRef.current);
+          (window as any).__excelGetStructuralOps = () => structuralOpsRef.current;
         }
 
         // 창 크기 변경에 따른 Univer 리사이즈 동기화
@@ -302,21 +343,31 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
         if (commandService && typeof commandService.onCommandExecuted === 'function') {
           disposable = commandService.onCommandExecuted((cmd: any) => {
             if (isDisposed) return;
+            const id = cmd?.id || '';
+            if (id.includes('row') || id.includes('sheet') || id.includes('unit') || id.includes('dispose')) {
+              console.log('[Univer Command]', id, cmd?.params);
+            }
             if (!isInitial) {
               setHasChanges(true);
             }
 
             // 행/열 삽입 및 삭제 mutation 감지하여 In-Place 패치용 큐에 기록 (mutation ID 정확 매칭)
-            const id = cmd?.id || '';
             const range = cmd?.params?.range;
             const subUnitId = cmd.params?.subUnitId;
 
             if (range) {
+              const activeWb = (univerAPI as any)?.getActiveWorkbook?.();
+              const activeWs = activeWb?.getActiveSheet?.();
+              const sheetName = activeWs?.getName?.() || activeWs?.getSheetName?.() || '';
+              const sheetIndex = activeWs?.getSheetIndex?.() ?? 0;
+
               let op: StructuralOperation | null = null;
               if (id === 'sheet.mutation.insert-row') {
                 op = {
                   type: 'insertRow',
                   subUnitId,
+                  sheetName,
+                  sheetIndex,
                   start: range.startRow + 1,
                   count: range.endRow - range.startRow + 1,
                 };
@@ -324,6 +375,8 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
                 op = {
                   type: 'removeRow',
                   subUnitId,
+                  sheetName,
+                  sheetIndex,
                   start: range.startRow + 1,
                   count: range.endRow - range.startRow + 1,
                 };
@@ -331,6 +384,8 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
                 op = {
                   type: 'insertCol',
                   subUnitId,
+                  sheetName,
+                  sheetIndex,
                   start: range.startColumn + 1,
                   count: range.endColumn - range.startColumn + 1,
                 };
@@ -338,6 +393,8 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
                 op = {
                   type: 'removeCol',
                   subUnitId,
+                  sheetName,
+                  sheetIndex,
                   start: range.startColumn + 1,
                   count: range.endColumn - range.startColumn + 1,
                 };
@@ -474,9 +531,9 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
     }
   };
 
-  // 저장 버튼 클릭 (미보존 요소 감지 시 경고 다이얼로그 띄움)
+  // 저장 버튼 클릭 (미보존 요소 감지 시 경고 다이얼로그 띄움, 1회 승인 시 세션 유지)
   const handleSave = async () => {
-    if (lossReport && lossReport.unsupportedList.length > 0) {
+    if (lossReport && lossReport.unsupportedList.length > 0 && !hasConfirmedLoss) {
       setShowLossWarningModal(true);
       return;
     }
@@ -528,17 +585,43 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
     }
   };
 
-  // 5단계 임시본 복구 적용 및 폐기
-  const handleApplyDraftRecovery = () => {
-    if (!draftToRecover || !univerAPIRef.current) return;
+  // 5단계 임시본 복구 적용 및 폐기 (구조적 변경 연산 structuralOps 함께 복원)
+  const handleApplyDraftRecovery = async () => {
+    if (!draftToRecover) return;
     try {
-      univerAPIRef.current.createWorkbook({ id: 'workbook', ...draftToRecover.data });
+      let api = univerAPIRef.current;
+      if (!api) {
+        for (let i = 0; i < 50; i++) {
+          await new Promise((r) => setTimeout(r, 100));
+          api = univerAPIRef.current;
+          if (api) break;
+        }
+      }
+      if (!api) {
+        console.warn('임시본 복구 실패: Univer 인스턴스 준비 시간 초과');
+        return;
+      }
+
+      const activeWb = api.getActiveWorkbook();
+      const oldUnitId = activeWb?.getId();
+      const snapshot = draftToRecover.data?.snapshot ? draftToRecover.data.snapshot : draftToRecover.data;
+      const ops = draftToRecover.data?.structuralOps || [];
+      structuralOpsRef.current = ops;
+
+      if (oldUnitId && typeof api.disposeUnit === 'function') {
+        try {
+          api.disposeUnit(oldUnitId);
+        } catch (e) {
+          console.warn('[디버그 disposeUnit 에러]', e);
+        }
+      }
+      api.createWorkbook(snapshot);
       setHasChanges(true);
       setShowDraftRecoveryModal(false);
       setSaveToast('임시 복구본이 성공적으로 복구되었습니다.');
       setTimeout(() => setSaveToast(null), 3000);
     } catch (err) {
-      console.error('임시본 복구 실패:', err);
+      console.error('[디버그 임시본 복구 실패 예외]:', err);
     }
   };
 
@@ -590,9 +673,31 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
     onClose();
   };
 
-  // 원본 복원 실행
+  // 원본 복원 실행 (해시 검증 완료된 안전 백업만 적용)
   const handleConfirmRestore = async () => {
     setShowRestoreConfirm(false);
+    if (fileContextRef.current?.backupKey) {
+      const backup = await getFileOriginalBackup(fileContextRef.current.backupKey);
+      if (backup && backup.originalHash === fileContextRef.current.initialHash) {
+        await saveToFileHandle(fileContextRef.current, backup.bytes);
+        let bin = '';
+        for (let i = 0; i < backup.bytes.length; i++) bin += String.fromCharCode(backup.bytes[i]);
+        const restoredDataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${btoa(bin)}`;
+        if (onRestoreOriginal) {
+          await onRestoreOriginal();
+        }
+        const wbData = await dataUrlToUniverWorkbook(restoredDataUrl, title);
+        univerAPIRef.current?.createWorkbook({ ...wbData, id: 'workbook' });
+        structuralOpsRef.current = [];
+        setHasChanges(false);
+        setSaveToast('원본 파일로 성공적으로 되돌렸습니다.');
+        setTimeout(() => setSaveToast(null), 3000);
+        return;
+      } else {
+        alert('원본 해시가 일치하는 안전 백업본을 찾을 수 없습니다.');
+        return;
+      }
+    }
     if (onRestoreOriginal) {
       await onRestoreOriginal();
     }
@@ -798,8 +903,10 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
               </button>
               <button
                 type="button"
+                id="office-confirm-loss-save-btn"
                 onClick={async () => {
                   setShowLossWarningModal(false);
+                  setHasConfirmedLoss(true);
                   await executeSave();
                 }}
                 className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"

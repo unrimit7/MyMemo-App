@@ -107,6 +107,7 @@ export function TestApp() {
           title={title}
           attId={attId}
           onSave={(updated) => {
+            (window as any).__SAVED_PPTX_COUNT__ = ((window as any).__SAVED_PPTX_COUNT__ || 0) + 1;
             window.__SAVED_PPTX__ = updated;
           }}
         />
@@ -120,6 +121,7 @@ export function TestApp() {
           attId={attId}
           initialEngine="superdoc"
           onSave={(updated) => {
+            (window as any).__SAVED_DOCX_COUNT__ = ((window as any).__SAVED_DOCX_COUNT__ || 0) + 1;
             window.__SAVED_DOCX__ = updated;
           }}
         />
@@ -133,6 +135,7 @@ export function TestApp() {
           attId={attId}
           initialEngine="exceljs"
           onSave={(updated) => {
+            (window as any).__SAVED_EXCEL_COUNT__ = ((window as any).__SAVED_EXCEL_COUNT__ || 0) + 1;
             window.__SAVED_EXCEL__ = updated;
           }}
         />
@@ -153,6 +156,7 @@ export function TestApp() {
           title={title}
           attId={attId}
           onSave={(updated) => {
+            (window as any).__SAVED_HWP_COUNT__ = ((window as any).__SAVED_HWP_COUNT__ || 0) + 1;
             window.__SAVED_HWP__ = updated;
           }}
         />

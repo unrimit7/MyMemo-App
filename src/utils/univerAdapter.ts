@@ -1379,7 +1379,8 @@ export async function univerSnapshotToDataUrl(
           (!op.subUnitId && !op.sheetName && op.sheetIndex === undefined) ||
           op.subUnitId === sheetId ||
           op.sheetName === ws.name ||
-          op.sheetIndex === sIdx
+          op.sheetIndex === sIdx ||
+          sheetIds.length === 1
       );
 
       sheetOps.forEach((op) => {

@@ -38,6 +38,7 @@ import {
   getOfficeDraft,
   deleteOfficeDraft,
   computeDataHash,
+  getFileOriginalBackup,
   type OfficeDraft,
 } from '../utils/draftStorage';
 import { useOfficeShortcuts } from '../utils/useOfficeShortcuts';
@@ -76,6 +77,39 @@ interface EditableSlide {
   tables: EditableTableData[];
 }
 
+function convertToEditableSlides(rawSlides: any[]): EditableSlide[] {
+  return rawSlides.map((s, idx) => {
+    const bodyLines = (s.paragraphs || [])
+      .filter((p: any) => !p.isTitle && p.text !== s.title)
+      .map((p: any) => {
+        const indent = '  '.repeat(Math.max(0, p.level));
+        return `${indent}• ${p.text}`;
+      });
+
+    const slideTables: EditableTableData[] = [];
+    for (const el of s.elements || []) {
+      if (el.type === 'table') {
+        const tableRows = el.rows.map((row: any) =>
+          row.cells.map((cell: any) => cell.text)
+        );
+        slideTables.push({
+          id: el.id,
+          rows: tableRows,
+        });
+      }
+    }
+
+    return {
+      slideNumber: s.slideNumber,
+      originalSlideIndex: idx,
+      title: s.title,
+      bodyText: bodyLines.join('\n'),
+      images: (s.images || []).map((img: any) => ({ id: img.id, dataUrl: img.dataUrl })),
+      tables: slideTables,
+    };
+  });
+}
+
 export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
   isOpen,
   onClose,
@@ -105,23 +139,39 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
   const [showFileConflictModal, setShowFileConflictModal] = useState<boolean>(false);
   const fileContextRef = useRef<FileHandleContext | null>(null);
 
+  // 원본 해시 1회 계산 캐시
+  const baseOriginalHashRef = useRef<string>('');
+  useEffect(() => {
+    if (!data) return;
+    let isCancelled = false;
+    computeDataHash(data).then((h) => {
+      if (!isCancelled) baseOriginalHashRef.current = h;
+    });
+    return () => {
+      isCancelled = true;
+    };
+  }, [data]);
+
   // FileHandle 초기화
   useEffect(() => {
     if (!fileHandle) return;
     (async () => {
       try {
         const file = await fileHandle.getFile();
+        const hash = baseOriginalHashRef.current || (await computeDataHash(data));
         fileContextRef.current = {
           handle: fileHandle,
           initialSize: file.size,
           initialLastModified: file.lastModified,
           fileName: title,
+          initialHash: hash,
+          backupKey: `${title}_${file.size}_${file.lastModified}_${hash}`,
         };
       } catch (err) {
         console.warn('FileHandle 초기화 실패:', err);
       }
     })();
-  }, [fileHandle, title]);
+  }, [fileHandle, title, data]);
 
   // 임시본 검사 및 원본 해시 일치 판별 (불일치 시 자동 폐기)
   useEffect(() => {
@@ -132,7 +182,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
       const draft = await getOfficeDraft(draftKey);
       if (!draft || isCancelled) return;
 
-      const currentHash = await computeDataHash(data);
+      const currentHash = baseOriginalHashRef.current || (await computeDataHash(data));
       if (draft.baseOriginalHash !== currentHash) {
         await deleteOfficeDraft(draftKey);
       } else {
@@ -147,21 +197,23 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
   }, [isOpen, data, draftKey]);
 
   // 30초 주기 + visibilitychange / blur 자동 저장
+  // 재귀 setTimeout 기반으로 1초 초과 시 60초 동적 연장 및 전체 소요 시간 정확히 계측
   useEffect(() => {
-    if (!isOpen || !hasChanges || slides.length === 0) return;
+    if (!isOpen) return;
 
-    let autoSaveIntervalMs = 30000;
+    let isDisposed = false;
+    let timerId: any = null;
+    let currentIntervalMs = 30000;
 
-    const performDraftSave = async () => {
-      if (!hasChanges) return;
+    const performDraftSave = async (force?: boolean): Promise<number> => {
+      if ((!hasChanges || slides.length === 0) && !force) return 0;
       try {
         const t0 = performance.now();
         const draftPayload = { slides, deletedSlideIndices };
-        const duration = performance.now() - t0;
-        const baseHash = await computeDataHash(data);
+        const baseHash = baseOriginalHashRef.current || (await computeDataHash(data));
         const dataStr = JSON.stringify(draftPayload);
 
-        await saveOfficeDraft({
+        const totalDuration = await saveOfficeDraft({
           draftKey,
           attId,
           title,
@@ -171,33 +223,49 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
           dataType: 'pptx_state',
           updatedAt: Date.now(),
           byteLength: dataStr.length,
-          saveDurationMs: Math.round(duration),
-        });
+          saveDurationMs: 0,
+        }, t0);
 
-        if (duration >= 1000) {
-          autoSaveIntervalMs = 60000;
-        }
+        return totalDuration;
       } catch (err) {
         console.warn('[Pptx] 임시본 자동 저장 오류:', err);
+        return 0;
       }
     };
 
-    const interval = setInterval(performDraftSave, autoSaveIntervalMs);
+    const scheduleNext = () => {
+      if (isDisposed) return;
+      timerId = setTimeout(async () => {
+        const duration = await performDraftSave();
+        if (duration >= 1000) {
+          currentIntervalMs = 60000;
+        }
+        scheduleNext();
+      }, currentIntervalMs);
+    };
+
+    scheduleNext();
 
     const handleVisibility = () => {
       if (document.visibilityState === 'hidden') {
-        performDraftSave();
+        clearTimeout(timerId);
+        performDraftSave().then(() => scheduleNext());
       }
     };
     const handleBlur = () => {
-      performDraftSave();
+      clearTimeout(timerId);
+      performDraftSave().then(() => scheduleNext());
     };
+
+    (window as any).__pptxTriggerDraftSave = performDraftSave;
 
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('blur', handleBlur);
 
     return () => {
-      clearInterval(interval);
+      isDisposed = true;
+      delete (window as any).__pptxTriggerDraftSave;
+      clearTimeout(timerId);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('blur', handleBlur);
     };
@@ -289,37 +357,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
           label,
         });
 
-        const editableList: EditableSlide[] = pres.slides.map((s, idx) => {
-          const bodyLines = s.paragraphs
-            .filter((p) => !p.isTitle && p.text !== s.title)
-            .map((p) => {
-              const indent = '  '.repeat(Math.max(0, p.level));
-              return `${indent}• ${p.text}`;
-            });
-
-          // 슬라이드 내 표(Table) 목록 추출
-          const slideTables: EditableTableData[] = [];
-          for (const el of s.elements) {
-            if (el.type === 'table') {
-              const tableRows = el.rows.map((row) =>
-                row.cells.map((cell) => cell.text)
-              );
-              slideTables.push({
-                id: el.id,
-                rows: tableRows,
-              });
-            }
-          }
-
-          return {
-            slideNumber: s.slideNumber,
-            originalSlideIndex: idx,
-            title: s.title,
-            bodyText: bodyLines.join('\n'),
-            images: s.images.map((img) => ({ id: img.id, dataUrl: img.dataUrl })),
-            tables: slideTables,
-          };
-        });
+        const editableList = convertToEditableSlides(pres.slides);
 
         setSlides(editableList);
         setDeletedSlideIndices([]);
@@ -514,6 +552,13 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
     }
   };
 
+  useEffect(() => {
+    (window as any).__pptxModalExecuteSave = () => handleSave();
+    return () => {
+      delete (window as any).__pptxModalExecuteSave;
+    };
+  });
+
   // 다른 이름으로 저장 (showSaveFilePicker 연동)
   const handleSaveAs = async () => {
     try {
@@ -564,9 +609,31 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
     await deleteOfficeDraft(draftKey);
   };
 
-  // 원본 복원 실행
+  // 원본 복원 실행 (해시 검증 완료된 안전 백업만 적용)
   const handleConfirmRestore = async () => {
     setShowRestoreConfirm(false);
+    if (fileContextRef.current?.backupKey) {
+      const backup = await getFileOriginalBackup(fileContextRef.current.backupKey);
+      if (backup && backup.originalHash === fileContextRef.current.initialHash) {
+        await saveToFileHandle(fileContextRef.current, backup.bytes);
+        if (onRestoreOriginal) {
+          await onRestoreOriginal();
+        }
+        let bin = '';
+        for (let i = 0; i < backup.bytes.length; i++) bin += String.fromCharCode(backup.bytes[i]);
+        const restoredDataUrl = `data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,${btoa(bin)}`;
+        const parsed = await parsePptxPresentation(restoredDataUrl);
+        setSlides(convertToEditableSlides(parsed.slides));
+        setDeletedSlideIndices([]);
+        setHasChanges(false);
+        setSaveToast('원본 버전으로 되돌렸습니다.');
+        setTimeout(() => setSaveToast(null), 3000);
+        return;
+      } else {
+        alert('원본 해시가 일치하는 안전 백업본을 찾을 수 없습니다.');
+        return;
+      }
+    }
     if (onRestoreOriginal) {
       await onRestoreOriginal();
     }
