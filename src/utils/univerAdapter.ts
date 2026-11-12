@@ -717,6 +717,45 @@ function shiftDataValidationsCols(model: any, startCol: number, count: number): 
   return newModel;
 }
 
+// 자동 필터(autoFilter) 및 _xlnm._FilterDatabase 이름 정의 범위 행 시프트 함수
+function shiftAutoFilter(ws: ExcelJS.Worksheet, start: number, nExpand: number) {
+  if (!ws.autoFilter || nExpand === 0) return;
+  const afStr = typeof ws.autoFilter === 'string' ? ws.autoFilter : (ws.autoFilter as any).ref;
+  if (!afStr) return;
+  const m = afStr.match(/^([A-Za-z]+)(\d+):([A-Za-z]+)(\d+)$/);
+  if (!m) return;
+  const c1 = m[1], r1 = parseInt(m[2], 10);
+  const c2 = m[3], r2 = parseInt(m[4], 10);
+
+  // 헤더 다음 행(r1 < start)부터 데이터 끝 및 직후 행(start <= r2 + 1) 사이 삽입/삭제 시 범위 조정
+  if (start > r1 && start <= r2 + (nExpand > 0 ? 1 : 0)) {
+    const newR2 = Math.max(r1, r2 + nExpand);
+    const newRef = `${c1}${r1}:${c2}${newR2}`;
+    ws.autoFilter = newRef;
+
+    // 워크북 definedNames _xlnm._FilterDatabase 동기화
+    const wb = ws.workbook;
+    if (wb && (wb as any).definedNames && Array.isArray((wb as any).definedNames.model)) {
+      (wb as any).definedNames.model.forEach((entry: any) => {
+        if (entry.name === '_xlnm._FilterDatabase' && Array.isArray(entry.ranges)) {
+          entry.ranges = entry.ranges.map((rangeStr: string) => {
+            const rangeMatch = rangeStr.match(/^(.*!\$?)([A-Za-z]+)\$?(\d+):\$?([A-Za-z]+)\$?(\d+)$/);
+            if (rangeMatch) {
+              const prefix = rangeMatch[1];
+              const rc1 = rangeMatch[2], rr1 = parseInt(rangeMatch[3], 10);
+              const rc2 = rangeMatch[4];
+              if (rr1 === r1 && rc1.toUpperCase() === c1.toUpperCase() && rc2.toUpperCase() === c2.toUpperCase()) {
+                return `${prefix}$${rc1}$${rr1}:$${rc2}$${newR2}`;
+              }
+            }
+            return rangeStr;
+          });
+        }
+      });
+    }
+  }
+}
+
 // 셀 메모, 데이터 유효성 검사, 조건부 서식 위치를 함께 보존·이동시키는 행 삽입/삭제 함수
 function safeSpliceRows(ws: ExcelJS.Worksheet, start: number, count: number, ...inserts: any[]) {
   const nInserts = inserts.length;
@@ -728,6 +767,9 @@ function safeSpliceRows(ws: ExcelJS.Worksheet, start: number, count: number, ...
   if ((ws as any).dataValidations && (ws as any).dataValidations.model) {
     (ws as any).dataValidations.model = shiftDataValidations((ws as any).dataValidations.model, start, nExpand);
   }
+
+  // 1-1. 자동 필터(autoFilter) 및 _FilterDatabase 범위 확장/축소
+  shiftAutoFilter(ws, start, nExpand);
 
   // 2. 셀 메모(Note) 이동
   if (nExpand > 0) {
@@ -1108,10 +1150,16 @@ async function cleanAndNormalizeWorkbookBuffer(
     let changed = false;
 
     // 1. 유효성 검사 중복 정리 및 미수정 행 customHeight="1" 속성 정리
+    const sheetFilterRefs = new Map<string, { c1: string; r1: string; c2: string; r2: string }>();
     for (const [filename, fileObj] of Object.entries(zip.files)) {
       if (filename.startsWith('xl/worksheets/sheet') && filename.endsWith('.xml')) {
         let xml = await fileObj.async('string');
         let sheetChanged = false;
+
+        const afMatch = xml.match(/<autoFilter\b[^>]*\bref="([A-Za-z]+)(\d+):([A-Za-z]+)(\d+)"/);
+        if (afMatch) {
+          sheetFilterRefs.set(filename, { c1: afMatch[1], r1: afMatch[2], c2: afMatch[3], r2: afMatch[4] });
+        }
 
         if (xml.includes('<dataValidations')) {
           const cleanedXml = deduplicateDataValidationsXml(xml);
@@ -1170,6 +1218,33 @@ async function cleanAndNormalizeWorkbookBuffer(
         const patchedXml = patchStylesXmlDefaultFont(stylesXml, origDefaultFont);
         if (patchedXml !== stylesXml) {
           zip.file('xl/styles.xml', patchedXml);
+          changed = true;
+        }
+      }
+    }
+
+    // 3. workbook.xml _xlnm._FilterDatabase 이름 정의를 sheet의 autoFilter ref와 동기화
+    if (sheetFilterRefs.size > 0) {
+      const wbFile = zip.file('xl/workbook.xml');
+      if (wbFile) {
+        let wbXml = await wbFile.async('string');
+        let wbChanged = false;
+
+        const f1 = sheetFilterRefs.get('xl/worksheets/sheet1.xml');
+        if (f1) {
+          const newTarget = `$${f1.c1}$${f1.r1}:$${f1.c2}$${f1.r2}`;
+          const dnRegex = /(<definedName\b[^>]*name="_xlnm\._FilterDatabase"[^>]*>)([^<]*!)[^<]+(<\/definedName>)/;
+          if (dnRegex.test(wbXml)) {
+            const patchedWbXml = wbXml.replace(dnRegex, (_m, p1, p2, p3) => `${p1}${p2}${newTarget}${p3}`);
+            if (patchedWbXml !== wbXml) {
+              wbXml = patchedWbXml;
+              wbChanged = true;
+            }
+          }
+        }
+
+        if (wbChanged) {
+          zip.file('xl/workbook.xml', wbXml);
           changed = true;
         }
       }

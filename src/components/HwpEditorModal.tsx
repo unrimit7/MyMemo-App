@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Save, Download, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
 import { createEditor, type RhwpEditor } from '@rhwp/editor';
 import { useFloatingWindow } from './useFloatingWindow';
+import { postProcessHwpx } from '../utils/hwpxAdapter';
 
 interface HwpEditorModalProps {
   isOpen: boolean;
@@ -120,9 +121,10 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
           editorRef.current = null;
         }
 
-        // rhwp 웹 에디터 임베드 인스턴스 생성
+        // rhwp 웹 에디터 임베드 인스턴스 생성 (자체 호스팅 오프라인 지원)
+        const studioUrl = new URL('rhwp/index.html', document.baseURI).href;
         const editor = await createEditor(containerRef.current, {
-          studioUrl: 'https://edwardkim.github.io/rhwp/',
+          studioUrl,
           width: '100%',
           height: '100%',
           requestTimeoutMs: 30000,
@@ -134,6 +136,9 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
         }
 
         editorRef.current = editor;
+
+        // E2E 및 테스트용 전역 참조 등록
+        (window as any).__currentHwpEditor = editor;
 
         // 문서 변경 감지
         if (typeof editor.onDocumentChanged === 'function') {
@@ -148,6 +153,7 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
 
         if (isMounted) {
           setIsLoading(false);
+          (window as any).__hwpIsReady = true;
         }
       } catch (err: any) {
         console.error('HWP 에디터 로드 실패:', err);
@@ -158,6 +164,7 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
               : `한글 에디터를 불러오지 못했습니다: ${err.message || '네트워크 오류'}`
           );
           setIsLoading(false);
+          (window as any).__hwpIsReady = false;
         }
       }
     };
@@ -166,6 +173,8 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
 
     return () => {
       isMounted = false;
+      (window as any).__currentHwpEditor = null;
+      (window as any).__hwpIsReady = false;
       if (editorRef.current) {
         try {
           editorRef.current.destroy();
@@ -187,7 +196,11 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
     setErrorMessage(null);
     try {
       const editor = editorRef.current;
-      const bytes = isHwpx ? await editor.exportHwpx() : await editor.exportHwp();
+      let bytes = isHwpx ? await editor.exportHwpx() : await editor.exportHwp();
+      if (isHwpx) {
+        const originalBytes = dataUrlToUint8Array(data);
+        bytes = await postProcessHwpx(bytes, originalBytes);
+      }
       const updatedDataUrl = await uint8ArrayToDataUrl(bytes, mimeType);
 
       if (onSave) {
@@ -211,13 +224,25 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
     }
   };
 
+  // E2E 테스트용 저장 핸들러 노출
+  useEffect(() => {
+    (window as any).__hwpEditorExecuteSave = handleSave;
+    return () => {
+      delete (window as any).__hwpEditorExecuteSave;
+    };
+  }, [handleSave]);
+
   // 수정된 원본 파일 내 PC에 바로 다운로드
   const handleDownload = async () => {
     if (!editorRef.current) return;
 
     try {
       const editor = editorRef.current;
-      const bytes = isHwpx ? await editor.exportHwpx() : await editor.exportHwp();
+      let bytes = isHwpx ? await editor.exportHwpx() : await editor.exportHwp();
+      if (isHwpx) {
+        const originalBytes = dataUrlToUint8Array(data);
+        bytes = await postProcessHwpx(bytes, originalBytes);
+      }
       const blob = new Blob([bytes as any], { type: mimeType });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

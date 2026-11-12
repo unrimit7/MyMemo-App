@@ -123,8 +123,35 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       workbox: {
-        maximumFileSizeToCacheInBytes: 25 * 1024 * 1024, // 25MB 이하의 WASM 및 워커 파일 오프라인 캐싱 허용
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,wasm,mjs}']
+        maximumFileSizeToCacheInBytes: 30 * 1024 * 1024, // rhwp_bg.wasm(26.8MB) 오프라인 프리캐시 허용
+        globPatterns: [
+          '**/*.{js,css,html,ico,png,svg,wasm,mjs,webmanifest}',
+          'rhwp/fonts/RHWPPublicBatang-Regular.woff2',
+          'rhwp/fonts/NanumGothic-Regular.woff2',
+          'rhwp/fonts/NanumGothic-Bold.woff2',
+          'rhwp/fonts/LatinModernMath-Regular.woff2',
+          'rhwp/fonts/D2Coding-Regular.woff2',
+        ],
+        globIgnores: [
+          '**/rhwp/samples/**',
+          '**/rhwp/fonts/licenses/**',
+        ],
+        runtimeCaching: [
+          {
+            urlPattern: /\/rhwp\/fonts\/.*\.(woff2|ttf|otf)$/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'rhwp-fonts-cache',
+              expiration: {
+                maxEntries: 100,
+                maxAgeSeconds: 365 * 24 * 60 * 60, // 1 year
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
+            },
+          },
+        ],
       },
       includeAssets: ['favicon.ico', 'favicon.svg', 'favicon-32x32.png', 'favicon-16x16.png', 'apple-touch-icon.png'],
       manifest: {

@@ -404,6 +404,12 @@ async function main() {
       assertTrue(insWs.getCell('B21').isMerged && insWs.getCell('B21').master.address === 'B21', `${item.name}: B21 비고 마스터 병합 유지`);
       assertTrue(insWs.getCell('H24').isMerged && insWs.getCell('H24').master.address === 'B21', `${item.name}: H24 비고 슬레이브 병합 유지`);
       assertEqual(insWs.getCell('C21').value, insWs.getCell('B21').value, `${item.name}: C21 병합 마스터 참조 일치`);
+
+      // 자동 필터(autoFilter) 및 _FilterDatabase 범위가 B10:H15에서 B10:H16으로 정상 확장되었는지 확인
+      const afRef = typeof insWs.autoFilter === 'string' ? insWs.autoFilter : (insWs.autoFilter?.ref || '');
+      assertEqual(afRef, 'B10:H16', `${item.name}: 12행 삽입 시 자동 필터 범위 B10:H16 확장`);
+      const filterDn = (insertWb.definedNames?.model || []).find(d => d.name === '_xlnm._FilterDatabase');
+      assertTrue(Boolean(filterDn && filterDn.ranges?.some(r => r.includes('$B$10:$H$16'))), `${item.name}: _FilterDatabase 이름 정의 B10:H16 확장 확인`);
     }
 
     // 다시 행 삭제하여 원복 저장
@@ -446,7 +452,14 @@ async function main() {
       assertEqual(wsSumm.getCell('B4').numFmt, '#,##0"원"', `${item.name}: 요약!B4 표시 형식 #,##0"원" 유지`);
       console.log(`    ✓ 검증 통과: 다른 시트(부서코드, 요약)의 셀 표시 형식(General) 완벽 불변 확인\n`);
     } else {
-      console.log(`    ✓ 검증 통과: 실파일B 견적서 행 삭제 원복 및 H열 숨김/수식 완벽 복원 확인\n`);
+      const delWb = new ExcelJS.Workbook();
+      await delWb.xlsx.load(savedBuf4);
+      const delWs = delWb.getWorksheet(1);
+      const afRef = typeof delWs.autoFilter === 'string' ? delWs.autoFilter : (delWs.autoFilter?.ref || '');
+      assertEqual(afRef, 'B10:H15', `${item.name}: 행 삭제 원복 시 자동 필터 범위 B10:H15 복원`);
+      const filterDn = (delWb.definedNames?.model || []).find(d => d.name === '_xlnm._FilterDatabase');
+      assertTrue(Boolean(filterDn && filterDn.ranges?.some(r => r.includes('$B$10:$H$15'))), `${item.name}: _FilterDatabase 이름 정의 B10:H15 복원 확인`);
+      console.log(`    ✓ 검증 통과: 실파일B 견적서 행 삭제 원복(자동 필터 B10:H15 복원) 및 H열 숨김/수식 완벽 복원 확인\n`);
     }
   }
 

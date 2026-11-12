@@ -23,7 +23,8 @@ import {
   Settings,
   User,
   Mail,
-  Copy
+  Copy,
+  Type
 } from 'lucide-react';
 import { type AppTheme, THEME_OPTIONS } from '../types';
 
@@ -44,6 +45,49 @@ interface SettingsModalProps {
   calendarModalPreview?: boolean;
   onToggleCalendarModalPreview?: (enabled: boolean) => void;
 }
+
+const RHWP_FONT_FILES = [
+  'Cafe24Ssurround-v2.0.woff2',
+  'Cafe24Supermagic-Regular-v1.0.woff2',
+  'D2Coding-Bold.woff2',
+  'D2Coding-Regular.woff2',
+  'GowunBatang-Bold.woff2',
+  'GowunBatang-Regular.woff2',
+  'GowunDodum-Regular.woff2',
+  'Happiness-Sans-Bold.woff2',
+  'Happiness-Sans-Regular.woff2',
+  'Happiness-Sans-Title.woff2',
+  'HappinessSansVF.woff2',
+  'LatinModernMath-Regular.woff2',
+  'LatinModernMath-VariableOutline-subset.otf',
+  'NanumGothic-Bold.woff2',
+  'NanumGothic-ExtraBold.woff2',
+  'NanumGothic-Regular.woff2',
+  'NanumGothicCoding-Bold.woff2',
+  'NanumGothicCoding-Regular.woff2',
+  'NanumMyeongjo-Bold.woff2',
+  'NanumMyeongjo-ExtraBold.woff2',
+  'NanumMyeongjo-Regular.woff2',
+  'NotoSansKR-Bold.woff2',
+  'NotoSansKR-ExtraLight.woff2',
+  'NotoSansKR-Regular.woff2',
+  'NotoSansMath-Regular.woff2',
+  'NotoSansSymbols2-Regular.ttf',
+  'NotoSerifKR-Bold.woff2',
+  'NotoSerifKR-Regular.woff2',
+  'Pretendard-Black.woff2',
+  'Pretendard-Bold.woff2',
+  'Pretendard-ExtraBold.woff2',
+  'Pretendard-ExtraLight.woff2',
+  'Pretendard-Light.woff2',
+  'Pretendard-Medium.woff2',
+  'Pretendard-Regular.woff2',
+  'Pretendard-SemiBold.woff2',
+  'Pretendard-Thin.woff2',
+  'RHWPOldHangul-Regular.woff2',
+  'RHWPPublicBatang-Regular.woff2',
+  'SpoqaHanSans-Regular.woff2',
+];
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
@@ -82,6 +126,103 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [pendingRestore, setPendingRestore] = useState<MyMemoBackupData | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
   const restoreFileInputRef = useRef<HTMLInputElement>(null);
+
+  // 한컴 한글 오프라인 글꼴 캐시 상태
+  const [fontCacheStatus, setFontCacheStatus] = useState<{
+    cachedCount: number;
+    totalCount: number;
+    totalBytes: number;
+    isDownloading: boolean;
+    progress: number;
+    message: string | null;
+  }>({
+    cachedCount: 0,
+    totalCount: 40,
+    totalBytes: 0,
+    isDownloading: false,
+    progress: 0,
+    message: null,
+  });
+
+  const checkFontCache = async () => {
+    if (typeof window === 'undefined' || !('caches' in window)) return;
+    try {
+      const cache = await caches.open('rhwp-fonts-cache');
+      const keys = await cache.keys();
+      const count = keys.length;
+      let totalSize = 0;
+      for (const req of keys) {
+        const resp = await cache.match(req);
+        if (resp) {
+          const blob = await resp.clone().blob();
+          totalSize += blob.size;
+        }
+      }
+      setFontCacheStatus(prev => ({
+        ...prev,
+        cachedCount: count,
+        totalBytes: totalSize,
+      }));
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      checkFontCache();
+    }
+  }, [isOpen]);
+
+  const handleDownloadAllFonts = async () => {
+    if (typeof window === 'undefined' || !('caches' in window)) return;
+    setFontCacheStatus(prev => ({
+      ...prev,
+      isDownloading: true,
+      progress: 0,
+      message: '오프라인 글꼴 다운로드를 시작합니다...',
+    }));
+
+    try {
+      const cache = await caches.open('rhwp-fonts-cache');
+      let downloaded = 0;
+      let accumulatedBytes = 0;
+
+      for (let i = 0; i < RHWP_FONT_FILES.length; i++) {
+        const fontName = RHWP_FONT_FILES[i];
+        const url = new URL(`rhwp/fonts/${fontName}`, document.baseURI).href;
+        const resp = await fetch(url);
+        if (resp.ok) {
+          const clone = resp.clone();
+          const blob = await clone.blob();
+          accumulatedBytes += blob.size;
+          await cache.put(url, resp);
+        }
+        downloaded++;
+        setFontCacheStatus(prev => ({
+          ...prev,
+          cachedCount: downloaded,
+          totalBytes: accumulatedBytes,
+          progress: Math.round((downloaded / RHWP_FONT_FILES.length) * 100),
+          message: `${fontName} 저장 중 (${downloaded}/${RHWP_FONT_FILES.length})`,
+        }));
+      }
+
+      setFontCacheStatus(prev => ({
+        ...prev,
+        isDownloading: false,
+        cachedCount: 40,
+        progress: 100,
+        message: '전체 40종 한글 글꼴(약 26.5 MB)이 오프라인 캐시에 저장되었습니다.',
+      }));
+    } catch (err: any) {
+      setFontCacheStatus(prev => ({
+        ...prev,
+        isDownloading: false,
+        message: `글꼴 다운로드 실패: ${err.message || '네트워크 오류'}`,
+      }));
+    }
+  };
 
   // 전체 백업 생성 및 다운로드
   const handleExportBackup = () => {
@@ -435,6 +576,121 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <p className="text-slate-400 text-[10px]">
                   WebAssembly 기반 로컬 오프라인 한글 문서 렌더링 및 텍스트 추출에 사용됩니다.
                 </p>
+              </div>
+
+              {/* 오픈소스 한글 및 수학/특수 글꼴 40종 라이선스 고지 */}
+              <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                    <Type size={12} className="text-indigo-400" />
+                    <span>한글/수학 오픈소스 글꼴 40종 (OFL / GUST / LPPL / Cafe24 / 행복글꼴)</span>
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-[10px] font-bold">
+                    OFL 외
+                  </span>
+                </div>
+                <p className="text-slate-400 text-[10px] leading-relaxed">
+                  한글 문서의 정확한 미려한 렌더링을 위해 네이버 나눔글꼴·D2Coding, 프리텐다드, 고운바탕/돋움, 본고딕/본명조, 스포카 한스, 공공바탕, Cafe24, 해피니스 산스, Latin Modern Math, Noto Sans Math/Symbols2 원본 글꼴을 서브셋이나 이름 변경 없이 순수 원본 상태로 탑재합니다.
+                </p>
+                <div className="flex flex-wrap gap-1 text-[9px] text-slate-400 pt-0.5">
+                  <span className="px-1.5 py-0.5 bg-slate-800 rounded">SIL OFL 1.1 (나눔/D2/고운/본/스포카/RHWP/Pretendard)</span>
+                  <span className="px-1.5 py-0.5 bg-slate-800 rounded">GUST (Latin Modern Math)</span>
+                  <span className="px-1.5 py-0.5 bg-slate-800 rounded">LPPL-1.3c</span>
+                  <span className="px-1.5 py-0.5 bg-slate-800 rounded">Cafe24 라이선스</span>
+                  <span className="px-1.5 py-0.5 bg-slate-800 rounded">해피니스 산스 라이선스</span>
+                </div>
+                <div className="flex items-center justify-between pt-1 border-t border-slate-800/80 mt-1">
+                  <a
+                    href="./rhwp/fonts/licenses/font-notices.json"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-indigo-400 hover:text-indigo-300 underline flex items-center gap-1 text-[10px]"
+                  >
+                    <span>글꼴 라이선스 전문 (font-notices.json)</span>
+                    <ExternalLink size={10} />
+                  </a>
+                </div>
+              </div>
+
+              {/* 한글 오프라인 글꼴 단계별 캐시 관리 */}
+              <div className="p-3 rounded-lg bg-indigo-950/30 border border-indigo-500/30 flex flex-col gap-2 mt-1">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Download size={13} className="text-indigo-400" />
+                    <span className="font-semibold text-slate-200 text-xs">한글 오프라인 글꼴 캐시 관리</span>
+                  </div>
+                  <span className="text-[10px] text-indigo-300 font-medium">
+                    {fontCacheStatus.cachedCount >= 40
+                      ? '✅ 40종 전체 보관됨'
+                      : fontCacheStatus.cachedCount > 0
+                      ? `저장됨: ${fontCacheStatus.cachedCount}종`
+                      : '기본 5종 프리캐시'}
+                  </span>
+                </div>
+                <p className="text-slate-400 text-[10px] leading-relaxed">
+                  초기 방문 시에는 필수 5종(공공바탕, 나눔고딕 Regular/Bold, Latin Modern Math, D2Coding, 약 5MB)만 즉시 프리캐시되며, 나머지 35종은 온디맨드로 자동 캐시됩니다. 인터넷이 없는 완전 오프라인 환경에서 모든 글꼴을 즉시 사용하려면 아래 버튼으로 전체 글꼴을 미리 내려받을 수 있습니다.
+                </p>
+
+                {fontCacheStatus.totalBytes > 0 && (
+                  <div className="text-[10px] text-slate-300 bg-slate-900/90 p-2 rounded border border-slate-800 flex items-center justify-between">
+                    <span>현재 캐시된 글꼴 용량:</span>
+                    <span className="font-bold text-indigo-300">
+                      {(fontCacheStatus.totalBytes / (1024 * 1024)).toFixed(1)} MB ({fontCacheStatus.cachedCount} / 40종)
+                    </span>
+                  </div>
+                )}
+
+                {fontCacheStatus.isDownloading && (
+                  <div className="space-y-1">
+                    <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className="bg-indigo-500 h-1.5 rounded-full transition-all duration-200"
+                        style={{ width: `${fontCacheStatus.progress}%` }}
+                      />
+                    </div>
+                    <div className="text-[10px] text-indigo-300 flex items-center justify-between">
+                      <span>{fontCacheStatus.message}</span>
+                      <span>{fontCacheStatus.progress}%</span>
+                    </div>
+                  </div>
+                )}
+
+                {!fontCacheStatus.isDownloading && fontCacheStatus.message && (
+                  <div className="text-[10px] text-emerald-400 flex items-center gap-1">
+                    <CheckCircle size={11} />
+                    <span>{fontCacheStatus.message}</span>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleDownloadAllFonts}
+                  disabled={fontCacheStatus.isDownloading || fontCacheStatus.cachedCount >= 40}
+                  className={`mt-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all ${
+                    fontCacheStatus.cachedCount >= 40
+                      ? 'bg-slate-800 text-slate-400 cursor-default'
+                      : fontCacheStatus.isDownloading
+                      ? 'bg-indigo-600/50 text-indigo-200 cursor-wait'
+                      : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm cursor-pointer'
+                  }`}
+                >
+                  {fontCacheStatus.isDownloading ? (
+                    <>
+                      <Loader2 size={13} className="animate-spin" />
+                      <span>다운로드 진행 중...</span>
+                    </>
+                  ) : fontCacheStatus.cachedCount >= 40 ? (
+                    <>
+                      <CheckCircle size={13} className="text-emerald-400" />
+                      <span>오프라인용 한글 글꼴 전체 보관 완료 (전체 40종, 약 26.5 MB)</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download size={13} />
+                      <span>오프라인용 한글 글꼴 모두 받기 (전체 40종, 약 26.5 MB)</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
           </div>
