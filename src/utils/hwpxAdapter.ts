@@ -20,12 +20,10 @@ function getXmlSerializer(): any {
 }
 
 function findElements(parent: Document | Element, tagName: string): Element[] {
-  // First try getElementsByTagName with tag name and prefix
   const list = parent.getElementsByTagName(tagName);
   if (list && list.length > 0) {
     return Array.from(list);
   }
-  // Fallback to checking localName
   const all = parent.getElementsByTagName('*');
   const res: Element[] = [];
   const cleanName = tagName.includes(':') ? tagName.split(':')[1] : tagName;
@@ -39,11 +37,88 @@ function findElements(parent: Document | Element, tagName: string): Element[] {
 }
 
 /**
+ * 문단의 직계 런(hp:run > hp:t) 텍스트만 추출
+ * (내포된 표 hp:tbl, 구역 정의 등의 텍스트는 제외하여 순수 문단 텍스트만 비교)
+ */
+function getDirectParaText(pNode: Element): string {
+  let text = '';
+  for (let c = pNode.firstChild; c; c = c.nextSibling) {
+    if (c.nodeName === 'hp:run' || (c as any).localName === 'run') {
+      for (let r = c.firstChild; r; r = r.nextSibling) {
+        if (r.nodeName === 'hp:t' || (r as any).localName === 't') {
+          text += r.textContent || '';
+        }
+      }
+    }
+  }
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * 문단의 직계 hp:linesegarray 자식 요소만 제거 (내포된 표 셀 등의 linesegarray 보존)
+ */
+function removeDirectLineSegArray(pNode: Element): boolean {
+  let removed = false;
+  const toRemove: Node[] = [];
+  for (let c = pNode.firstChild; c; c = c.nextSibling) {
+    if (c.nodeName === 'hp:linesegarray' || (c as any).localName === 'linesegarray') {
+      toRemove.push(c);
+    }
+  }
+  toRemove.forEach((n) => {
+    pNode.removeChild(n);
+    removed = true;
+  });
+  return removed;
+}
+
+/**
+ * HWP/HWPX 문서에 변경 추적(Track Changes)이 포함되어 있는지 감지
+ */
+export async function hasHwpTrackChanges(
+  bytes: Uint8Array,
+  isHwpx: boolean
+): Promise<{ hasTrackChanges: boolean; details: string[] }> {
+  const details: string[] = [];
+  if (isHwpx) {
+    try {
+      const zip = await JSZip.loadAsync(bytes);
+      for (const name of Object.keys(zip.files)) {
+        if (name.endsWith('.xml')) {
+          const text = await zip.file(name)!.async('string');
+          if (text.includes('trackChange') || text.includes('insertBegin') || text.includes('deleteBegin')) {
+            details.push(`${name} 내 변경 추적 태그 포함`);
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  } else {
+    // HWP 바이너리: OLE2 레코드 및 FileHeader/BodyText 검사
+    try {
+      const latin = Buffer.from(bytes).toString('latin1');
+      if (latin.includes('TrackChange') || latin.includes('TRACKCHANGE')) {
+        details.push('HWP 바이너리 내 변경 추적 레코드 포함');
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return {
+    hasTrackChanges: details.length > 0,
+    details,
+  };
+}
+
+/**
  * HWPX 문서 저장 후처리 어댑터
  *
  * 1. 원본 문서의 version.xml(버전 정보 1.4/1.5 등) 보존
- * 2. 텍스트가 실제로 수정된 문단만 linesegarray(줄 배치 캐시)를 제거하여 한컴 한글에서 글자 겹침 현상 원천 방지
- * 3. 수정되지 않은 문단은 원본 linesegarray 및 구조 100% 바이트 보존
+ * 2. 원본 header.xml의 hh:trackChanges 보존
+ * 3. 텍스트가 실제로 수정된 문단(표 셀 문단 포함)만 직계 linesegarray(줄 배치 캐시)를 선별 제거
+ * 4. 수정되지 않은 문단 중 변경 추적(deleteBegin/insertBegin)이 포함된 문단은 원본 마크업을 복원하여 보존
+ * 5. 수정되지 않은 문단은 원본 linesegarray 및 구조 100% 바이트 보존
  */
 export async function postProcessHwpx(
   exportedBytes: Uint8Array,
@@ -56,6 +131,8 @@ export async function postProcessHwpx(
     const origZip = await JSZip.loadAsync(originalBytes);
 
     let modified = false;
+    const parser = getDomParser();
+    const serializer = getXmlSerializer();
 
     // 1. version.xml 보존 (한컴 한글 호환성 유지)
     const origVer = origZip.file('version.xml');
@@ -65,10 +142,27 @@ export async function postProcessHwpx(
       modified = true;
     }
 
-    const parser = getDomParser();
-    const serializer = getXmlSerializer();
+    // 2. Contents/header.xml의 hh:trackChanges 보존
+    const origHdrFile = origZip.file('Contents/header.xml');
+    const expHdrFile = expZip.file('Contents/header.xml');
+    if (origHdrFile && expHdrFile) {
+      const origHdrXml = await origHdrFile.async('string');
+      if (origHdrXml.includes('trackChanges')) {
+        const expHdrXml = await expHdrFile.async('string');
+        if (!expHdrXml.includes('trackChanges')) {
+          const docOrigHdr = parser.parseFromString(origHdrXml, 'application/xml');
+          const docExpHdr = parser.parseFromString(expHdrXml, 'application/xml');
+          const tcList = findElements(docOrigHdr, 'hh:trackChanges');
+          if (tcList.length > 0) {
+            docExpHdr.documentElement.appendChild(tcList[0]);
+            expZip.file('Contents/header.xml', serializer.serializeToString(docExpHdr));
+            modified = true;
+          }
+        }
+      }
+    }
 
-    // 2. Contents/section*.xml 문단 단위 검사
+    // 3. Contents/section*.xml 문단 단위 linesegarray 선별 제거 및 미수정 변경추적 복원
     for (const [fname, expFile] of Object.entries(expZip.files)) {
       if (fname.startsWith('Contents/section') && fname.endsWith('.xml')) {
         const origFile = origZip.file(fname);
@@ -82,37 +176,37 @@ export async function postProcessHwpx(
         const expDoc = parser.parseFromString(expXml, 'application/xml');
         const origDoc = parser.parseFromString(origXml, 'application/xml');
 
-        const expParas = findElements(expDoc, 'hp:p');
-        const origParas = findElements(origDoc, 'hp:p');
+        // Live NodeList 변조 방지를 위해 정적 배열로 변환
+        const expParas = Array.from(findElements(expDoc, 'hp:p'));
+        const origParas = Array.from(findElements(origDoc, 'hp:p'));
 
         let sectionChanged = false;
 
-        // 원본 문단의 텍스트를 map으로도 기록 (id 기준 및 index 기준)
-        const origParaMap = new Map<string, string>();
-        origParas.forEach((p, idx) => {
-          const id = p.getAttribute('id') || String(idx);
-          const text = (p.textContent || '').replace(/\s+/g, ' ').trim();
-          origParaMap.set(id, text);
-        });
+        const count = Math.min(expParas.length, origParas.length);
+        for (let idx = 0; idx < count; idx++) {
+          const expP = expParas[idx];
+          const origP = origParas[idx];
 
-        expParas.forEach((expP, idx) => {
-          const id = expP.getAttribute('id') || String(idx);
-          const expText = (expP.textContent || '').replace(/\s+/g, ' ').trim();
-          const origText = origParaMap.has(id)
-            ? origParaMap.get(id)!
-            : (origParas[idx] ? (origParas[idx].textContent || '').replace(/\s+/g, ' ').trim() : '');
+          const expText = getDirectParaText(expP);
+          const origText = getDirectParaText(origP);
 
-          // 텍스트가 변경된 문단만 linesegarray 제거
           if (expText !== origText) {
-            const lsList = findElements(expP, 'hp:linesegarray');
-            lsList.forEach((ls) => {
-              if (ls.parentNode) {
-                ls.parentNode.removeChild(ls);
+            // 직계 linesegarray만 선별 제거
+            if (removeDirectLineSegArray(expP)) {
+              sectionChanged = true;
+            }
+          } else {
+            // 직계 텍스트가 수정되지 않은 문단:
+            // 원본 문단에 변경 추적 마크업(deleteBegin/insertBegin)이 있는 경우 원본 문단 노드로 복원
+            const origPXml = serializer.serializeToString(origP);
+            if (origPXml.includes('deleteBegin') || origPXml.includes('insertBegin')) {
+              if (expP.parentNode) {
+                expP.parentNode.replaceChild(origP, expP);
                 sectionChanged = true;
               }
-            });
+            }
           }
-        });
+        }
 
         if (sectionChanged) {
           const newXml = serializer.serializeToString(expDoc);

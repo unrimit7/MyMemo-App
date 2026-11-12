@@ -410,6 +410,14 @@ async function main() {
       assertEqual(afRef, 'B10:H16', `${item.name}: 12행 삽입 시 자동 필터 범위 B10:H16 확장`);
       const filterDn = (insertWb.definedNames?.model || []).find(d => d.name === '_xlnm._FilterDatabase');
       assertTrue(Boolean(filterDn && filterDn.ranges?.some(r => r.includes('$B$10:$H$16'))), `${item.name}: _FilterDatabase 이름 정의 B10:H16 확장 확인`);
+      assertEqual(filterDn.ranges.length, 1, `${item.name}: _FilterDatabase 범위는 정확히 1개만 존재해야 함`);
+
+      // raw XML 레벨에서도 중복 범위 없이 단일 범위인지 검증
+      const insZip = await JSZip.loadAsync(savedBuf3);
+      const insWbXml = await insZip.file('xl/workbook.xml').async('text');
+      const insMatch = insWbXml.match(/<definedName\b[^>]*name="_xlnm\._FilterDatabase"[^>]*>([\s\S]*?)<\/definedName>/);
+      assertTrue(Boolean(insMatch), `${item.name}: workbook.xml _FilterDatabase 태그 존재`);
+      assertEqual(insMatch[1], "&apos;견적서&apos;!$B$10:$H$16", `${item.name}: workbook.xml 단일 범위 $B$10:$H$16 기록`);
     }
 
     // 다시 행 삭제하여 원복 저장

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Save, Download, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
 import { createEditor, type RhwpEditor } from '@rhwp/editor';
 import { useFloatingWindow } from './useFloatingWindow';
-import { postProcessHwpx } from '../utils/hwpxAdapter';
+import { postProcessHwpx, hasHwpTrackChanges } from '../utils/hwpxAdapter';
 
 interface HwpEditorModalProps {
   isOpen: boolean;
@@ -51,6 +51,9 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState<boolean>(false);
   const [showExitConfirm, setShowExitConfirm] = useState<boolean>(false);
+  const [showTrackChangesWarning, setShowTrackChangesWarning] = useState<boolean>(false);
+  const [trackChangesWarningAcknowledged, setTrackChangesWarningAcknowledged] = useState<boolean>(false);
+  const [pendingSaveAction, setPendingSaveAction] = useState<'save' | 'download' | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<RhwpEditor | null>(null);
@@ -188,19 +191,55 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
 
   if (!isOpen) return null;
 
+  const checkIsDirty = async (): Promise<boolean> => {
+    if (hasChanges) return true;
+    if (editorRef.current) {
+      try {
+        const state = await editorRef.current.getDocumentState();
+        if (state && state.dirty) {
+          setHasChanges(true);
+          return true;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return false;
+  };
+
   // 수정된 문서 저장 및 메모 본문에 반영
-  const handleSave = async () => {
+  const handleSave = async (options?: { bypassTrackWarning?: boolean }) => {
     if (!editorRef.current || isSaving) return;
 
     setIsSaving(true);
     setErrorMessage(null);
     try {
       const editor = editorRef.current;
-      let bytes = isHwpx ? await editor.exportHwpx() : await editor.exportHwp();
-      if (isHwpx) {
-        const originalBytes = dataUrlToUint8Array(data);
-        bytes = await postProcessHwpx(bytes, originalBytes);
+      const originalBytes = dataUrlToUint8Array(data);
+      const isDirty = await checkIsDirty();
+
+      let bytes: Uint8Array;
+      if (!isDirty) {
+        // 1-a: 사용자가 편집하지 않았으면 재직렬화 없이 원본 바이트 그대로 보존
+        bytes = originalBytes;
+      } else {
+        // 1-b: 문서에 변경 추적이 있는 경우 경고 모달 표시
+        if (!options?.bypassTrackWarning && !trackChangesWarningAcknowledged) {
+          const trackInfo = await hasHwpTrackChanges(originalBytes, isHwpx);
+          if (trackInfo.hasTrackChanges) {
+            setPendingSaveAction('save');
+            setShowTrackChangesWarning(true);
+            setIsSaving(false);
+            return;
+          }
+        }
+
+        bytes = isHwpx ? await editor.exportHwpx() : await editor.exportHwp();
+        if (isHwpx) {
+          bytes = await postProcessHwpx(bytes, originalBytes);
+        }
       }
+
       const updatedDataUrl = await uint8ArrayToDataUrl(bytes, mimeType);
 
       if (onSave) {
@@ -226,23 +265,40 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
 
   // E2E 테스트용 저장 핸들러 노출
   useEffect(() => {
-    (window as any).__hwpEditorExecuteSave = handleSave;
+    (window as any).__hwpEditorExecuteSave = (options?: { bypassTrackWarning?: boolean }) => handleSave(options);
     return () => {
       delete (window as any).__hwpEditorExecuteSave;
     };
   }, [handleSave]);
 
   // 수정된 원본 파일 내 PC에 바로 다운로드
-  const handleDownload = async () => {
+  const handleDownload = async (options?: { bypassTrackWarning?: boolean }) => {
     if (!editorRef.current) return;
 
     try {
       const editor = editorRef.current;
-      let bytes = isHwpx ? await editor.exportHwpx() : await editor.exportHwp();
-      if (isHwpx) {
-        const originalBytes = dataUrlToUint8Array(data);
-        bytes = await postProcessHwpx(bytes, originalBytes);
+      const originalBytes = dataUrlToUint8Array(data);
+      const isDirty = await checkIsDirty();
+
+      let bytes: Uint8Array;
+      if (!isDirty) {
+        bytes = originalBytes;
+      } else {
+        if (!options?.bypassTrackWarning && !trackChangesWarningAcknowledged) {
+          const trackInfo = await hasHwpTrackChanges(originalBytes, isHwpx);
+          if (trackInfo.hasTrackChanges) {
+            setPendingSaveAction('download');
+            setShowTrackChangesWarning(true);
+            return;
+          }
+        }
+
+        bytes = isHwpx ? await editor.exportHwpx() : await editor.exportHwp();
+        if (isHwpx) {
+          bytes = await postProcessHwpx(bytes, originalBytes);
+        }
       }
+
       const blob = new Blob([bytes as any], { type: mimeType });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -258,22 +314,25 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
     }
   };
 
-  const handleClose = async () => {
-    let isDirty = hasChanges;
-
-    // 닫기 버튼 클릭 시 rhwp 에디터의 최신 dirty 상태를 즉시 최종 확인
-    if (!isDirty && editorRef.current) {
-      try {
-        const state = await editorRef.current.getDocumentState();
-        if (state && state.dirty) {
-          isDirty = true;
-          setHasChanges(true);
-        }
-      } catch {
-        // ignore
-      }
+  const handleConfirmSaveAnyway = async () => {
+    setShowTrackChangesWarning(false);
+    setTrackChangesWarningAcknowledged(true);
+    if (pendingSaveAction === 'download') {
+      setPendingSaveAction(null);
+      await handleDownload({ bypassTrackWarning: true });
+    } else {
+      setPendingSaveAction(null);
+      await handleSave({ bypassTrackWarning: true });
     }
+  };
 
+  const handleCancelTrackChangesWarning = () => {
+    setShowTrackChangesWarning(false);
+    setPendingSaveAction(null);
+  };
+
+  const handleClose = async () => {
+    const isDirty = await checkIsDirty();
     if (isDirty) {
       setShowExitConfirm(true);
       return;
@@ -347,7 +406,7 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
           {/* 저장 버튼 */}
           <button
             type="button"
-            onClick={handleSave}
+            onClick={() => handleSave()}
             disabled={isLoading || isSaving}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-sm transition-all active:scale-95 disabled:opacity-50"
             title="수정한 내용을 메모에 즉시 저장"
@@ -359,7 +418,7 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
           {/* 다운로드 버튼 */}
           <button
             type="button"
-            onClick={handleDownload}
+            onClick={() => handleDownload()}
             disabled={isLoading}
             className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-lg text-xs font-semibold border border-slate-700 transition-all active:scale-95 disabled:opacity-50"
             title="수정된 한글 파일 내 PC로 다운로드"
@@ -453,6 +512,46 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
               <button
                 type="button"
                 onClick={() => setShowExitConfirm(false)}
+                className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition-all"
+              >
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 변경 추적 손실 주의 경고 모달 */}
+      {showTrackChangesWarning && (
+        <div className="fixed inset-0 z-100 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-amber-500/30 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-amber-400">
+              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20">
+                <AlertCircle size={24} />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-slate-100">변경 추적 손실 주의</h3>
+                <p className="text-xs text-amber-300/80">이 문서에는 변경 추적(교정 이력)이 포함되어 있습니다.</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed bg-slate-800/60 p-3 rounded-xl border border-slate-700/50">
+              변경 추적 내용이 저장 시 사라지거나 합쳐질 수 있습니다. 그래도 저장하시겠습니까?
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+              <button
+                type="button"
+                id="hwp-confirm-save-anyway-btn"
+                onClick={handleConfirmSaveAnyway}
+                className="flex-1 py-2.5 px-3 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
+              >
+                그래도 저장
+              </button>
+              <button
+                type="button"
+                id="hwp-cancel-save-warning-btn"
+                onClick={handleCancelTrackChangesWarning}
                 className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition-all"
               >
                 취소

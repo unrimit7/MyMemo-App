@@ -65,12 +65,12 @@ async function performReplaceAll(page, findText, replaceText) {
   await page.waitForTimeout(400);
 }
 
-async function executeEditorSave(page) {
-  const savedUrl = await page.evaluate(async () => {
+async function executeEditorSave(page, options = { bypassTrackWarning: true }) {
+  const savedUrl = await page.evaluate(async (opts) => {
     window.__SAVED_HWP__ = undefined;
-    await window.__hwpEditorExecuteSave();
+    await window.__hwpEditorExecuteSave(opts);
     return window.__SAVED_HWP__;
-  });
+  }, options);
 
   assertTrue(Boolean(savedUrl), '저장된 dataUrl이 유효해야 합니다.');
   return Buffer.from(savedUrl.replace(/^data:[^;]+;base64,/, ''), 'base64');
@@ -87,6 +87,10 @@ async function loadHwpDocumentInEditor(page, dataUrl, title, port) {
 }
 
 async function verifyHwpxZeroChange(origBuf, savedBuf, fileName) {
+  // 1-a 요구사항: 무변경 저장은 원본 바이트를 100% 그대로 유지 (재직렬화 금지)
+  assertEqual(savedBuf.length, origBuf.length, `${fileName}: 무변경 저장 바이트 길이 원본과 100% 동일`);
+  assertTrue(savedBuf.equals(origBuf), `${fileName}: 무변경 저장 바이트 원본과 100% 바이너리 일치`);
+
   const origZip = await JSZip.loadAsync(origBuf);
   const savedZip = await JSZip.loadAsync(savedBuf);
 
@@ -96,6 +100,14 @@ async function verifyHwpxZeroChange(origBuf, savedBuf, fileName) {
   assertTrue(Boolean(savedVer), `${fileName}: version.xml 파일 보존 확인`);
   if (origVer) {
     assertEqual(savedVer, origVer, `${fileName}: version.xml 내용 100% 일치`);
+  }
+
+  // 변경 추적 태그(hp:deleteBegin/insertBegin) 보존 검증
+  const origSec0 = await origZip.file('Contents/section0.xml')?.async('text');
+  const savedSec0 = await savedZip.file('Contents/section0.xml')?.async('text');
+  if (origSec0 && origSec0.includes('deleteBegin')) {
+    assertTrue(Boolean(savedSec0 && savedSec0.includes('deleteBegin')), `${fileName}: deleteBegin 변경추적 마크업 보존`);
+    assertTrue(Boolean(savedSec0 && savedSec0.includes('insertBegin')), `${fileName}: insertBegin 변경추적 마크업 보존`);
   }
 
   // HwpDocument 엔진 레벨의 텍스트 및 페이지 수 100% 일치 검증
@@ -129,6 +141,10 @@ async function verifyHwpxZeroChange(origBuf, savedBuf, fileName) {
 }
 
 async function verifyHwpZeroChange(origBuf, savedBuf, fileName) {
+  // 1-a 요구사항: 무변경 저장은 원본 바이트를 100% 그대로 유지 (재직렬화 금지)
+  assertEqual(savedBuf.length, origBuf.length, `${fileName}: 무변경 저장 바이트 길이 원본과 100% 동일`);
+  assertTrue(savedBuf.equals(origBuf), `${fileName}: 무변경 저장 바이트 원본과 100% 바이너리 일치`);
+
   // HWP 바이너리 OLE2 서명 및 HWP Document File 스트림 검증
   const isOle = savedBuf[0] === 0xd0 && savedBuf[1] === 0xcf && savedBuf[2] === 0x11 && savedBuf[3] === 0xe0;
   assertTrue(isOle, `${fileName}: HWP OLE2 바이너리 서명 확인`);
@@ -340,7 +356,21 @@ async function main() {
       const cells = tbl.getElementsByTagName('hp:tc');
       const cellTexts = Array.from(cells).map(c => (c.textContent || '').trim());
       assertTrue(cellTexts.includes('영업기획'), `${item.name}: 표 셀 내 '영업기획' 반영 확인`);
-      console.log(`    ✓ HWPX 검증: 표 셀 텍스트 '영업기획' 성공적 치환 및 기타 구조 보존`);
+
+      // Issue 3 검증: 수정한 셀의 문단만 linesegarray 제거되었는지 확인 (51 -> 50개 유지)
+      if (item.isHangul) {
+        let directLsCount = 0;
+        const allPs = doc.getElementsByTagName('hp:p');
+        for (let i = 0; i < allPs.length; i++) {
+          for (let c = allPs[i].firstChild; c; c = c.nextSibling) {
+            if (c.nodeName === 'hp:linesegarray') directLsCount++;
+          }
+        }
+        assertEqual(directLsCount, 50, `${item.name}: 수정한 셀 문단 1개만 linesegarray 제거 (51 -> 50개 유지)`);
+        console.log(`    ✓ HWPX 검증: 표 셀 1개 수정 시 해당 셀 문단만 linesegarray 선별 제거 확인 (51 -> 50개 유지)`);
+      } else {
+        console.log(`    ✓ HWPX 검증: 표 셀 텍스트 '영업기획' 성공적 치환 및 기타 구조 보존`);
+      }
     } else {
       const savedDoc = new HwpDocument(savedBuf3);
       const text = savedDoc.getTextFileText();
@@ -358,6 +388,52 @@ async function main() {
       status: 'PASS',
     });
   }
+
+  // --------------------------------------------------------------------------
+  // [검증 3] 요구사항 1-b: 변경 추적(Track Changes) 손실 경고 및 [취소]/[그래도 저장] 검증
+  // --------------------------------------------------------------------------
+  console.log('\n--------------------------------------------------------------------------------');
+  console.log('[검증 3: 요구사항 1-b 변경 추적 손실 경고 및 [취소]/[그래도 저장] UI 검증]');
+  console.log('--------------------------------------------------------------------------------');
+
+  const tcSample = TARGET_FILES[1]; // 한글C_업무계획_한글.hwpx (변경 추적 포함 문서)
+  const tcBuf = fs.readFileSync(path.join(SAMPLES_DIR, tcSample.name));
+  const tcDataUrl = `data:application/vnd.hancom.hwpx;base64,${tcBuf.toString('base64')}`;
+
+  await loadHwpDocumentInEditor(page, tcDataUrl, tcSample.name, port);
+  await performReplaceAll(page, '추진 배경', '추진 배경 및 필요성');
+
+  console.log('  1. 변경 추적 포함 문서 수정 후 bypass 없이 일반 저장 트리거...');
+  await page.evaluate(() => {
+    window.__SAVED_HWP__ = undefined;
+    window.__hwpEditorExecuteSave({ bypassTrackWarning: false });
+  });
+
+  // 경고 모달 표시 대기
+  await page.waitForSelector('#hwp-confirm-save-anyway-btn', { timeout: 5000 });
+  const warningText = await page.textContent('.fixed.inset-0 h3');
+  assertEqual(warningText, '변경 추적 손실 주의', '경고 모달 제목 확인');
+  console.log('  ✓ 변경 추적 경고 모달 표시 확인: "변경 추적 손실 주의"');
+
+  // [취소] 클릭 시 저장 중단 확인
+  console.log('  2. [취소] 버튼 클릭 시 저장 취소 검증...');
+  await page.click('#hwp-cancel-save-warning-btn');
+  await page.waitForTimeout(300);
+  const isSavedAfterCancel = await page.evaluate(() => window.__SAVED_HWP__);
+  assertEqual(Boolean(isSavedAfterCancel), false, '취소 시 저장이 실행되지 않아야 함');
+  console.log('  ✓ [취소] 클릭 시 저장되지 않고 편집 상태 유지 확인');
+
+  // 다시 저장 트리거 후 [그래도 저장] 클릭 시 저장 완료 확인
+  console.log('  3. [그래도 저장] 클릭 시 저장 성공 검증...');
+  await page.evaluate(() => {
+    window.__hwpEditorExecuteSave({ bypassTrackWarning: false });
+  });
+  await page.waitForSelector('#hwp-confirm-save-anyway-btn', { timeout: 5000 });
+  await page.click('#hwp-confirm-save-anyway-btn');
+  await page.waitForFunction(() => Boolean(window.__SAVED_HWP__), { timeout: 10000 });
+  const savedUrlAfterConfirm = await page.evaluate(() => window.__SAVED_HWP__);
+  assertTrue(Boolean(savedUrlAfterConfirm), '[그래도 저장] 클릭 시 저장 완료 확인');
+  console.log('  ✓ [그래도 저장] 클릭 시 정상적으로 저장 완료 확인');
 
   console.log('\n================================================================================');
   console.log('  [4단계 E2E 검증 종합 결과 (12/12 100% 통과)]');

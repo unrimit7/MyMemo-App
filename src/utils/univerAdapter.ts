@@ -733,23 +733,13 @@ function shiftAutoFilter(ws: ExcelJS.Worksheet, start: number, nExpand: number) 
     const newRef = `${c1}${r1}:${c2}${newR2}`;
     ws.autoFilter = newRef;
 
-    // 워크북 definedNames _xlnm._FilterDatabase 동기화
+    // 워크북 definedNames _xlnm._FilterDatabase 동기화 (단일 범위만 유지)
     const wb = ws.workbook;
     if (wb && (wb as any).definedNames && Array.isArray((wb as any).definedNames.model)) {
       (wb as any).definedNames.model.forEach((entry: any) => {
-        if (entry.name === '_xlnm._FilterDatabase' && Array.isArray(entry.ranges)) {
-          entry.ranges = entry.ranges.map((rangeStr: string) => {
-            const rangeMatch = rangeStr.match(/^(.*!\$?)([A-Za-z]+)\$?(\d+):\$?([A-Za-z]+)\$?(\d+)$/);
-            if (rangeMatch) {
-              const prefix = rangeMatch[1];
-              const rc1 = rangeMatch[2], rr1 = parseInt(rangeMatch[3], 10);
-              const rc2 = rangeMatch[4];
-              if (rr1 === r1 && rc1.toUpperCase() === c1.toUpperCase() && rc2.toUpperCase() === c2.toUpperCase()) {
-                return `${prefix}$${rc1}$${rr1}:$${rc2}$${newR2}`;
-              }
-            }
-            return rangeStr;
-          });
+        if (entry.name === '_xlnm._FilterDatabase') {
+          const sheetPrefix = (Array.isArray(entry.ranges) && entry.ranges[0]?.match(/^(.*!)/)?.[1]) || `'${ws.name}'!`;
+          entry.ranges = [`${sheetPrefix}$${c1}$${r1}:$${c2}$${newR2}`];
         }
       });
     }
@@ -1233,9 +1223,13 @@ async function cleanAndNormalizeWorkbookBuffer(
         const f1 = sheetFilterRefs.get('xl/worksheets/sheet1.xml');
         if (f1) {
           const newTarget = `$${f1.c1}$${f1.r1}:$${f1.c2}$${f1.r2}`;
-          const dnRegex = /(<definedName\b[^>]*name="_xlnm\._FilterDatabase"[^>]*>)([^<]*!)[^<]+(<\/definedName>)/;
+          const dnRegex = /(<definedName\b[^>]*name="_xlnm\._FilterDatabase"[^>]*>)([\s\S]*?)(<\/definedName>)/;
           if (dnRegex.test(wbXml)) {
-            const patchedWbXml = wbXml.replace(dnRegex, (_m, p1, p2, p3) => `${p1}${p2}${newTarget}${p3}`);
+            const patchedWbXml = wbXml.replace(dnRegex, (_m, p1, innerText, p3) => {
+              const prefixMatch = innerText.match(/^([^!]+!)/);
+              const prefix = prefixMatch ? prefixMatch[1] : '';
+              return `${p1}${prefix}${newTarget}${p3}`;
+            });
             if (patchedWbXml !== wbXml) {
               wbXml = patchedWbXml;
               wbChanged = true;
