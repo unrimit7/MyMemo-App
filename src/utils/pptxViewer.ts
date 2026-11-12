@@ -77,6 +77,8 @@ export interface PptxShapeElement {
   fillColor?: string;
   borderColor?: string;
   borderWidth?: number;
+  headEnd?: string;
+  tailEnd?: string;
   paragraphs: PptxParagraph[];
   isTitle?: boolean;
   verticalAlign?: 'top' | 'middle' | 'bottom';
@@ -479,8 +481,11 @@ function parseParagraph(
     else if (algnAttr === 'just') align = 'justify';
     else if (algnAttr === 'l') align = 'left';
 
+    const buNone = getElementsByLocalName(pPrList[0], 'buNone');
     const buChar = getElementsByLocalName(pPrList[0], 'buChar');
-    if (buChar.length > 0) {
+    if (buNone.length > 0) {
+      bulletChar = '';
+    } else if (buChar.length > 0) {
       bulletChar = buChar[0].getAttribute('char') || '•';
     }
   }
@@ -544,9 +549,18 @@ function parseParagraph(
             fontSize = Math.round(parseInt(szAttr, 10) / 100);
           }
 
-          color = parseDrawingColor(rPr, themeMap);
+          const solidFillList = getDirectChildrenByLocalName(rPr, 'solidFill');
+          if (solidFillList.length > 0) {
+            color = parseDrawingColor(solidFillList[0], themeMap);
+          } else {
+            const srgbList = getDirectChildrenByLocalName(rPr, 'srgbClr');
+            if (srgbList.length > 0) {
+              const val = srgbList[0].getAttribute('val');
+              if (val) color = `#${val}`;
+            }
+          }
 
-          const hlList = getElementsByLocalName(rPr, 'highlight');
+          const hlList = getDirectChildrenByLocalName(rPr, 'highlight');
           if (hlList.length > 0) {
             highlightColor = parseDrawingColor(hlList[0], themeMap) || '#FEF08A';
           }
@@ -1374,6 +1388,16 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
             const parsedP = parseParagraph(p, defaultAlign, themeMap, idx + 1);
             parsedP.shapeId = shapeId;
             parsedP.pIndex = pIdx;
+
+            // 레이아웃/마스터 상속 글머리 기호 처리
+            if (parsedP.bulletChar === undefined) {
+              const isBodyPh = hasPh && (phType === 'body' || phType === 'obj' || phIdx === '1' || phIdx === '2' || (!phType && Boolean(phIdx)));
+              if (isBodyPh && !isTitle && !isSlideNumber) {
+                parsedP.bulletChar = parsedP.level % 2 === 1 ? '–' : '•';
+              }
+            } else if (parsedP.bulletChar === '') {
+              parsedP.bulletChar = undefined;
+            }
             if (parsedP.text.trim()) {
               if (isTitle && !isSlideNumber) {
                 parsedP.isTitle = true;
@@ -1618,6 +1642,8 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
         if (coords) {
           let lineColor: string | undefined;
           let lineWidth: number | undefined;
+          let headEnd: string | undefined;
+          let tailEnd: string | undefined;
 
           const spPrList = getElementsByLocalName(item, 'spPr');
           if (spPrList.length > 0) {
@@ -1626,6 +1652,12 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
               lineColor = parseDrawingColor(lnList[0], themeMap) || '#334155';
               const wAttr = lnList[0].getAttribute('w');
               lineWidth = wAttr ? Math.max(1, Math.round(parseInt(wAttr, 10) / 12700)) : 1;
+
+              const tailEndEl = getElementsByLocalName(lnList[0], 'tailEnd')[0];
+              if (tailEndEl) tailEnd = tailEndEl.getAttribute('type') || 'triangle';
+
+              const headEndEl = getElementsByLocalName(lnList[0], 'headEnd')[0];
+              if (headEndEl) headEnd = headEndEl.getAttribute('type') || 'triangle';
             }
           }
 
@@ -1639,6 +1671,8 @@ export async function parsePptxPresentation(dataUrl: string): Promise<PptxPresen
             height: coords.height,
             borderColor: lineColor || '#334155',
             borderWidth: lineWidth || 1,
+            headEnd,
+            tailEnd,
             paragraphs: [],
             zIndex: zOrder++,
           });

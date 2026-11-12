@@ -600,6 +600,123 @@ function shiftRangeCols(ref: string, startCol: number, count: number): string {
   }
 }
 
+// 셀 주소 기준 데이터 유효성 검사 행 시프트 함수 (배열 분할/타입누락 방지)
+function shiftDataValidations(model: any, start: number, count: number): any {
+  const newModel: any = {};
+  if (!model) return newModel;
+
+  const colRules: Record<string, Array<{ row: number; rule: any }>> = {};
+  for (const [addr, rule] of Object.entries(model)) {
+    if (!rule || !(rule as any).type) continue;
+    const match = addr.match(/^([A-Z]+)([0-9]+)$/);
+    if (!match) continue;
+    const col = match[1];
+    const row = parseInt(match[2], 10);
+    if (!colRules[col]) colRules[col] = [];
+    colRules[col].push({ row, rule });
+  }
+
+  for (const [col, items] of Object.entries(colRules)) {
+    items.sort((a, b) => a.row - b.row);
+
+    if (count > 0) {
+      const prevRule = items.find((it) => it.row === start - 1)?.rule;
+      const nextRule = items.find((it) => it.row === start)?.rule;
+      const shouldFill = prevRule && nextRule && prevRule.type === nextRule.type;
+
+      for (const it of items) {
+        if (it.row < start) {
+          newModel[`${col}${it.row}`] = it.rule;
+        } else {
+          newModel[`${col}${it.row + count}`] = it.rule;
+        }
+      }
+
+      if (shouldFill) {
+        for (let r = 0; r < count; r++) {
+          newModel[`${col}${start + r}`] = prevRule;
+        }
+      }
+    } else if (count < 0) {
+      const delCount = -count;
+      const delEnd = start + delCount - 1;
+
+      for (const it of items) {
+        if (it.row < start) {
+          newModel[`${col}${it.row}`] = it.rule;
+        } else if (it.row > delEnd) {
+          newModel[`${col}${it.row - delCount}`] = it.rule;
+        }
+      }
+    } else {
+      for (const it of items) {
+        newModel[`${col}${it.row}`] = it.rule;
+      }
+    }
+  }
+
+  return newModel;
+}
+
+// 셀 주소 기준 데이터 유효성 검사 열 시프트 함수
+function shiftDataValidationsCols(model: any, startCol: number, count: number): any {
+  const newModel: any = {};
+  if (!model) return newModel;
+
+  const rowRules: Record<number, Array<{ col: number; rule: any }>> = {};
+  for (const [addr, rule] of Object.entries(model)) {
+    if (!rule || !(rule as any).type) continue;
+    const match = addr.match(/^([A-Z]+)([0-9]+)$/);
+    if (!match) continue;
+    const col = colToNum(match[1]);
+    const row = parseInt(match[2], 10);
+    if (!rowRules[row]) rowRules[row] = [];
+    rowRules[row].push({ col, rule });
+  }
+
+  for (const [rowStr, items] of Object.entries(rowRules)) {
+    const row = parseInt(rowStr, 10);
+    items.sort((a, b) => a.col - b.col);
+
+    if (count > 0) {
+      const prevRule = items.find((it) => it.col === startCol - 1)?.rule;
+      const nextRule = items.find((it) => it.col === startCol)?.rule;
+      const shouldFill = prevRule && nextRule && prevRule.type === nextRule.type;
+
+      for (const it of items) {
+        if (it.col < startCol) {
+          newModel[`${numToCol(it.col)}${row}`] = it.rule;
+        } else {
+          newModel[`${numToCol(it.col + count)}${row}`] = it.rule;
+        }
+      }
+
+      if (shouldFill) {
+        for (let c = 0; c < count; c++) {
+          newModel[`${numToCol(startCol + c)}${row}`] = prevRule;
+        }
+      }
+    } else if (count < 0) {
+      const delCount = -count;
+      const delEnd = startCol + delCount - 1;
+
+      for (const it of items) {
+        if (it.col < startCol) {
+          newModel[`${numToCol(it.col)}${row}`] = it.rule;
+        } else if (it.col > delEnd) {
+          newModel[`${numToCol(it.col - delCount)}${row}`] = it.rule;
+        }
+      }
+    } else {
+      for (const it of items) {
+        newModel[`${numToCol(it.col)}${row}`] = it.rule;
+      }
+    }
+  }
+
+  return newModel;
+}
+
 // 셀 메모, 데이터 유효성 검사, 조건부 서식 위치를 함께 보존·이동시키는 행 삽입/삭제 함수
 function safeSpliceRows(ws: ExcelJS.Worksheet, start: number, count: number, ...inserts: any[]) {
   const nInserts = inserts.length;
@@ -607,35 +724,35 @@ function safeSpliceRows(ws: ExcelJS.Worksheet, start: number, count: number, ...
   const nKeep = start + count;
   const nEnd = (ws as any)._rows?.length || ws.rowCount;
 
+  // 1. 데이터 유효성 검사 범위 이동 (배열 쪼개짐/타입 누락 방지)
+  if ((ws as any).dataValidations && (ws as any).dataValidations.model) {
+    (ws as any).dataValidations.model = shiftDataValidations((ws as any).dataValidations.model, start, nExpand);
+  }
+
+  // 2. 셀 메모(Note) 이동
   if (nExpand > 0) {
-    const rowMeta: Array<{ fromRow: number; toRow: number; cells: any[] }> = [];
+    const rowMeta: Array<{ toRow: number; notes: any[] }> = [];
     for (let i = nKeep; i <= nEnd; i++) {
       const r = (ws as any)._rows?.[i - 1];
       if (r) {
-        const cells: any[] = [];
+        const notes: any[] = [];
         r.eachCell({ includeEmpty: true }, (cell: any, cNum: number) => {
-          if (cell.note || cell.dataValidation) {
-            cells.push({
-              cNum,
-              note: cell.note,
-              dataValidation: cell.dataValidation,
-            });
+          if (cell.note) {
+            notes.push({ cNum, note: cell.note });
             cell.note = undefined;
             delete (cell as any)._comment;
-            cell.dataValidation = undefined;
           }
         });
-        rowMeta.push({ fromRow: i, toRow: i + nExpand, cells });
+        if (notes.length > 0) rowMeta.push({ toRow: i + nExpand, notes });
       }
     }
 
     ws.spliceRows(start, count, ...inserts);
 
-    rowMeta.forEach(({ toRow, cells }) => {
+    rowMeta.forEach(({ toRow, notes }) => {
       const dstRow = ws.getRow(toRow);
-      cells.forEach(({ cNum, note, dataValidation }) => {
-        if (note) dstRow.getCell(cNum).note = note;
-        if (dataValidation) dstRow.getCell(cNum).dataValidation = dataValidation;
+      notes.forEach(({ cNum, note }) => {
+        dstRow.getCell(cNum).note = note;
       });
     });
 
@@ -646,31 +763,28 @@ function safeSpliceRows(ws: ExcelJS.Worksheet, start: number, count: number, ...
     }
   } else if (nExpand < 0) {
     const delCount = -nExpand;
-    const rowMeta: Array<{ fromRow: number; toRow: number; cells: any[] }> = [];
+    const rowMeta: Array<{ toRow: number; notes: any[] }> = [];
     for (let i = nKeep; i <= nEnd; i++) {
       const r = (ws as any)._rows?.[i - 1];
       if (r) {
-        const cells: any[] = [];
+        const notes: any[] = [];
         r.eachCell({ includeEmpty: true }, (cell: any, cNum: number) => {
-          if (cell.note || cell.dataValidation) {
-            cells.push({
-              cNum,
-              note: cell.note,
-              dataValidation: cell.dataValidation,
-            });
+          if (cell.note) {
+            notes.push({ cNum, note: cell.note });
+            cell.note = undefined;
+            delete (cell as any)._comment;
           }
         });
-        rowMeta.push({ fromRow: i, toRow: i - delCount, cells });
+        if (notes.length > 0) rowMeta.push({ toRow: i - delCount, notes });
       }
     }
 
     ws.spliceRows(start, count, ...inserts);
 
-    rowMeta.forEach(({ toRow, cells }) => {
+    rowMeta.forEach(({ toRow, notes }) => {
       const dstRow = ws.getRow(toRow);
-      cells.forEach(({ cNum, note, dataValidation }) => {
-        if (note) dstRow.getCell(cNum).note = note;
-        if (dataValidation) dstRow.getCell(cNum).dataValidation = dataValidation;
+      notes.forEach(({ cNum, note }) => {
+        dstRow.getCell(cNum).note = note;
       });
     });
 
@@ -690,31 +804,33 @@ function safeSpliceColumns(ws: ExcelJS.Worksheet, start: number, count: number, 
   const nExpand = nInserts - count;
   const nKeep = start + count;
 
+  // 1. 데이터 유효성 검사 범위 이동
+  if ((ws as any).dataValidations && (ws as any).dataValidations.model) {
+    (ws as any).dataValidations.model = shiftDataValidationsCols((ws as any).dataValidations.model, start, nExpand);
+  }
+
+  // 2. 셀 메모 이동
   if (nExpand > 0) {
     const colMeta: any[] = [];
     ws.eachRow({ includeEmpty: true }, (row, rNum) => {
       row.eachCell({ includeEmpty: true }, (cell: any, cNum: number) => {
-        if (cNum >= start && (cell.note || cell.dataValidation)) {
+        if (cNum >= start && cell.note) {
           colMeta.push({
             rNum,
-            fromCol: cNum,
             toCol: cNum + nExpand,
             note: cell.note,
-            dataValidation: cell.dataValidation,
           });
           cell.note = undefined;
           delete (cell as any)._comment;
-          cell.dataValidation = undefined;
         }
       });
     });
 
     ws.spliceColumns(start, count, ...inserts);
 
-    colMeta.forEach(({ rNum, toCol, note, dataValidation }) => {
+    colMeta.forEach(({ rNum, toCol, note }) => {
       const cell = ws.getCell(rNum, toCol);
       if (note) cell.note = note;
-      if (dataValidation) cell.dataValidation = dataValidation;
     });
 
     if ((ws as any).conditionalFormattings) {
@@ -727,13 +843,11 @@ function safeSpliceColumns(ws: ExcelJS.Worksheet, start: number, count: number, 
     const colMeta: any[] = [];
     ws.eachRow({ includeEmpty: true }, (row, rNum) => {
       row.eachCell({ includeEmpty: true }, (cell: any, cNum: number) => {
-        if (cNum >= nKeep && (cell.note || cell.dataValidation)) {
+        if (cNum >= nKeep && cell.note) {
           colMeta.push({
             rNum,
-            fromCol: cNum,
             toCol: cNum - delCount,
             note: cell.note,
-            dataValidation: cell.dataValidation,
           });
         }
       });
@@ -741,10 +855,9 @@ function safeSpliceColumns(ws: ExcelJS.Worksheet, start: number, count: number, 
 
     ws.spliceColumns(start, count, ...inserts);
 
-    colMeta.forEach(({ rNum, toCol, note, dataValidation }) => {
+    colMeta.forEach(({ rNum, toCol, note }) => {
       const cell = ws.getCell(rNum, toCol);
       if (note) cell.note = note;
-      if (dataValidation) cell.dataValidation = dataValidation;
     });
 
     if ((ws as any).conditionalFormattings) {
@@ -1183,6 +1296,14 @@ export async function univerSnapshotToDataUrl(
       const modifiedRows = new Set<number>();
       modifiedRowsBySheet.set(sheetFileName, modifiedRows);
 
+      // 0-0. 기존 병합을 먼저 모두 해제하여 각 셀이 독립적인 상태로 연산 및 데이터를 쓸 수 있도록 준비
+      const existingMerges = [...((ws as any).model?.merges || [])];
+      for (const mStr of existingMerges) {
+        try {
+          (ws as any).unMergeCells(mStr);
+        } catch {}
+      }
+
       // 0. 행/열 구조 변경(삽입/삭제) In-Place 적용 (메모/유효성검사/조건부서식 함께 시프트)
       const sheetOps = (structuralOperations || []).filter(
         (op) =>
@@ -1203,14 +1324,6 @@ export async function univerSnapshotToDataUrl(
           safeSpliceColumns(ws, op.start, op.count);
         }
       });
-
-      // 0-0. 기존 병합을 먼저 모두 해제하여 각 셀이 독립적인 상태로 데이터를 쓸 수 있도록 준비
-      const existingMerges = [...((ws as any).model?.merges || [])];
-      for (const mStr of existingMerges) {
-        try {
-          (ws as any).unMergeCells(mStr);
-        } catch {}
-      }
 
       // 0-1. Univer 스냅샷의 현재 병합 목록(uSheet.mergeData)을 기준으로 슬레이브 셀 좌표 Set 구축
       const currentSlaveCells = new Set<string>();
@@ -1361,54 +1474,76 @@ export async function univerSnapshotToDataUrl(
           if (cell.s) {
             const styleObj = typeof cell.s === 'string' ? styles[cell.s] : (cell.s as IStyleData);
             if (styleObj) {
-              // 폰트 (기존 폰트 속성 유지하며 변경된 항목만 덮어씀)
+              // 폰트 (실제로 변경된 경우에만 덮어써 cellXfs 인덱스 불필요 변경 방지)
               if (styleObj.ff || styleObj.fs || styleObj.bl || styleObj.it || styleObj.cl) {
-                excelCell.font = {
-                  ...(excelCell.font || {}),
-                  name: styleObj.ff || excelCell.font?.name,
-                  size: styleObj.fs || excelCell.font?.size,
-                  bold: styleObj.bl === 1,
-                  italic: styleObj.it === 1,
-                  color: styleObj.cl?.rgb ? { argb: hexToArgb(styleObj.cl.rgb) } : excelCell.font?.color,
-                };
+                const curFont = excelCell.font || {};
+                const fontSame =
+                  (!styleObj.ff || curFont.name === styleObj.ff) &&
+                  (!styleObj.fs || curFont.size === styleObj.fs) &&
+                  (Boolean(curFont.bold) === (styleObj.bl === 1)) &&
+                  (Boolean(curFont.italic) === (styleObj.it === 1));
+                if (!fontSame || (styleObj.cl?.rgb && curFont.color?.argb !== hexToArgb(styleObj.cl.rgb))) {
+                  excelCell.font = {
+                    ...curFont,
+                    name: styleObj.ff || curFont.name,
+                    size: styleObj.fs || curFont.size,
+                    bold: styleObj.bl === 1,
+                    italic: styleObj.it === 1,
+                    color: styleObj.cl?.rgb ? { argb: hexToArgb(styleObj.cl.rgb) } : curFont.color,
+                  };
+                }
               }
 
               // 배경색
               if (styleObj.bg?.rgb) {
-                excelCell.fill = {
-                  type: 'pattern',
-                  pattern: 'solid',
-                  fgColor: { argb: hexToArgb(styleObj.bg.rgb) },
-                };
+                const curFill = excelCell.fill as any;
+                const newArgb = hexToArgb(styleObj.bg.rgb);
+                if (curFill?.fgColor?.argb !== newArgb) {
+                  excelCell.fill = {
+                    type: 'pattern',
+                    pattern: 'solid',
+                    fgColor: { argb: newArgb },
+                  };
+                }
               }
 
               // 정렬
               if (styleObj.ht || styleObj.vt || styleObj.tb) {
-                excelCell.alignment = {
-                  ...(excelCell.alignment || {}),
-                  horizontal:
-                    styleObj.ht === HorizontalAlign.CENTER
-                      ? 'center'
-                      : styleObj.ht === HorizontalAlign.RIGHT
-                      ? 'right'
-                      : styleObj.ht === HorizontalAlign.LEFT
-                      ? 'left'
-                      : excelCell.alignment?.horizontal,
-                  vertical:
-                    styleObj.vt === VerticalAlign.MIDDLE
-                      ? 'middle'
-                      : styleObj.vt === VerticalAlign.TOP
-                      ? 'top'
-                      : styleObj.vt === VerticalAlign.BOTTOM
-                      ? 'bottom'
-                      : excelCell.alignment?.vertical,
-                  wrapText: styleObj.tb === WrapStrategy.WRAP,
-                };
+                const curAlign = excelCell.alignment || {};
+                const newH =
+                  styleObj.ht === HorizontalAlign.CENTER
+                    ? 'center'
+                    : styleObj.ht === HorizontalAlign.RIGHT
+                    ? 'right'
+                    : styleObj.ht === HorizontalAlign.LEFT
+                    ? 'left'
+                    : curAlign.horizontal;
+                const newV =
+                  styleObj.vt === VerticalAlign.MIDDLE
+                    ? 'middle'
+                    : styleObj.vt === VerticalAlign.TOP
+                    ? 'top'
+                    : styleObj.vt === VerticalAlign.BOTTOM
+                    ? 'bottom'
+                    : curAlign.vertical;
+                const newWrap = styleObj.tb === WrapStrategy.WRAP;
+                if (curAlign.horizontal !== newH || curAlign.vertical !== newV || Boolean(curAlign.wrapText) !== newWrap) {
+                  excelCell.alignment = {
+                    ...curAlign,
+                    horizontal: newH,
+                    vertical: newV,
+                    wrapText: newWrap,
+                  };
+                }
               }
 
               // 표시 형식
               if (styleObj.n?.pattern) {
-                excelCell.numFmt = styleObj.n.pattern;
+                // 원본에 표시 형식이 없었던(General) 수식 셀은 Univer 수식 엔진이 참조 셀로부터 유추한 임의의 서식을 덮어쓰지 않음
+                const isFormulaWithoutOrigFmt = isLoadedFromOriginal && (!excelCell.numFmt || excelCell.numFmt === 'General') && (cell.f || !excelCell.value);
+                if (!isFormulaWithoutOrigFmt && excelCell.numFmt !== styleObj.n.pattern) {
+                  excelCell.numFmt = styleObj.n.pattern;
+                }
               }
             }
           }

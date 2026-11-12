@@ -168,54 +168,57 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
         let isInitial = true;
         setTimeout(() => {
           isInitial = false;
-        }, 800);
+        }, 100);
 
         const commandService = (univerAPI as any)._commandService;
         let disposable: any = null;
         if (commandService && typeof commandService.onCommandExecuted === 'function') {
           disposable = commandService.onCommandExecuted((cmd: any) => {
-            if (!isInitial && !isDisposed) {
+            if (isDisposed) return;
+            if (!isInitial) {
               setHasChanges(true);
+            }
 
-              // 행/열 삽입 및 삭제 mutation 감지하여 In-Place 패치용 큐에 기록 (mutation ID 정확 매칭)
-              const id = cmd?.id || '';
-              const range = cmd?.params?.range;
-              const subUnitId = cmd.params?.subUnitId;
+            // 행/열 삽입 및 삭제 mutation 감지하여 In-Place 패치용 큐에 기록 (mutation ID 정확 매칭)
+            const id = cmd?.id || '';
+            const range = cmd?.params?.range;
+            const subUnitId = cmd.params?.subUnitId;
 
-              if (range) {
-                let op: StructuralOperation | null = null;
-                if (id === 'sheet.mutation.insert-row') {
-                  op = {
-                    type: 'insertRow',
-                    subUnitId,
-                    start: range.startRow + 1,
-                    count: range.endRow - range.startRow + 1,
-                  };
-                } else if (id === 'sheet.mutation.remove-rows') {
-                  op = {
-                    type: 'removeRow',
-                    subUnitId,
-                    start: range.startRow + 1,
-                    count: range.endRow - range.startRow + 1,
-                  };
-                } else if (id === 'sheet.mutation.insert-col') {
-                  op = {
-                    type: 'insertCol',
-                    subUnitId,
-                    start: range.startColumn + 1,
-                    count: range.endColumn - range.startColumn + 1,
-                  };
-                } else if (id === 'sheet.mutation.remove-col') {
-                  op = {
-                    type: 'removeCol',
-                    subUnitId,
-                    start: range.startColumn + 1,
-                    count: range.endColumn - range.startColumn + 1,
-                  };
-                }
+            if (range) {
+              let op: StructuralOperation | null = null;
+              if (id === 'sheet.mutation.insert-row') {
+                op = {
+                  type: 'insertRow',
+                  subUnitId,
+                  start: range.startRow + 1,
+                  count: range.endRow - range.startRow + 1,
+                };
+              } else if (id === 'sheet.mutation.remove-rows') {
+                op = {
+                  type: 'removeRow',
+                  subUnitId,
+                  start: range.startRow + 1,
+                  count: range.endRow - range.startRow + 1,
+                };
+              } else if (id === 'sheet.mutation.insert-col') {
+                op = {
+                  type: 'insertCol',
+                  subUnitId,
+                  start: range.startColumn + 1,
+                  count: range.endColumn - range.startColumn + 1,
+                };
+              } else if (id === 'sheet.mutation.remove-col') {
+                op = {
+                  type: 'removeCol',
+                  subUnitId,
+                  start: range.startColumn + 1,
+                  count: range.endColumn - range.startColumn + 1,
+                };
+              }
 
-                if (op) {
-                  // 실행 취소(Undo) / 다시 실행(Redo) 시 반대 연산 상쇄 처리
+              if (op) {
+                setHasChanges(true);
+                // 실행 취소(Undo) / 다시 실행(Redo) 시 반대 연산 상쇄 처리
                   const ops = structuralOpsRef.current;
                   if (ops.length > 0) {
                     const lastOp = ops[ops.length - 1];
@@ -241,9 +244,8 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
                   ops.push(op);
                 }
               }
-            }
-          });
-        }
+            });
+          }
 
         return () => {
           resizeObserver.disconnect();

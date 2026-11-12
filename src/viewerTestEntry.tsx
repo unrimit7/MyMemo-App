@@ -21,19 +21,26 @@ export function TestApp() {
   const [title, setTitle] = useState<string>('Test Presentation');
   const [mode, setMode] = useState<'viewer' | 'editor' | 'excel'>('viewer');
   const [isOpen, setIsOpen] = useState<boolean>(false);
+  const [renderKey, setRenderKey] = useState<number>(0);
 
   useEffect(() => {
     window.__loadPptx = async (dataUrl: string, presTitle: string, presMode: 'viewer' | 'editor' = 'viewer') => {
+      setIsOpen(false);
+      await new Promise(r => setTimeout(r, 30));
       setData(dataUrl);
       setTitle(presTitle);
       setMode(presMode);
+      setRenderKey(k => k + 1);
       setIsOpen(true);
     };
 
     window.__loadExcel = async (dataUrl: string, excelTitle: string) => {
+      setIsOpen(false);
+      await new Promise(r => setTimeout(r, 30));
       setData(dataUrl);
       setTitle(excelTitle);
       setMode('excel');
+      setRenderKey(k => k + 1);
       setIsOpen(true);
     };
   }, []);
@@ -51,6 +58,7 @@ export function TestApp() {
     <div className="w-screen h-screen">
       {mode === 'viewer' ? (
         <PptxViewerModal
+          key={renderKey}
           isOpen={isOpen}
           onClose={() => setIsOpen(false)}
           data={data}
@@ -58,6 +66,7 @@ export function TestApp() {
         />
       ) : mode === 'editor' ? (
         <PptxEditorModal
+          key={renderKey}
           isOpen={isOpen}
           onClose={() => setIsOpen(false)}
           data={data}
@@ -68,6 +77,7 @@ export function TestApp() {
         />
       ) : (
         <ExcelEditorModal
+          key={renderKey}
           isOpen={isOpen}
           onClose={() => setIsOpen(false)}
           data={data}

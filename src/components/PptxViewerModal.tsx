@@ -226,6 +226,10 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
       // 1. 연결선 / 구분선 렌더링
       if (el.shapeType === 'line') {
         const isHoriz = el.height <= 0.8;
+        const lineColor = el.borderColor || el.fillColor || (isDark ? '#64748B' : '#334155');
+        const lineWidth = Math.max(1, el.borderWidth || 1);
+        const arrowSize = Math.max(5, lineWidth * 3);
+
         return (
           <div
             key={el.id}
@@ -234,20 +238,49 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
               left: `${el.left}%`,
               top: `${el.top}%`,
               width: `${Math.max(0.1, el.width)}%`,
-              height: isHoriz ? `${Math.max(1, el.borderWidth || 1)}px` : `${Math.max(0.1, el.height)}%`,
-              backgroundColor: el.borderColor || el.fillColor || (isDark ? '#64748B' : '#334155'),
+              height: isHoriz ? `${lineWidth}px` : `${Math.max(0.1, el.height)}%`,
+              backgroundColor: lineColor,
               zIndex: el.zIndex,
+              overflow: 'visible',
             }}
-          />
+          >
+            {isHoriz && el.tailEnd && (
+              <div
+                style={{
+                  position: 'absolute',
+                  right: -arrowSize,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  width: 0,
+                  height: 0,
+                  borderTop: `${arrowSize}px solid transparent`,
+                  borderBottom: `${arrowSize}px solid transparent`,
+                  borderLeft: `${Math.round(arrowSize * 1.5)}px solid ${lineColor}`,
+                }}
+              />
+            )}
+            {isHoriz && el.headEnd && (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: -arrowSize,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  width: 0,
+                  height: 0,
+                  borderTop: `${arrowSize}px solid transparent`,
+                  borderBottom: `${arrowSize}px solid transparent`,
+                  borderRight: `${Math.round(arrowSize * 1.5)}px solid ${lineColor}`,
+                }}
+              />
+            )}
+          </div>
         );
       }
 
       const hasBg = Boolean(el.fillColor && el.fillColor !== 'transparent');
       const isDarkBg = hasBg && isDarkColor(el.fillColor!);
       const isRightArrow = el.shapeType === 'rightArrow';
-      const clipPath = isRightArrow
-        ? 'polygon(0% 25%, 65% 25%, 65% 0%, 100% 50%, 65% 100%, 65% 75%, 0% 75%)'
-        : undefined;
 
       const renderParagraph = (p: PptxParagraph, pIdx: number) => {
         const textAlign: any = p.align || 'left';
@@ -287,7 +320,7 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
             {p.runs.map((r: PptxTextRun, rIdx: number) => {
               const textColor =
                 r.color ||
-                (hasBg ? (isDarkBg ? '#FFFFFF' : '#0F172A') : isDark ? '#F1F5F9' : '#0F172A');
+                (r.highlightColor ? '#000000' : hasBg ? (isDarkBg ? '#FFFFFF' : '#0F172A') : isDark ? '#F1F5F9' : '#0F172A');
               const fontSize = r.fontSize
                 ? `${Math.max(10, Math.min(32, r.fontSize * 0.8))}px`
                 : el.isTitle
@@ -346,12 +379,16 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                 : undefined,
             borderRadius: isRightArrow
               ? undefined
+              : el.shapeType === 'ellipse'
+              ? '50%'
               : el.isRounded
               ? '16px'
-              : el.shapeType === 'ellipse'
-              ? '9999px'
               : '3px',
-            clipPath,
+            clipPath: isRightArrow
+              ? 'polygon(0% 25%, 65% 25%, 65% 0%, 100% 50%, 65% 100%, 65% 75%, 0% 75%)'
+              : el.shapeType === 'ellipse'
+              ? 'ellipse(50% 50% at 50% 50%)'
+              : undefined,
             zIndex: el.zIndex,
             overflow: 'hidden',
             display: 'flex',
@@ -1052,11 +1089,6 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
 
                     {/* 모든 2D 엘리먼트 (도형, 표, 이미지, 차트) 좌표 배치 */}
                     {currentSlide.elements.map((el) => renderCanvasElement(el, isDarkMode))}
-
-                    {/* 하단 우측 슬라이드 번호 */}
-                    <div className="absolute bottom-2 right-4 text-[10px] text-slate-400 font-mono z-20 pointer-events-none">
-                      {currentSlide.slideNumber}
-                    </div>
                   </div>
                   {currentSlide.notes && !isSlideShow && (
                     <div className="mt-3 p-3 bg-slate-900/90 border border-slate-700/80 rounded-xl text-xs text-slate-200 max-w-2xl w-full shadow-lg">

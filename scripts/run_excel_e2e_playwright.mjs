@@ -391,6 +391,21 @@ async function main() {
     const targetCellA = insWs.getCell(`A${insertRowIndex + 1}`).value;
     assertEqual(targetCellA, '신규삽입행', `${item.name}: 삽입된 행 데이터 확인`);
 
+    if (item.isA) {
+      // 실파일A: 유효성 검사 범위가 C4:C14, F4:F14로 정상 확장되고 빈 규칙(type 없음)이 없는지 확인
+      const dvModel = insWs.dataValidations?.model || {};
+      const dvKeys = Object.keys(dvModel);
+      assertTrue(dvKeys.length === 22, `${item.name}: 행 삽입 후 유효성 검사 셀 수 22개 (C4:C14, F4:F14)`);
+      for (const [k, r] of Object.entries(dvModel)) {
+        assertTrue(Boolean(r && r.type), `${item.name}: 유효성 검사 규칙 ${k}에 type 정상 존재`);
+      }
+    } else {
+      // 실파일B: 비고 병합이 B21:H24로 이동하여 유지되고 슬레이브 셀 중복 기록이 없는지 확인
+      assertTrue(insWs.getCell('B21').isMerged && insWs.getCell('B21').master.address === 'B21', `${item.name}: B21 비고 마스터 병합 유지`);
+      assertTrue(insWs.getCell('H24').isMerged && insWs.getCell('H24').master.address === 'B21', `${item.name}: H24 비고 슬레이브 병합 유지`);
+      assertEqual(insWs.getCell('C21').value, insWs.getCell('B21').value, `${item.name}: C21 병합 마스터 참조 일치`);
+    }
+
     // 다시 행 삭제하여 원복 저장
     await page.evaluate(async (rIdx) => {
       const sheet = window.__excelUniverAPI.getActiveWorkbook().getActiveSheet();
@@ -409,13 +424,30 @@ async function main() {
     fs.writeFileSync(outPath4, savedBuf4);
     console.log(`    -> 행 삭제 원복 저장 완료: ${path.basename(outPath4)} (${savedBuf4.length.toLocaleString()} 바이트)`);
 
-    const delWb = new ExcelJS.Workbook();
-    await delWb.xlsx.load(savedBuf4);
-    const delWs = delWb.getWorksheet(1);
-    if (!item.isA) {
-      assertTrue(delWs.getColumn('H').hidden === true, `${item.name}: 행 삭제 후에도 H열 hidden=true 유지`);
+    // [검증 1] "삽입->삭제 후 원본과 완전히 같음" 전수 검증
+    await verifyZeroChange(origBuf, savedBuf4, `${item.name} (삭제원복)`, item.isA, item.isMS);
+    console.log(`    ✓ 검증 통과: 1행 삽입 후 삭제 원복 시 모든 셀 값·수식·병합·유효성·글꼴이 원본과 100% 동일`);
+
+    // [검증 2] "다른 시트 셀 서식 불변" 검증
+    if (item.isA) {
+      const delWb = new ExcelJS.Workbook();
+      await delWb.xlsx.load(savedBuf4);
+      const wsDept = delWb.getWorksheet('부서코드');
+      const wsSumm = delWb.getWorksheet('요약');
+
+      // 부서코드 A2:B6 cell numFmt 불변 (General / undefined)
+      for (let r = 2; r <= 6; r++) {
+        assertEqual(wsDept.getCell(`A${r}`).numFmt, undefined, `${item.name}: 부서코드!A${r} 표시 형식 불변 (General)`);
+        assertEqual(wsDept.getCell(`B${r}`).numFmt, undefined, `${item.name}: 부서코드!B${r} 표시 형식 불변 (General)`);
+      }
+
+      // 요약 B2 cell numFmt 불변 (General / undefined), B4는 #,##0"원" 유지
+      assertEqual(wsSumm.getCell('B2').numFmt, undefined, `${item.name}: 요약!B2 표시 형식 불변 (General)`);
+      assertEqual(wsSumm.getCell('B4').numFmt, '#,##0"원"', `${item.name}: 요약!B4 표시 형식 #,##0"원" 유지`);
+      console.log(`    ✓ 검증 통과: 다른 시트(부서코드, 요약)의 셀 표시 형식(General) 완벽 불변 확인\n`);
+    } else {
+      console.log(`    ✓ 검증 통과: 실파일B 견적서 행 삭제 원복 및 H열 숨김/수식 완벽 복원 확인\n`);
     }
-    console.log(`    ✓ 검증 통과: 행 삽입 시 데이터 1행 시프트 및 삭제 시 원복 정상 동작 확인\n`);
   }
 
   await browser.close();
