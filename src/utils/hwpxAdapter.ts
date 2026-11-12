@@ -182,28 +182,38 @@ export async function postProcessHwpx(
 
         let sectionChanged = false;
 
-        const count = Math.min(expParas.length, origParas.length);
-        for (let idx = 0; idx < count; idx++) {
-          const expP = expParas[idx];
-          const origP = origParas[idx];
+        // 1. 문단 텍스트 빈도 맵 구성 (구역/헤더/문단 순서 불일치 방지)
+        const origTextFreq = new Map<string, number>();
+        for (const p of origParas) {
+          const txt = getDirectParaText(p);
+          origTextFreq.set(txt, (origTextFreq.get(txt) || 0) + 1);
+        }
 
-          const expText = getDirectParaText(expP);
-          const origText = getDirectParaText(origP);
-
-          if (expText !== origText) {
-            // 직계 linesegarray만 선별 제거
+        // 2. 텍스트가 실제로 변경된 문단만 직계 linesegarray 선별 제거
+        for (const expP of expParas) {
+          const txt = getDirectParaText(expP);
+          const remaining = origTextFreq.get(txt) || 0;
+          if (remaining > 0) {
+            origTextFreq.set(txt, remaining - 1);
+          } else {
             if (removeDirectLineSegArray(expP)) {
               sectionChanged = true;
             }
-          } else {
-            // 직계 텍스트가 수정되지 않은 문단:
-            // 원본 문단에 변경 추적 마크업(deleteBegin/insertBegin)이 있는 경우 원본 문단 노드로 복원
-            const origPXml = serializer.serializeToString(origP);
-            if (origPXml.includes('deleteBegin') || origPXml.includes('insertBegin')) {
-              if (expP.parentNode) {
-                expP.parentNode.replaceChild(origP, expP);
-                sectionChanged = true;
-              }
+          }
+        }
+
+        // 3. 미수정 문단 중 변경 추적 마크업(deleteBegin/insertBegin) 복원 (텍스트 기준 매칭)
+        for (const origP of origParas) {
+          const origPXml = serializer.serializeToString(origP);
+          if (origPXml.includes('deleteBegin') || origPXml.includes('insertBegin')) {
+            const origText = getDirectParaText(origP);
+            const targetExpP = expParas.find((p) => {
+              const pXml = serializer.serializeToString(p);
+              return getDirectParaText(p) === origText && !pXml.includes('deleteBegin') && !pXml.includes('insertBegin');
+            });
+            if (targetExpP && targetExpP.parentNode) {
+              targetExpP.parentNode.replaceChild(origP, targetExpP);
+              sectionChanged = true;
             }
           }
         }

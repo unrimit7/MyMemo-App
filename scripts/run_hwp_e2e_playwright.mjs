@@ -318,6 +318,19 @@ async function main() {
       }
       assertTrue(modifiedFound, `${item.name}: 수정된 문단 '추진 배경 및 필요성' 반영 확인`);
       console.log(`    ✓ HWPX 검증: 수정한 문단만 변경 & linesegarray 제거됨, 나머지 미수정 문단(유지: ${untouchedWithLs}개) 원본 보존`);
+
+      // 수정하지 않은 변경 추적 문단의 insertBegin/deleteBegin 개수 유지 검증
+      const origSec0Xml = await origZip.file('Contents/section0.xml').async('text');
+      const origInsCount = (origSec0Xml.match(/<hp:insertBegin\b/g) || []).length;
+      const origDelCount = (origSec0Xml.match(/<hp:deleteBegin\b/g) || []).length;
+      const savedInsCount = (sec0Xml.match(/<hp:insertBegin\b/g) || []).length;
+      const savedDelCount = (sec0Xml.match(/<hp:deleteBegin\b/g) || []).length;
+
+      if (origInsCount > 0 || origDelCount > 0) {
+        assertEqual(savedInsCount, origInsCount, `${item.name}: 수정하지 않은 변경 추적 문단의 insertBegin 개수 유지 (${origInsCount}개)`);
+        assertEqual(savedDelCount, origDelCount, `${item.name}: 수정하지 않은 변경 추적 문단의 deleteBegin 개수 유지 (${origDelCount}개)`);
+        console.log(`    ✓ HWPX 검증: 미수정 변경 추적 마크업 유지 (insertBegin: ${savedInsCount}개, deleteBegin: ${savedDelCount}개)`);
+      }
     } else {
       const savedDoc = new HwpDocument(savedBuf2);
       const text = savedDoc.getTextFileText();
@@ -371,6 +384,20 @@ async function main() {
       } else {
         console.log(`    ✓ HWPX 검증: 표 셀 텍스트 '영업기획' 성공적 치환 및 기타 구조 보존`);
       }
+
+      // 수정하지 않은 변경 추적 문단의 insertBegin/deleteBegin 개수 유지 검증
+      const origZip = await JSZip.loadAsync(origBuf);
+      const origSec0Xml = await origZip.file('Contents/section0.xml').async('text');
+      const origInsCount = (origSec0Xml.match(/<hp:insertBegin\b/g) || []).length;
+      const origDelCount = (origSec0Xml.match(/<hp:deleteBegin\b/g) || []).length;
+      const savedInsCount = (sec0Xml.match(/<hp:insertBegin\b/g) || []).length;
+      const savedDelCount = (sec0Xml.match(/<hp:deleteBegin\b/g) || []).length;
+
+      if (origInsCount > 0 || origDelCount > 0) {
+        assertEqual(savedInsCount, origInsCount, `${item.name}: 수정하지 않은 변경 추적 문단의 insertBegin 개수 유지 (${origInsCount}개)`);
+        assertEqual(savedDelCount, origDelCount, `${item.name}: 수정하지 않은 변경 추적 문단의 deleteBegin 개수 유지 (${origDelCount}개)`);
+        console.log(`    ✓ HWPX 검증: 미수정 변경 추적 마크업 유지 (insertBegin: ${savedInsCount}개, deleteBegin: ${savedDelCount}개)`);
+      }
     } else {
       const savedDoc = new HwpDocument(savedBuf3);
       const text = savedDoc.getTextFileText();
@@ -411,9 +438,13 @@ async function main() {
 
   // 경고 모달 표시 대기
   await page.waitForSelector('#hwp-confirm-save-anyway-btn', { timeout: 5000 });
-  const warningText = await page.textContent('.fixed.inset-0 h3');
-  assertEqual(warningText, '변경 추적 손실 주의', '경고 모달 제목 확인');
-  console.log('  ✓ 변경 추적 경고 모달 표시 확인: "변경 추적 손실 주의"');
+  const warningText = await page.evaluate(() => {
+    const btn = document.querySelector('#hwp-confirm-save-anyway-btn');
+    return btn?.closest('.rounded-2xl')?.textContent || '';
+  });
+  assertTrue(warningText.includes('변경 추적 손실 주의'), '경고 모달 제목 확인');
+  assertTrue(warningText.includes('이 문서에서는 변경 추적이 일반 텍스트로 합쳐집니다'), '경고 모달 문구 확인');
+  console.log('  ✓ 변경 추적 경고 모달 표시 확인: "변경 추적 손실 주의" ("이 문서에서는 변경 추적이 일반 텍스트로 합쳐집니다")');
 
   // [취소] 클릭 시 저장 중단 확인
   console.log('  2. [취소] 버튼 클릭 시 저장 취소 검증...');
