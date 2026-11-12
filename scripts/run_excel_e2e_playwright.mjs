@@ -225,6 +225,8 @@ async function main() {
     headless: true,
   });
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  page.on('console', (msg) => console.log('[Browser Console]', msg.type(), msg.text()));
+  page.on('pageerror', (err) => console.log('[Browser PageError]', err));
   await page.goto(`http://localhost:${port}/viewer_test.html`);
   console.log('2. Playwright Chrome 브라우저 실행 및 viewer_test.html 로드 완료\n');
 

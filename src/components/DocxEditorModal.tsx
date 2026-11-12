@@ -20,6 +20,7 @@ import {
   FileText,
   Eye,
   Edit3,
+  FolderDown,
 } from 'lucide-react';
 import { SuperDoc } from 'superdoc';
 import 'superdoc/style.css';
@@ -28,6 +29,21 @@ import { extractDocxTextAndHtml, generateDocxDataUrl } from '../utils/docxViewer
 import { detectDocxUnsupportedFeatures, type DocxUnsupportedFeatureReport } from '../utils/docxLossDetector';
 import { marked } from 'marked';
 import { useFloatingWindow } from './useFloatingWindow';
+import {
+  saveOfficeDraft,
+  getOfficeDraft,
+  deleteOfficeDraft,
+  computeDataHash,
+  type OfficeDraft,
+} from '../utils/draftStorage';
+import { useOfficeShortcuts } from '../utils/useOfficeShortcuts';
+import { saveFileAs } from '../utils/fileSavePicker';
+import {
+  type FileHandleContext,
+  checkFileHandleConflict,
+  ensureOriginalBackup,
+  saveToFileHandle,
+} from '../utils/fileHandleSaver';
 
 interface DocxEditorModalProps {
   isOpen: boolean;
@@ -38,6 +54,7 @@ interface DocxEditorModalProps {
   originalData?: string;
   originalDate?: string;
   initialEngine?: 'superdoc' | 'legacy';
+  fileHandle?: any;
   onSave?: (updatedDataUrl: string, engine?: 'superdoc' | 'legacy') => Promise<void> | void;
   onRestoreOriginal?: () => Promise<void> | void;
 }
@@ -58,9 +75,11 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
   onClose,
   data,
   title,
+  attId,
   originalData,
   originalDate,
   initialEngine = 'superdoc',
+  fileHandle,
   onSave,
   onRestoreOriginal,
 }) => {
@@ -78,6 +97,114 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
   const [showRestoreConfirm, setShowRestoreConfirm] = useState<boolean>(false);
   const [showLossWarningModal, setShowLossWarningModal] = useState<boolean>(false);
   const [lossReport, setLossReport] = useState<DocxUnsupportedFeatureReport | null>(null);
+
+  // 5단계 임시본 복구 모달 및 파일 핸들러 충돌 모달 상태
+  const draftKey = `docx_${attId || ''}_${title}`;
+  const [draftToRecover, setDraftToRecover] = useState<OfficeDraft | null>(null);
+  const [showDraftRecoveryModal, setShowDraftRecoveryModal] = useState<boolean>(false);
+  const [showFileConflictModal, setShowFileConflictModal] = useState<boolean>(false);
+  const fileContextRef = useRef<FileHandleContext | null>(null);
+
+  // FileHandle 초기화
+  useEffect(() => {
+    if (!fileHandle) return;
+    (async () => {
+      try {
+        const file = await fileHandle.getFile();
+        fileContextRef.current = {
+          handle: fileHandle,
+          initialSize: file.size,
+          initialLastModified: file.lastModified,
+          fileName: title,
+        };
+      } catch (err) {
+        console.warn('FileHandle 초기화 실패:', err);
+      }
+    })();
+  }, [fileHandle, title]);
+
+  // 임시본 검사 및 원본 해시 일치 판별 (불일치 시 자동 폐기)
+  useEffect(() => {
+    if (!isOpen || !data) return;
+    let isCancelled = false;
+
+    (async () => {
+      const draft = await getOfficeDraft(draftKey);
+      if (!draft || isCancelled) return;
+
+      const currentHash = await computeDataHash(data);
+      if (draft.baseOriginalHash !== currentHash) {
+        await deleteOfficeDraft(draftKey);
+      } else {
+        setDraftToRecover(draft);
+        setShowDraftRecoveryModal(true);
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOpen, data, draftKey]);
+
+  // 30초 주기 + visibilitychange / blur 자동 저장
+  useEffect(() => {
+    if (!isOpen || !hasChanges) return;
+
+    let autoSaveIntervalMs = 30000;
+
+    const performDraftSave = async () => {
+      if (!hasChanges) return;
+      try {
+        const t0 = performance.now();
+        let draftData: any = content;
+        if (engine === 'superdoc' && superdocRef.current) {
+          draftData = (superdocRef.current as any).editor?.getJSON?.() || (superdocRef.current as any).getContent?.() || content;
+        }
+        const duration = performance.now() - t0;
+        const baseHash = await computeDataHash(data);
+        const dataStr = typeof draftData === 'string' ? draftData : JSON.stringify(draftData);
+
+        await saveOfficeDraft({
+          draftKey,
+          attId,
+          title,
+          fileType: 'docx',
+          baseOriginalHash: baseHash,
+          data: draftData,
+          dataType: engine === 'superdoc' ? 'superdoc_json' : 'data_url',
+          updatedAt: Date.now(),
+          byteLength: dataStr.length,
+          saveDurationMs: Math.round(duration),
+        });
+
+        if (duration >= 1000) {
+          autoSaveIntervalMs = 60000;
+        }
+      } catch (err) {
+        console.warn('[Docx] 임시본 자동 저장 오류:', err);
+      }
+    };
+
+    const interval = setInterval(performDraftSave, autoSaveIntervalMs);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        performDraftSave();
+      }
+    };
+    const handleBlur = () => {
+      performDraftSave();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('blur', handleBlur);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, [isOpen, hasChanges, draftKey, attId, title, data, engine, content]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const superdocRef = useRef<SuperDoc | null>(null);
@@ -110,17 +237,7 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [hasChanges]);
 
-  // 단축키 (Ctrl+S / Cmd+S)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
-        e.preventDefault();
-        triggerSave();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  });
+
 
   // 레거시 마크다운 편집기 내용 추출
   useEffect(() => {
@@ -280,6 +397,32 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
       if (onSave) {
         await onSave(updatedDataUrl, engine);
       }
+
+      // 5단계 임시본 정리
+      await deleteOfficeDraft(draftKey);
+
+      // FileHandle 연동 (PWA 파일 연결)
+      if (fileContextRef.current) {
+        const base64 = data.split(',')[1] || '';
+        const binary = atob(base64);
+        const origBytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) origBytes[i] = binary.charCodeAt(i);
+        await ensureOriginalBackup(fileContextRef.current, origBytes);
+
+        if (await checkFileHandleConflict(fileContextRef.current)) {
+          setShowFileConflictModal(true);
+          setIsSaving(false);
+          return;
+        }
+
+        const updatedB64 = updatedDataUrl.split(',')[1] || '';
+        const updatedBin = atob(updatedB64);
+        const saveBytes = new Uint8Array(updatedBin.length);
+        for (let i = 0; i < updatedBin.length; i++) saveBytes[i] = updatedBin.charCodeAt(i);
+
+        await saveToFileHandle(fileContextRef.current, saveBytes);
+      }
+
       setHasChanges(false);
       setSaveToast('워드 문서가 성공적으로 저장 및 메모에 반영되었습니다!');
       setTimeout(() => setSaveToast(null), 3000);
@@ -319,6 +462,51 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
     }
   };
 
+  // 다른 이름으로 저장 (showSaveFilePicker 연동)
+  const handleSaveAs = async () => {
+    try {
+      let bytes: Uint8Array;
+      if (engine === 'superdoc' && superdocRef.current) {
+        const exportedBlob = await superdocRef.current.export({ exportType: ['docx'], triggerDownload: false });
+        const ab = await exportedBlob.arrayBuffer();
+        bytes = new Uint8Array(ab);
+      } else {
+        const exportUrl = await generateDocxDataUrl(docTitle, content);
+        const b64 = exportUrl.split(',')[1] || '';
+        const bin = atob(b64);
+        bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      }
+      await saveFileAs(bytes, `${docTitle}.docx`, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'docx');
+    } catch (err) {
+      console.error('다른 이름으로 저장 실패:', err);
+    }
+  };
+
+  // 5단계 임시본 복구 적용 및 폐기
+  const handleApplyDraftRecovery = () => {
+    if (!draftToRecover) return;
+    try {
+      if (engine === 'superdoc' && superdocRef.current && typeof draftToRecover.data === 'object') {
+        (superdocRef.current as any).editor?.commands?.setContent?.(draftToRecover.data);
+      } else if (typeof draftToRecover.data === 'string') {
+        setContent(draftToRecover.data);
+      }
+      setHasChanges(true);
+      setShowDraftRecoveryModal(false);
+      setSaveToast('임시 복구본이 성공적으로 복구되었습니다.');
+      setTimeout(() => setSaveToast(null), 3000);
+    } catch (err) {
+      console.error('워드 임시본 복구 실패:', err);
+    }
+  };
+
+  const handleDiscardDraftRecovery = async () => {
+    setShowDraftRecoveryModal(false);
+    setDraftToRecover(null);
+    await deleteOfficeDraft(draftKey);
+  };
+
   // 닫기 요청 핸들러
   const handleRequestClose = () => {
     if (hasChanges) {
@@ -327,6 +515,22 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
     }
     onClose();
   };
+
+  // 5단계 공통 단축키 훅 (Ctrl+S 통일, Alt+Enter 전체화면, Esc 대화상자 보호)
+  useOfficeShortcuts({
+    enabled: isOpen,
+    onSave: triggerSave,
+    onClose: handleRequestClose,
+    hasChanges,
+    onConfirmCloseNeeded: () => setShowExitConfirm(true),
+    isEditingCellOrDialog: () => {
+      if (document.querySelector('.superdoc-dialog, .superdoc-modal, [class*="dialog"], [class*="modal"]')) {
+        return true;
+      }
+      return false;
+    },
+    toggleFullscreen: floating.toggleFullscreen,
+  });
 
   // 원본으로 되돌리기 실행
   const handleExecuteRestore = async () => {
@@ -474,6 +678,20 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
             >
               <Download size={15} />
             </button>
+
+            {/* 다른 이름으로 저장 버튼 */}
+            <button
+              type="button"
+              onClick={handleSaveAs}
+              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-medium flex items-center gap-1 transition-all"
+              title="원하는 위치에 다른 이름으로 파일 저장"
+            >
+              <FolderDown size={14} />
+              <span className="hidden sm:inline">다른 이름으로 저장</span>
+            </button>
+
+            {/* 전체화면 전환 버튼 */}
+            {floating.toggleFullscreenButton}
 
             {/* 저장 및 반영 버튼 */}
             <button
@@ -749,6 +967,133 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
                   className="px-3.5 py-1.5 text-xs bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-semibold shadow-md"
                 >
                   그래도 저장
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 4. 5단계 임시 복구본 발견 모달 */}
+        {showDraftRecoveryModal && draftToRecover && (
+          <div className="fixed inset-0 z-100 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="bg-slate-900 border border-emerald-500/30 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+              <div className="flex items-center gap-3 text-emerald-400">
+                <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                  <FileText size={24} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-slate-100">이전 편집 임시본 발견</h3>
+                  <p className="text-xs text-slate-400">
+                    저장되지 않은 자동 임시본이 보관되어 있습니다.
+                  </p>
+                </div>
+              </div>
+              <div className="text-xs text-slate-300 leading-relaxed bg-slate-800/60 p-3 rounded-xl border border-slate-700/50 space-y-1.5">
+                <div className="flex justify-between text-slate-400">
+                  <span>임시본 저장 시점:</span>
+                  <span className="text-slate-200 font-mono">
+                    {new Date(draftToRecover.updatedAt).toLocaleTimeString()}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>임시 데이터 크기:</span>
+                  <span className="text-slate-200 font-mono">
+                    {(draftToRecover.byteLength / 1024).toFixed(1)} KB
+                  </span>
+                </div>
+                <p className="text-[11px] text-emerald-300/80 pt-1 border-t border-slate-700/50">
+                  비정상 종료 전 작업하던 워드 문서 내용을 불러오시겠습니까?
+                </p>
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  id="office-confirm-recover-btn"
+                  onClick={handleApplyDraftRecovery}
+                  className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  복구 적용
+                </button>
+                <button
+                  type="button"
+                  id="office-discard-recover-btn"
+                  onClick={handleDiscardDraftRecovery}
+                  className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition-all cursor-pointer"
+                >
+                  복구 안 함 (삭제)
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 5. 5단계 파일 충돌 모달 (디스크 파일 변경 감지) */}
+        {showFileConflictModal && (
+          <div className="fixed inset-0 z-100 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="bg-slate-900 border border-rose-500/30 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+              <div className="flex items-center gap-3 text-rose-400">
+                <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                  <AlertCircle size={24} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-slate-100">파일 충돌 경고</h3>
+                  <p className="text-xs text-rose-300/80">다른 프로그램에서 파일이 변경되었습니다.</p>
+                </div>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed bg-slate-800/60 p-3 rounded-xl border border-slate-700/50">
+                문서를 연 이후 외부 프로그램에서 파일 내용이나 수정 일시가 바뀌었습니다. 원래 파일에 그대로 덮어쓰시겠습니까, 아니면 다른 이름으로 저장하시겠습니까?
+              </p>
+              <div className="flex flex-col gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setShowFileConflictModal(false);
+                    if (fileContextRef.current) {
+                      let updatedDataUrl = '';
+                      if (engine === 'superdoc' && superdocRef.current) {
+                        const exportedBlob = await superdocRef.current.export({ exportType: ['docx'], triggerDownload: false });
+                        const reader = new FileReader();
+                        await new Promise<void>((resolve, reject) => {
+                          reader.onloadend = () => {
+                            updatedDataUrl = reader.result as string;
+                            resolve();
+                          };
+                          reader.onerror = reject;
+                          reader.readAsDataURL(exportedBlob);
+                        });
+                      } else {
+                        updatedDataUrl = await generateDocxDataUrl(docTitle, content);
+                      }
+                      const updatedB64 = updatedDataUrl.split(',')[1] || '';
+                      const updatedBin = atob(updatedB64);
+                      const saveBytes = new Uint8Array(updatedBin.length);
+                      for (let i = 0; i < updatedBin.length; i++) saveBytes[i] = updatedBin.charCodeAt(i);
+                      await saveToFileHandle(fileContextRef.current, saveBytes);
+                      setHasChanges(false);
+                      setSaveToast('원래 파일에 성공적으로 덮어썼습니다.');
+                      setTimeout(() => setSaveToast(null), 3000);
+                    }
+                  }}
+                  className="py-2.5 px-3 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  원래 파일에 그대로 덮어쓰기
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowFileConflictModal(false);
+                    handleSaveAs();
+                  }}
+                  className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  다른 이름으로 저장
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowFileConflictModal(false)}
+                  className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition-all cursor-pointer"
+                >
+                  취소
                 </button>
               </div>
             </div>

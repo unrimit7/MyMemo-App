@@ -81,11 +81,15 @@ if (typeof WeakMap !== 'undefined') {
   }
 }
 
-// PWA 단일 인스턴스 (LaunchQueue & BroadcastChannel 포커스 연동)
+// PWA 단일 인스턴스 (LaunchQueue & BroadcastChannel 포커스 연동 및 파일 연결)
 if (typeof window !== 'undefined') {
   if ('launchQueue' in window) {
-    (window as any).launchQueue.setConsumer(() => {
+    (window as any).launchQueue.setConsumer((launchParams: any) => {
       window.focus();
+      if (launchParams?.files && launchParams.files.length > 0) {
+        const fileHandle = launchParams.files[0];
+        window.dispatchEvent(new CustomEvent('mymemo_open_file_handle', { detail: { fileHandle } }));
+      }
     });
   }
   if (typeof BroadcastChannel !== 'undefined') {

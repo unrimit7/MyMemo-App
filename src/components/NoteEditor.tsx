@@ -4454,62 +4454,98 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       )}
 
       {/* 한글(HWP/HWPX) 웹 직접 편집기 모달 (문서 원본 직접 수정 및 메모 자동 저장) */}
-      {activeHwpEditorModal && (
-        <HwpEditorModal
-          isOpen={true}
-          onClose={() => setActiveHwpEditorModal(null)}
-          data={activeHwpEditorModal.data}
-          title={activeHwpEditorModal.title}
-          attId={activeHwpEditorModal.attId}
-          onSave={async (updatedDataUrl) => {
-            // attId를 다양한 경로로 완벽하게 보장
-            let attId = activeHwpEditorModal.attId;
-            if (!attId || !localAttachmentsRef.current[attId]) {
-              attId = Object.keys(localAttachmentsRef.current).find(
-                (id) => localAttachmentsRef.current[id].name === activeHwpEditorModal.title
-              ) || Object.keys(localAttachmentsRef.current).find(
-                (id) => {
-                  const name = (localAttachmentsRef.current[id].name || '').toLowerCase();
-                  return name.endsWith('.hwp') || name.endsWith('.hwpx');
-                }
-              ) || '';
+      {activeHwpEditorModal && (() => {
+        let attId = activeHwpEditorModal.attId;
+        if (!attId || !localAttachmentsRef.current[attId]) {
+          attId = Object.keys(localAttachmentsRef.current).find(
+            (id) => localAttachmentsRef.current[id].name === activeHwpEditorModal.title
+          ) || Object.keys(localAttachmentsRef.current).find(
+            (id) => {
+              const name = (localAttachmentsRef.current[id].name || '').toLowerCase();
+              return name.endsWith('.hwp') || name.endsWith('.hwpx');
             }
+          ) || '';
+        }
+        const existingAtt = attId ? localAttachmentsRef.current[attId] : undefined;
 
-            if (attId) {
-              // 1. 기존 HWP 캐시(전체 및 ID별) 및 Blob URL 캐시 즉시 무효화 (새 파일 재로드 100% 보장)
-              invalidateHwpCache(attId);
-              invalidateHwpCache(); // 전체 캐시도 깨끗하게 초기화
-              invalidateAttachmentBlobUrl(attId);
+        return (
+          <HwpEditorModal
+            isOpen={true}
+            onClose={() => setActiveHwpEditorModal(null)}
+            data={activeHwpEditorModal.data}
+            title={activeHwpEditorModal.title}
+            attId={attId}
+            originalData={existingAtt?.originalData}
+            originalDate={existingAtt?.originalDate}
+            onSave={async (updatedDataUrl) => {
+              if (attId) {
+                // 1. 기존 HWP 캐시(전체 및 ID별) 및 Blob URL 캐시 즉시 무효화 (새 파일 재로드 100% 보장)
+                invalidateHwpCache(attId);
+                invalidateHwpCache(); // 전체 캐시도 깨끗하게 초기화
+                invalidateAttachmentBlobUrl(attId);
 
-              // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장
-              const updatedAtts = {
-                ...localAttachmentsRef.current,
-                [attId]: {
-                  ...(localAttachmentsRef.current[attId] || {}),
-                  data: updatedDataUrl,
-                },
-              };
-              setLocalAttachments(updatedAtts);
-              localAttachmentsRef.current = updatedAtts;
-              onUpdateNote({ attachments: updatedAtts });
+                // 최초 1회 저장 시 원본 첨부파일을 기기 내부 원본 백업으로 보관
+                const originalData = existingAtt?.originalData || existingAtt?.data || activeHwpEditorModal.data;
+                const originalDate = existingAtt?.originalDate || new Date().toISOString();
 
-              // 3. 편집 모달의 내부 데이터 상태도 최신으로 동기화
-              setActiveHwpEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
+                // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장
+                const updatedAtts = {
+                  ...localAttachmentsRef.current,
+                  [attId]: {
+                    ...(localAttachmentsRef.current[attId] || {}),
+                    data: updatedDataUrl,
+                    originalData,
+                    originalDate,
+                  },
+                };
+                setLocalAttachments(updatedAtts);
+                localAttachmentsRef.current = updatedAtts;
+                onUpdateNote({ attachments: updatedAtts });
 
-              // 4. 만약 전면 보기 모달(activeHwpModal)이 열려있다면 해당 데이터도 최신으로 즉시 갱신
-              setActiveHwpModal((prev) => prev && (prev.attId === attId || prev.title === activeHwpEditorModal.title) ? { ...prev, data: updatedDataUrl } : prev);
+                // 3. 편집 모달의 내부 데이터 상태도 최신으로 동기화
+                setActiveHwpEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
 
-              // 5. 인라인 뷰어에 새 데이터 URL을 즉시 전달하여 재로드 & 재렌더링
-              renderInlineHwp.current(attId, updatedDataUrl);
+                // 4. 만약 전면 보기 모달(activeHwpModal)이 열려있다면 해당 데이터도 최신으로 즉시 갱신
+                setActiveHwpModal((prev) => prev && (prev.attId === attId || prev.title === activeHwpEditorModal.title) ? { ...prev, data: updatedDataUrl } : prev);
 
-              // 6. 마크다운 HTML 재계산 및 DOM 갱신 후 한 번 더 보장 렌더링
-              setTimeout(() => {
+                // 5. 인라인 뷰어에 새 데이터 URL을 즉시 전달하여 재로드 & 재렌더링
                 renderInlineHwp.current(attId, updatedDataUrl);
-              }, 120);
-            }
-          }}
-        />
-      )}
+
+                // 6. 마크다운 HTML 재계산 및 DOM 갱신 후 한 번 더 보장 렌더링
+                setTimeout(() => {
+                  renderInlineHwp.current(attId, updatedDataUrl);
+                }, 120);
+              }
+            }}
+            onRestoreOriginal={async () => {
+              if (existingAtt && existingAtt.originalData) {
+                invalidateHwpCache(attId);
+                invalidateHwpCache();
+                invalidateAttachmentBlobUrl(attId);
+
+                const restoredData = existingAtt.originalData;
+                const updatedAtts = {
+                  ...localAttachmentsRef.current,
+                  [attId]: {
+                    ...existingAtt,
+                    data: restoredData,
+                    originalData: undefined,
+                    originalDate: undefined,
+                  },
+                };
+                setLocalAttachments({ ...updatedAtts });
+                localAttachmentsRef.current = updatedAtts;
+                onUpdateNote({ attachments: updatedAtts });
+
+                setActiveHwpEditorModal((prev) => (prev ? { ...prev, data: restoredData } : null));
+                setActiveHwpModal((prev) => prev && (prev.attId === attId || prev.title === activeHwpEditorModal.title) ? { ...prev, data: restoredData } : prev);
+                renderInlineHwp.current(attId, restoredData);
+                alert('최초 원본 버전으로 성공적으로 복원되었습니다.');
+              }
+            }}
+          />
+        );
+      })()}
 
       {/* 첨부 이미지 웹 직접 편집기 모달 */}
       {activeImageEditorModal && (
@@ -4808,34 +4844,76 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       )}
 
       {/* 파워포인트(PPTX) 슬라이드 웹 직접 편집기 모달 */}
-      {activePptxEditorModal && (
-        <PptxEditorModal
-          isOpen={true}
-          onClose={() => setActivePptxEditorModal(null)}
-          data={activePptxEditorModal.data}
-          title={activePptxEditorModal.title}
-          attId={activePptxEditorModal.attId}
-          onSave={async (updatedDataUrl) => {
-            const attId = activePptxEditorModal.attId;
-            if (attId) {
-              invalidatePptxCache(attId);
-              invalidateAttachmentBlobUrl(attId);
+      {activePptxEditorModal && (() => {
+        let attId = activePptxEditorModal.attId;
+        if (!attId || !localAttachmentsRef.current[attId]) {
+          attId = Object.keys(localAttachmentsRef.current).find(
+            (id) => localAttachmentsRef.current[id].name === activePptxEditorModal.title
+          ) || Object.keys(localAttachmentsRef.current).find(
+            (id) => (localAttachmentsRef.current[id].name || '').toLowerCase().endsWith('.pptx')
+          ) || '';
+        }
+        const existingAtt = attId ? localAttachmentsRef.current[attId] : undefined;
 
-              const updatedAtts = {
-                ...localAttachmentsRef.current,
-                [attId]: {
-                  ...(localAttachmentsRef.current[attId] || {}),
-                  data: updatedDataUrl,
-                },
-              };
-              setLocalAttachments(updatedAtts);
-              localAttachmentsRef.current = updatedAtts;
-              onUpdateNote({ attachments: updatedAtts });
-              setActivePptxEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
-            }
-          }}
-        />
-      )}
+        return (
+          <PptxEditorModal
+            isOpen={true}
+            onClose={() => setActivePptxEditorModal(null)}
+            data={activePptxEditorModal.data}
+            title={activePptxEditorModal.title}
+            attId={attId}
+            originalData={existingAtt?.originalData}
+            originalDate={existingAtt?.originalDate}
+            onSave={async (updatedDataUrl) => {
+              if (attId) {
+                invalidatePptxCache(attId);
+                invalidateAttachmentBlobUrl(attId);
+
+                // 최초 1회 저장 시 원본 첨부파일을 기기 내부 원본 백업으로 보관
+                const originalData = existingAtt?.originalData || existingAtt?.data || activePptxEditorModal.data;
+                const originalDate = existingAtt?.originalDate || new Date().toISOString();
+
+                const updatedAtts = {
+                  ...localAttachmentsRef.current,
+                  [attId]: {
+                    ...(localAttachmentsRef.current[attId] || {}),
+                    data: updatedDataUrl,
+                    originalData,
+                    originalDate,
+                  },
+                };
+                setLocalAttachments(updatedAtts);
+                localAttachmentsRef.current = updatedAtts;
+                onUpdateNote({ attachments: updatedAtts });
+                setActivePptxEditorModal((prev) => prev ? { ...prev, data: updatedDataUrl } : null);
+              }
+            }}
+            onRestoreOriginal={async () => {
+              if (existingAtt && existingAtt.originalData) {
+                invalidatePptxCache(attId);
+                invalidateAttachmentBlobUrl(attId);
+
+                const restoredData = existingAtt.originalData;
+                const updatedAtts = {
+                  ...localAttachmentsRef.current,
+                  [attId]: {
+                    ...existingAtt,
+                    data: restoredData,
+                    originalData: undefined,
+                    originalDate: undefined,
+                  },
+                };
+                setLocalAttachments({ ...updatedAtts });
+                localAttachmentsRef.current = updatedAtts;
+                onUpdateNote({ attachments: updatedAtts });
+
+                setActivePptxEditorModal((prev) => (prev ? { ...prev, data: restoredData } : null));
+                alert('최초 원본 버전으로 성공적으로 복원되었습니다.');
+              }
+            }}
+          />
+        );
+      })()}
 
       {/* 바이너리/HEX 울트라에디트 모달 */}
       {activeHexModal && (

@@ -9,6 +9,7 @@ import {
   AlertTriangle,
   RotateCcw,
   Loader2,
+  FolderDown,
 } from 'lucide-react';
 import { createUniver, defaultTheme, LocaleType } from '@univerjs/presets';
 import { UniverSheetsCorePreset } from '@univerjs/preset-sheets-core';
@@ -19,6 +20,21 @@ import { dataUrlToUniverWorkbook, univerSnapshotToDataUrl, type StructuralOperat
 import { invalidateExcelCache } from '../utils/excelViewer';
 import { detectExcelUnsupportedFeatures, type UnsupportedFeatureReport } from '../utils/excelLossDetector';
 import { useFloatingWindow } from './useFloatingWindow';
+import {
+  saveOfficeDraft,
+  getOfficeDraft,
+  deleteOfficeDraft,
+  computeDataHash,
+  type OfficeDraft,
+} from '../utils/draftStorage';
+import { useOfficeShortcuts } from '../utils/useOfficeShortcuts';
+import { saveFileAs } from '../utils/fileSavePicker';
+import {
+  type FileHandleContext,
+  checkFileHandleConflict,
+  ensureOriginalBackup,
+  saveToFileHandle,
+} from '../utils/fileHandleSaver';
 
 interface ExcelEditorModalProps {
   isOpen: boolean;
@@ -29,6 +45,7 @@ interface ExcelEditorModalProps {
   originalData?: string;
   originalDate?: string;
   initialEngine?: 'exceljs' | 'sheetjs';
+  fileHandle?: any;
   onSave?: (updatedDataUrl: string, engine: 'exceljs' | 'sheetjs') => Promise<void> | void;
   onRestoreOriginal?: () => Promise<void> | void;
 }
@@ -42,6 +59,7 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
   originalData,
   originalDate,
   initialEngine = 'exceljs',
+  fileHandle,
   onSave,
   onRestoreOriginal,
 }) => {
@@ -59,6 +77,115 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
   const [showRestoreConfirm, setShowRestoreConfirm] = useState<boolean>(false);
   const [showLossWarningModal, setShowLossWarningModal] = useState<boolean>(false);
   const [lossReport, setLossReport] = useState<UnsupportedFeatureReport | null>(null);
+
+  // 5단계 임시본 복구 모달 및 파일 핸들러 충돌 모달 상태
+  const draftKey = `excel_${attId || ''}_${title}`;
+  const [draftToRecover, setDraftToRecover] = useState<OfficeDraft | null>(null);
+  const [showDraftRecoveryModal, setShowDraftRecoveryModal] = useState<boolean>(false);
+  const [showFileConflictModal, setShowFileConflictModal] = useState<boolean>(false);
+  const fileContextRef = useRef<FileHandleContext | null>(null);
+
+  // FileHandle 초기화 및 최초 덮어쓰기 전 백업 준비
+  useEffect(() => {
+    if (!fileHandle) return;
+    (async () => {
+      try {
+        const file = await fileHandle.getFile();
+        fileContextRef.current = {
+          handle: fileHandle,
+          initialSize: file.size,
+          initialLastModified: file.lastModified,
+          fileName: title,
+        };
+      } catch (err) {
+        console.warn('FileHandle 초기화 실패:', err);
+      }
+    })();
+  }, [fileHandle, title]);
+
+  // 임시본 검사 및 원본 해시 일치 판별 (불일치 시 자동 폐기)
+  useEffect(() => {
+    if (!isOpen || !data) return;
+    let isCancelled = false;
+
+    (async () => {
+      const draft = await getOfficeDraft(draftKey);
+      if (!draft || isCancelled) return;
+
+      const currentHash = await computeDataHash(data);
+      if (draft.baseOriginalHash !== currentHash) {
+        // 동기화 등으로 원본이 바뀐 경우 임시본 폐기 (복구 제안 원천 차단)
+        await deleteOfficeDraft(draftKey);
+      } else {
+        setDraftToRecover(draft);
+        setShowDraftRecoveryModal(true);
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOpen, data, draftKey]);
+
+  // 30초 주기 + visibilitychange / blur 시점에만 동작하는 안전 자동 저장 (IndexedDB 전용)
+  useEffect(() => {
+    if (!isOpen || !hasChanges) return;
+
+    let autoSaveIntervalMs = 30000;
+
+    const performDraftSave = async () => {
+      if (!univerRef.current || !hasChanges) return;
+      try {
+        const t0 = performance.now();
+        const activeWb = univerRef.current.getActiveWorkbook();
+        if (!activeWb) return;
+        const snapshot = activeWb.save();
+        const duration = performance.now() - t0;
+        const baseHash = await computeDataHash(data);
+        const snapshotStr = JSON.stringify(snapshot);
+
+        await saveOfficeDraft({
+          draftKey,
+          attId,
+          title,
+          fileType: 'excel',
+          baseOriginalHash: baseHash,
+          data: snapshot,
+          dataType: 'univer_snapshot',
+          updatedAt: Date.now(),
+          byteLength: snapshotStr.length,
+          saveDurationMs: Math.round(duration),
+        });
+
+        // 1초 이상 걸리면 주기 60초로 자동 연장
+        if (duration >= 1000) {
+          autoSaveIntervalMs = 60000;
+        }
+      } catch (err) {
+        console.warn('[Excel] 임시본 자동 저장 오류:', err);
+      }
+    };
+
+    const interval = setInterval(performDraftSave, autoSaveIntervalMs);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        performDraftSave();
+      }
+    };
+    const handleBlur = () => {
+      performDraftSave();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('blur', handleBlur);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, [isOpen, hasChanges, draftKey, attId, title, data]);
 
   // 저장 엔진 선택: 'exceljs' (서식 보존 권장) vs 'sheetjs' (기존 경량 모드)
   const [engine, setEngine] = useState<'exceljs' | 'sheetjs'>(initialEngine);
@@ -306,6 +433,31 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
 
       invalidateExcelCache(attId);
 
+      // 5단계 임시본 정리
+      await deleteOfficeDraft(draftKey);
+
+      // FileHandle 연동 (PWA 탐색기 열기 파일 직접 저장)
+      if (fileContextRef.current) {
+        const base64 = data.split(',')[1] || '';
+        const binary = atob(base64);
+        const origBytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) origBytes[i] = binary.charCodeAt(i);
+        await ensureOriginalBackup(fileContextRef.current, origBytes);
+
+        if (await checkFileHandleConflict(fileContextRef.current)) {
+          setShowFileConflictModal(true);
+          setIsSaving(false);
+          return;
+        }
+
+        const updatedB64 = updatedDataUrl.split(',')[1] || '';
+        const updatedBin = atob(updatedB64);
+        const saveBytes = new Uint8Array(updatedBin.length);
+        for (let i = 0; i < updatedBin.length; i++) saveBytes[i] = updatedBin.charCodeAt(i);
+
+        await saveToFileHandle(fileContextRef.current, saveBytes);
+      }
+
       if (onSave) {
         await onSave(updatedDataUrl, engine);
       }
@@ -354,6 +506,48 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
     }
   };
 
+  // 다른 이름으로 저장 (showSaveFilePicker 연동)
+  const handleSaveAs = async () => {
+    if (!univerAPIRef.current) return;
+    try {
+      const activeWb = univerAPIRef.current.getActiveWorkbook();
+      if (!activeWb) return;
+
+      const snapshot = activeWb.save();
+      const ops = [...structuralOpsRef.current];
+      const dataUrl = await univerSnapshotToDataUrl(snapshot, format, engine, currentDataRef.current, ops);
+      const base64 = dataUrl.split(',')[1] || '';
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+      const mime = format === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      await saveFileAs(bytes, title, mime, format);
+    } catch (err) {
+      console.error('다른 이름으로 저장 실패:', err);
+    }
+  };
+
+  // 5단계 임시본 복구 적용 및 폐기
+  const handleApplyDraftRecovery = () => {
+    if (!draftToRecover || !univerAPIRef.current) return;
+    try {
+      univerAPIRef.current.createWorkbook({ id: 'workbook', ...draftToRecover.data });
+      setHasChanges(true);
+      setShowDraftRecoveryModal(false);
+      setSaveToast('임시 복구본이 성공적으로 복구되었습니다.');
+      setTimeout(() => setSaveToast(null), 3000);
+    } catch (err) {
+      console.error('임시본 복구 실패:', err);
+    }
+  };
+
+  const handleDiscardDraftRecovery = async () => {
+    setShowDraftRecoveryModal(false);
+    setDraftToRecover(null);
+    await deleteOfficeDraft(draftKey);
+  };
+
   // 닫기 요청
   const handleRequestClose = () => {
     if (hasChanges) {
@@ -362,6 +556,26 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
       onClose();
     }
   };
+
+  // 5단계 공통 단축키 훅 (Ctrl+S 통일, Alt+Enter 전체화면, Esc 셀편집 보호)
+  useOfficeShortcuts({
+    enabled: isOpen,
+    onSave: handleSave,
+    onClose: handleRequestClose,
+    hasChanges,
+    onConfirmCloseNeeded: () => setShowExitConfirm(true),
+    isEditingCellOrDialog: () => {
+      const active = document.activeElement;
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.getAttribute('contenteditable') === 'true')) {
+        if (containerRef.current?.contains(active)) return true;
+      }
+      if (document.querySelector('.univer-cell-editor, .univer-dialog, .univer-modal, [class*="cell-editor"], [class*="find-replace"]')) {
+        return true;
+      }
+      return false;
+    },
+    toggleFullscreen: floating.toggleFullscreen,
+  });
 
   // 변경사항 저장 후 닫기
   const handleSaveAndExit = async () => {
@@ -387,23 +601,7 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div
-      className={floating.modalWrapperClass}
-      tabIndex={0}
-      onKeyDown={(e) => {
-        // Ctrl+S 또는 Cmd+S 누르면 브라우저 저장 대신 메모 저장 실행
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-          e.preventDefault();
-          e.stopPropagation();
-          handleSave();
-          return;
-        }
-
-        if (e.key === 'Escape' && !showExitConfirm && !showLossWarningModal && !showRestoreConfirm) {
-          handleRequestClose();
-        }
-      }}
-    >
+    <div className={floating.modalWrapperClass}>
       {/* 팝업 컨테이너 */}
       <div {...floating.windowContainerProps}>
         {/* 상단 1단: 제목 & 저장 / 다운로드 / 닫기 헤더 */}
@@ -510,6 +708,17 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
               <span>{isSaving ? '저장 중...' : '저장 및 반영'}</span>
             </button>
 
+            {/* 다른 이름으로 저장 버튼 */}
+            <button
+              type="button"
+              onClick={handleSaveAs}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition-colors cursor-pointer"
+              title="다른 이름으로 저장"
+            >
+              <FolderDown size={14} />
+              <span className="hidden sm:inline">다른 이름으로 저장</span>
+            </button>
+
             {/* 다운로드 버튼 */}
             <button
               type="button"
@@ -520,6 +729,9 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
               <Download size={14} />
               <span className="hidden sm:inline">다운로드</span>
             </button>
+
+            {/* 전체 화면 (Alt+Enter) 토글 버튼 */}
+            {floating.toggleFullscreenButton}
 
             {/* 창 분리 (플로팅 모드) 토글 버튼 */}
             {floating.toggleFloatingButton}
@@ -675,6 +887,107 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
                 className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"
               >
                 저장하고 닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 5단계 임시 복구본 복구 모달 */}
+      {showDraftRecoveryModal && draftToRecover && (
+        <div className="fixed inset-0 z-100 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-emerald-500/30 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-emerald-400">
+              <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                <RotateCcw size={24} />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-slate-100">임시 복구본 복구</h3>
+                <p className="text-xs text-emerald-300/80">
+                  {new Date(draftToRecover.updatedAt).toLocaleString()}에 자동 저장된 작업 내용이 있습니다.
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed bg-slate-800/60 p-3 rounded-xl border border-slate-700/50">
+              이전에 저장되지 않은 엑셀 작업 내용(임시본)이 기기 내부에 보관되어 있습니다. 복구하여 작업을 계속하시겠습니까?
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+              <button
+                type="button"
+                id="office-confirm-recover-btn"
+                onClick={handleApplyDraftRecovery}
+                className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                복구 적용
+              </button>
+              <button
+                type="button"
+                id="office-discard-recover-btn"
+                onClick={handleDiscardDraftRecovery}
+                className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition-all cursor-pointer"
+              >
+                복구 안 함 (삭제)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5단계 파일 충돌 모달 (디스크 파일 변경 감지) */}
+      {showFileConflictModal && (
+        <div className="fixed inset-0 z-100 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-rose-500/30 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-rose-400">
+              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                <AlertCircle size={24} />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-slate-100">파일 충돌 경고</h3>
+                <p className="text-xs text-rose-300/80">다른 프로그램에서 파일이 변경되었습니다.</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed bg-slate-800/60 p-3 rounded-xl border border-slate-700/50">
+              문서를 연 이후 외부 프로그램에서 파일 내용이나 수정 일시가 바뀌었습니다. 원래 파일에 그대로 덮어쓰시겠습니까, 아니면 다른 이름으로 저장하시겠습니까?
+            </p>
+            <div className="flex flex-col gap-2 pt-1">
+              <button
+                type="button"
+                onClick={async () => {
+                  setShowFileConflictModal(false);
+                  if (fileContextRef.current && univerAPIRef.current) {
+                    const activeWb = univerAPIRef.current.getActiveWorkbook();
+                    const snapshot = activeWb.save();
+                    const ops = [...structuralOpsRef.current];
+                    const updatedDataUrl = await univerSnapshotToDataUrl(snapshot, format, engine, currentDataRef.current, ops);
+                    const updatedB64 = updatedDataUrl.split(',')[1] || '';
+                    const updatedBin = atob(updatedB64);
+                    const saveBytes = new Uint8Array(updatedBin.length);
+                    for (let i = 0; i < updatedBin.length; i++) saveBytes[i] = updatedBin.charCodeAt(i);
+                    await saveToFileHandle(fileContextRef.current, saveBytes);
+                    setHasChanges(false);
+                    setSaveToast('원래 파일에 성공적으로 덮어썼습니다.');
+                    setTimeout(() => setSaveToast(null), 3000);
+                  }
+                }}
+                className="py-2.5 px-3 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                원래 파일에 그대로 덮어쓰기
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowFileConflictModal(false);
+                  handleSaveAs();
+                }}
+                className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                다른 이름으로 저장
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowFileConflictModal(false)}
+                className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition-all cursor-pointer"
+              >
+                취소
               </button>
             </div>
           </div>

@@ -165,6 +165,20 @@ export default defineConfig({
         launch_handler: {
           client_mode: ['focus-existing', 'auto']
         },
+        // 무손실 편집이 검증된 5개 오피스 포맷 파일 연결 (구버전 .xls/.ppt/.doc 배제)
+        file_handlers: [
+          {
+            action: '/',
+            accept: {
+              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+              'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx'],
+              'application/hwp+zip': ['.hwpx'],
+              'application/vnd.hancom.hwpx': ['.hwpx'],
+              'application/x-hwp': ['.hwp']
+            }
+          }
+        ],
         icons: [
           {
             src: 'favicon-32x32.png',

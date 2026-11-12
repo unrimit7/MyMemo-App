@@ -4,6 +4,7 @@ import './index.css';
 import { PptxViewerModal } from './components/PptxViewerModal';
 import { PptxEditorModal } from './components/PptxEditorModal';
 import { ExcelEditorModal } from './components/ExcelEditorModal';
+import { DocxEditorModal } from './components/DocxEditorModal';
 import { HwpEditorModal } from './components/HwpEditorModal';
 import { HwpViewerModal } from './components/HwpViewerModal';
 
@@ -16,6 +17,9 @@ declare global {
     __loadExcel?: (dataUrl: string, title: string) => Promise<void>;
     __SAVED_EXCEL__?: string;
 
+    __loadDocx?: (dataUrl: string, title: string) => Promise<void>;
+    __SAVED_DOCX__?: string;
+
     __loadHwp?: (dataUrl: string, title: string, mode?: 'viewer' | 'editor') => Promise<void>;
     __SAVED_HWP__?: string;
   }
@@ -24,36 +28,51 @@ declare global {
 export function TestApp() {
   const [data, setData] = useState<string | null>(null);
   const [title, setTitle] = useState<string>('Test Presentation');
-  const [mode, setMode] = useState<'viewer' | 'editor' | 'excel' | 'hwp-viewer' | 'hwp-editor'>('viewer');
+  const [attId, setAttId] = useState<string>('test_att_1');
+  const [mode, setMode] = useState<'viewer' | 'editor' | 'excel' | 'docx' | 'hwp-viewer' | 'hwp-editor'>('viewer');
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [renderKey, setRenderKey] = useState<number>(0);
 
   useEffect(() => {
-    window.__loadPptx = async (dataUrl: string, presTitle: string, presMode: 'viewer' | 'editor' = 'viewer') => {
+    window.__loadPptx = async (dataUrl: string, presTitle: string, presMode: 'viewer' | 'editor' = 'viewer', newAttId?: string) => {
       setIsOpen(false);
       await new Promise(r => setTimeout(r, 30));
       setData(dataUrl);
       setTitle(presTitle);
+      if (newAttId) setAttId(newAttId);
       setMode(presMode);
       setRenderKey(k => k + 1);
       setIsOpen(true);
     };
 
-    window.__loadExcel = async (dataUrl: string, excelTitle: string) => {
+    window.__loadExcel = async (dataUrl: string, excelTitle: string, newAttId?: string) => {
       setIsOpen(false);
       await new Promise(r => setTimeout(r, 30));
       setData(dataUrl);
       setTitle(excelTitle);
+      if (newAttId) setAttId(newAttId);
       setMode('excel');
       setRenderKey(k => k + 1);
       setIsOpen(true);
     };
 
-    window.__loadHwp = async (dataUrl: string, hwpTitle: string, hwpMode: 'viewer' | 'editor' = 'viewer') => {
+    window.__loadDocx = async (dataUrl: string, docxTitle: string, newAttId?: string) => {
+      setIsOpen(false);
+      await new Promise(r => setTimeout(r, 30));
+      setData(dataUrl);
+      setTitle(docxTitle);
+      if (newAttId) setAttId(newAttId);
+      setMode('docx');
+      setRenderKey(k => k + 1);
+      setIsOpen(true);
+    };
+
+    window.__loadHwp = async (dataUrl: string, hwpTitle: string, hwpMode: 'viewer' | 'editor' = 'viewer', newAttId?: string) => {
       setIsOpen(false);
       await new Promise(r => setTimeout(r, 30));
       setData(dataUrl);
       setTitle(hwpTitle);
+      if (newAttId) setAttId(newAttId);
       setMode(hwpMode === 'editor' ? 'hwp-editor' : 'hwp-viewer');
       setRenderKey(k => k + 1);
       setIsOpen(true);
@@ -86,8 +105,22 @@ export function TestApp() {
           onClose={() => setIsOpen(false)}
           data={data}
           title={title}
+          attId={attId}
           onSave={(updated) => {
             window.__SAVED_PPTX__ = updated;
+          }}
+        />
+      ) : mode === 'docx' ? (
+        <DocxEditorModal
+          key={renderKey}
+          isOpen={isOpen}
+          onClose={() => setIsOpen(false)}
+          data={data}
+          title={title}
+          attId={attId}
+          initialEngine="superdoc"
+          onSave={(updated) => {
+            window.__SAVED_DOCX__ = updated;
           }}
         />
       ) : mode === 'excel' ? (
@@ -97,6 +130,7 @@ export function TestApp() {
           onClose={() => setIsOpen(false)}
           data={data}
           title={title}
+          attId={attId}
           initialEngine="exceljs"
           onSave={(updated) => {
             window.__SAVED_EXCEL__ = updated;
@@ -117,6 +151,7 @@ export function TestApp() {
           onClose={() => setIsOpen(false)}
           data={data}
           title={title}
+          attId={attId}
           onSave={(updated) => {
             window.__SAVED_HWP__ = updated;
           }}

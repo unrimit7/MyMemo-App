@@ -1,8 +1,33 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Save, Download, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import {
+  X,
+  Save,
+  Download,
+  AlertCircle,
+  CheckCircle,
+  Loader2,
+  FolderDown,
+  RotateCcw,
+  FileText,
+} from 'lucide-react';
 import { createEditor, type RhwpEditor } from '@rhwp/editor';
 import { useFloatingWindow } from './useFloatingWindow';
 import { postProcessHwpx, postProcessHwp, hasHwpTrackChanges } from '../utils/hwpxAdapter';
+import {
+  saveOfficeDraft,
+  getOfficeDraft,
+  deleteOfficeDraft,
+  computeDataHash,
+  type OfficeDraft,
+} from '../utils/draftStorage';
+import { useOfficeShortcuts } from '../utils/useOfficeShortcuts';
+import { saveFileAs } from '../utils/fileSavePicker';
+import {
+  type FileHandleContext,
+  checkFileHandleConflict,
+  ensureOriginalBackup,
+  saveToFileHandle,
+} from '../utils/fileHandleSaver';
 
 interface HwpEditorModalProps {
   isOpen: boolean;
@@ -10,7 +35,11 @@ interface HwpEditorModalProps {
   data: string;
   title: string;
   attId?: string;
+  originalData?: string;
+  originalDate?: string;
+  fileHandle?: any;
   onSave?: (updatedDataUrl: string) => Promise<void> | void;
+  onRestoreOriginal?: () => Promise<void> | void;
 }
 
 // Data URL 또는 Base64 문자열을 안전하게 Uint8Array로 변환
@@ -43,7 +72,12 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
   onClose,
   data,
   title,
+  attId,
+  originalData,
+  originalDate,
+  fileHandle,
   onSave,
+  onRestoreOriginal,
 }) => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -51,9 +85,17 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState<boolean>(false);
   const [showExitConfirm, setShowExitConfirm] = useState<boolean>(false);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState<boolean>(false);
   const [showTrackChangesWarning, setShowTrackChangesWarning] = useState<boolean>(false);
   const [trackChangesWarningAcknowledged, setTrackChangesWarningAcknowledged] = useState<boolean>(false);
   const [pendingSaveAction, setPendingSaveAction] = useState<'save' | 'download' | null>(null);
+
+  // 5단계 임시본 복구 모달 및 파일 핸들러 충돌 모달 상태
+  const draftKey = `hwp_${attId || ''}_${title}`;
+  const [draftToRecover, setDraftToRecover] = useState<OfficeDraft | null>(null);
+  const [showDraftRecoveryModal, setShowDraftRecoveryModal] = useState<boolean>(false);
+  const [showFileConflictModal, setShowFileConflictModal] = useState<boolean>(false);
+  const fileContextRef = useRef<FileHandleContext | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<RhwpEditor | null>(null);
@@ -61,6 +103,104 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
 
   const isHwpx = title.toLowerCase().endsWith('.hwpx');
   const mimeType = isHwpx ? 'application/vnd.hancom.hwpx' : 'application/x-hwp';
+
+  // FileHandle 초기화
+  useEffect(() => {
+    if (!fileHandle) return;
+    (async () => {
+      try {
+        const file = await fileHandle.getFile();
+        fileContextRef.current = {
+          handle: fileHandle,
+          initialSize: file.size,
+          initialLastModified: file.lastModified,
+          fileName: title,
+        };
+      } catch (err) {
+        console.warn('FileHandle 초기화 실패:', err);
+      }
+    })();
+  }, [fileHandle, title]);
+
+  // 임시본 검사 및 원본 해시 일치 판별 (불일치 시 자동 폐기)
+  useEffect(() => {
+    if (!isOpen || !data) return;
+    let isCancelled = false;
+
+    (async () => {
+      const draft = await getOfficeDraft(draftKey);
+      if (!draft || isCancelled) return;
+
+      const currentHash = await computeDataHash(data);
+      if (draft.baseOriginalHash !== currentHash) {
+        await deleteOfficeDraft(draftKey);
+      } else {
+        setDraftToRecover(draft);
+        setShowDraftRecoveryModal(true);
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOpen, data, draftKey]);
+
+  // 30초 주기 + visibilitychange / blur 자동 저장
+  useEffect(() => {
+    if (!isOpen || !hasChanges || !editorRef.current) return;
+
+    let autoSaveIntervalMs = 30000;
+
+    const performDraftSave = async () => {
+      if (!hasChanges || !editorRef.current) return;
+      try {
+        const t0 = performance.now();
+        const bytes = isHwpx ? await editorRef.current.exportHwpx() : await editorRef.current.exportHwp();
+        const duration = performance.now() - t0;
+        const draftDataUrl = await uint8ArrayToDataUrl(bytes, mimeType);
+        const baseHash = await computeDataHash(data);
+
+        await saveOfficeDraft({
+          draftKey,
+          attId,
+          title,
+          fileType: isHwpx ? 'hwpx' : 'hwp',
+          baseOriginalHash: baseHash,
+          data: draftDataUrl,
+          dataType: 'data_url',
+          updatedAt: Date.now(),
+          byteLength: bytes.length,
+          saveDurationMs: Math.round(duration),
+        });
+
+        if (duration >= 1000) {
+          autoSaveIntervalMs = 60000;
+        }
+      } catch (err) {
+        console.warn('[Hwp] 임시본 자동 저장 오류:', err);
+      }
+    };
+
+    const interval = setInterval(performDraftSave, autoSaveIntervalMs);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        performDraftSave();
+      }
+    };
+    const handleBlur = () => {
+      performDraftSave();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('blur', handleBlur);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, [isOpen, hasChanges, draftKey, attId, title, data, isHwpx, mimeType]);
 
   // 브라우저 탭/창 종료 시 미저장 경고
   useEffect(() => {
@@ -244,6 +384,23 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
 
       const updatedDataUrl = await uint8ArrayToDataUrl(bytes, mimeType);
 
+      // 5단계 임시본 정리
+      await deleteOfficeDraft(draftKey);
+
+      // FileHandle 연동 (PWA 파일 연결)
+      if (fileContextRef.current) {
+        const origBytes = dataUrlToUint8Array(data);
+        await ensureOriginalBackup(fileContextRef.current, origBytes);
+
+        if (await checkFileHandleConflict(fileContextRef.current)) {
+          setShowFileConflictModal(true);
+          setIsSaving(false);
+          return;
+        }
+
+        await saveToFileHandle(fileContextRef.current, bytes);
+      }
+
       if (onSave) {
         await onSave(updatedDataUrl);
       }
@@ -318,6 +475,111 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
     }
   };
 
+  // 다른 이름으로 저장 (showSaveFilePicker 연동)
+  const handleSaveAs = async (options?: { bypassTrackWarning?: boolean }) => {
+    if (!editorRef.current) return;
+    try {
+      const editor = editorRef.current;
+      const originalBytes = dataUrlToUint8Array(data);
+      const isDirty = await checkIsDirty();
+
+      let bytes: Uint8Array;
+      if (!isDirty) {
+        bytes = originalBytes;
+      } else {
+        if (!options?.bypassTrackWarning && !trackChangesWarningAcknowledged) {
+          const trackInfo = await hasHwpTrackChanges(originalBytes, isHwpx);
+          if (trackInfo.hasTrackChanges) {
+            setPendingSaveAction('saveAs' as any);
+            setShowTrackChangesWarning(true);
+            return;
+          }
+        }
+
+        bytes = isHwpx ? await editor.exportHwpx() : await editor.exportHwp();
+        if (isHwpx) {
+          bytes = await postProcessHwpx(bytes, originalBytes);
+        } else {
+          bytes = postProcessHwp(bytes);
+        }
+      }
+
+      await saveFileAs(bytes, title, mimeType, isHwpx ? 'hwpx' : 'hwp');
+    } catch (err: any) {
+      console.error('HWP 다른 이름으로 저장 실패:', err);
+    }
+  };
+
+  // 5단계 임시본 복구 적용 및 폐기
+  const handleApplyDraftRecovery = async () => {
+    if (!draftToRecover || !editorRef.current) return;
+    try {
+      const bytes = dataUrlToUint8Array(draftToRecover.data);
+      await editorRef.current.loadFile(bytes, title, { suppressDialogs: true, skipUnsavedGuard: true });
+      setHasChanges(true);
+      setShowDraftRecoveryModal(false);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (err) {
+      console.error('HWP 임시본 복구 실패:', err);
+    }
+  };
+
+  const handleDiscardDraftRecovery = async () => {
+    setShowDraftRecoveryModal(false);
+    setDraftToRecover(null);
+    await deleteOfficeDraft(draftKey);
+  };
+
+  const handleConfirmRestore = async () => {
+    setShowRestoreConfirm(false);
+    if (onRestoreOriginal) {
+      await onRestoreOriginal();
+    }
+  };
+
+  // 조건 4: rhwp iframe 내부 Ctrl+S 감지 및 location.origin + iframe.contentWindow 검증 postMessage 연동
+  useEffect(() => {
+    if (!isOpen || isLoading || !containerRef.current) return;
+
+    const iframe = containerRef.current.querySelector('iframe');
+    if (!iframe || !iframe.contentWindow) return;
+
+    const targetOrigin = window.location.origin;
+
+    const handleIframeKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        e.stopPropagation();
+        iframe.contentWindow?.parent.postMessage({ type: 'MYMEMO_OFFICE_SAVE' }, targetOrigin);
+      }
+    };
+
+    try {
+      iframe.contentWindow.addEventListener('keydown', handleIframeKeyDown);
+    } catch (err) {
+      console.warn('rhwp iframe keydown 리스너 등록 실패:', err);
+    }
+
+    const handleMessage = (e: MessageEvent) => {
+      // 조건 4: postMessage 대상 및 발신지 origin & source 엄격 검증
+      if (e.origin !== window.location.origin) return;
+      if (e.source !== iframe.contentWindow) return;
+      if (e.data?.type === 'MYMEMO_OFFICE_SAVE') {
+        handleSave();
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+
+    return () => {
+      try {
+        iframe.contentWindow?.removeEventListener('keydown', handleIframeKeyDown);
+      } catch {}
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [isOpen, isLoading]);
+
   const handleConfirmSaveAnyway = async () => {
     setShowTrackChangesWarning(false);
     setTrackChangesWarningAcknowledged(true);
@@ -343,6 +605,22 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
     }
     onClose();
   };
+
+  // 5단계 공통 단축키 훅 (Ctrl+S 단일 실행, Alt+Enter 전체화면, Esc 대화상자 보호)
+  useOfficeShortcuts({
+    enabled: isOpen,
+    onSave: () => handleSave(),
+    onClose: handleClose,
+    hasChanges,
+    onConfirmCloseNeeded: () => setShowExitConfirm(true),
+    isEditingCellOrDialog: () => {
+      if (document.querySelector('[class*="dialog"], [class*="modal"]')) {
+        return true;
+      }
+      return false;
+    },
+    toggleFullscreen: floating.toggleFullscreen,
+  });
 
   const handleSaveAndExit = async () => {
     await handleSave();
@@ -407,6 +685,19 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
             </span>
           )}
 
+          {/* 최초 원본으로 되돌리기 */}
+          {originalData && onRestoreOriginal && (
+            <button
+              type="button"
+              onClick={() => setShowRestoreConfirm(true)}
+              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 hover:border-amber-500/40 rounded-lg text-xs font-medium flex items-center gap-1 transition-all cursor-pointer"
+              title={`최초 편집 전 원본 버전(${originalDate || '이전'})으로 되돌립니다.`}
+            >
+              <RotateCcw size={13} />
+              <span className="hidden sm:inline">최초 원본 되돌리기</span>
+            </button>
+          )}
+
           {/* 저장 버튼 */}
           <button
             type="button"
@@ -430,6 +721,21 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
             <Download size={14} className="text-indigo-400" />
             <span className="hidden md:inline">다운로드</span>
           </button>
+
+          {/* 다른 이름으로 저장 버튼 */}
+          <button
+            type="button"
+            onClick={() => handleSaveAs()}
+            disabled={isLoading}
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold border border-slate-700 transition-all active:scale-95 disabled:opacity-50"
+            title="원하는 위치에 다른 이름으로 파일 저장"
+          >
+            <FolderDown size={14} className="text-emerald-400" />
+            <span className="hidden md:inline">다른 이름으로 저장</span>
+          </button>
+
+          {/* 전체화면 전환 버튼 */}
+          {floating.toggleFullscreenButton}
 
           {floating.toggleFloatingButton}
 
@@ -557,6 +863,156 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
                 id="hwp-cancel-save-warning-btn"
                 onClick={handleCancelTrackChangesWarning}
                 className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition-all"
+              >
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 원본 되돌리기 확인 모달 */}
+      {showRestoreConfirm && (
+        <div className="fixed inset-0 z-100 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-amber-400">
+              <RotateCcw size={22} />
+              <h3 className="font-bold text-sm text-slate-100">최초 원본 버전으로 되돌리기</h3>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              편집을 시작하기 전의 최초 한글 문서 원본 상태로 되돌립니다.<br />
+              <span className="text-slate-400 text-[11px] mt-1 block">
+                (백업 시점: {originalDate || '편집 시작 전'})
+              </span>
+              되돌리기를 실행하면 현재 수정한 모든 내용이 취소됩니다. 진행하시겠습니까?
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowRestoreConfirm(false)}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRestore}
+                className="px-3.5 py-1.5 text-xs bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-semibold shadow-md"
+              >
+                원본으로 되돌리기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5단계 임시 복구본 발견 모달 */}
+      {showDraftRecoveryModal && draftToRecover && (
+        <div className="fixed inset-0 z-100 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-emerald-500/30 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-emerald-400">
+              <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                <FileText size={24} />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-slate-100">이전 편집 임시본 발견</h3>
+                <p className="text-xs text-slate-400">
+                  저장되지 않은 자동 임시본이 보관되어 있습니다.
+                </p>
+              </div>
+            </div>
+            <div className="text-xs text-slate-300 leading-relaxed bg-slate-800/60 p-3 rounded-xl border border-slate-700/50 space-y-1.5">
+              <div className="flex justify-between text-slate-400">
+                <span>임시본 저장 시점:</span>
+                <span className="text-slate-200 font-mono">
+                  {new Date(draftToRecover.updatedAt).toLocaleTimeString()}
+                </span>
+              </div>
+              <div className="flex justify-between text-slate-400">
+                <span>임시 데이터 크기:</span>
+                <span className="text-slate-200 font-mono">
+                  {(draftToRecover.byteLength / 1024).toFixed(1)} KB
+                </span>
+              </div>
+              <p className="text-[11px] text-emerald-300/80 pt-1 border-t border-slate-700/50">
+                비정상 종료 전 작업하던 한글 문서 내용을 불러오시겠습니까?
+              </p>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                id="office-confirm-recover-btn"
+                onClick={handleApplyDraftRecovery}
+                className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                복구 적용
+              </button>
+              <button
+                type="button"
+                id="office-discard-recover-btn"
+                onClick={handleDiscardDraftRecovery}
+                className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition-all cursor-pointer"
+              >
+                복구 안 함 (삭제)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5단계 파일 충돌 모달 (디스크 파일 변경 감지) */}
+      {showFileConflictModal && (
+        <div className="fixed inset-0 z-100 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-rose-500/30 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-rose-400">
+              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                <AlertCircle size={24} />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-slate-100">파일 충돌 경고</h3>
+                <p className="text-xs text-rose-300/80">다른 프로그램에서 파일이 변경되었습니다.</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed bg-slate-800/60 p-3 rounded-xl border border-slate-700/50">
+              문서를 연 이후 외부 프로그램에서 파일 내용이나 수정 일시가 바뀌었습니다. 원래 파일에 그대로 덮어쓰시겠습니까, 아니면 다른 이름으로 저장하시겠습니까?
+            </p>
+            <div className="flex flex-col gap-2 pt-1">
+              <button
+                type="button"
+                onClick={async () => {
+                  setShowFileConflictModal(false);
+                  if (fileContextRef.current && editorRef.current) {
+                    const originalBytes = dataUrlToUint8Array(data);
+                    let bytes = isHwpx ? await editorRef.current.exportHwpx() : await editorRef.current.exportHwp();
+                    if (isHwpx) {
+                      bytes = await postProcessHwpx(bytes, originalBytes);
+                    } else {
+                      bytes = postProcessHwp(bytes);
+                    }
+                    await saveToFileHandle(fileContextRef.current, bytes);
+                    setHasChanges(false);
+                    setSaveSuccess(true);
+                    setTimeout(() => setSaveSuccess(false), 3000);
+                  }
+                }}
+                className="py-2.5 px-3 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                원래 파일에 그대로 덮어쓰기
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowFileConflictModal(false);
+                  handleSaveAs();
+                }}
+                className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                다른 이름으로 저장
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowFileConflictModal(false)}
+                className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition-all cursor-pointer"
               >
                 취소
               </button>

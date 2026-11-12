@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import type { Project, Note, GitHubConfig, SyncStatus, AppTheme } from './types';
 import { THEME_OPTIONS } from './types';
 import { 
@@ -30,6 +30,11 @@ import { Calendar as CalendarIcon, X, FolderTree } from 'lucide-react';
 import { crossTabSync } from './services/crossTabSync';
 import type { MyMemoBackupData } from './utils/backup';
 import { getGuideNotes } from './utils/guideNotes';
+
+const ExcelEditorModal = React.lazy(() => import('./components/ExcelEditorModal').then((m) => ({ default: m.ExcelEditorModal })));
+const DocxEditorModal = React.lazy(() => import('./components/DocxEditorModal').then((m) => ({ default: m.DocxEditorModal })));
+const PptxEditorModal = React.lazy(() => import('./components/PptxEditorModal').then((m) => ({ default: m.PptxEditorModal })));
+const HwpEditorModal = React.lazy(() => import('./components/HwpEditorModal').then((m) => ({ default: m.HwpEditorModal })));
 
 interface DeleteConfirmState {
   isOpen: boolean;
@@ -75,6 +80,41 @@ export function App() {
   const [noteSearchQuery, setNoteSearchQuery] = useState<string>('');
   const [isQuickSwitcherOpen, setIsQuickSwitcherOpen] = useState<boolean>(false);
   const [floatingNotes, setFloatingNotes] = useState<{ id: string; isPopout: boolean }[]>([]);
+  const [fileHandleModal, setFileHandleModal] = useState<{
+    type: 'excel' | 'docx' | 'pptx' | 'hwp';
+    fileHandle: any;
+    title: string;
+    data: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const handleOpenFileHandle = async (e: any) => {
+      const fileHandle = e.detail?.fileHandle;
+      if (!fileHandle) return;
+      try {
+        const file = await fileHandle.getFile();
+        const ext = (file.name.split('.').pop() || '').toLowerCase();
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const dataUrl = reader.result as string;
+          let type: 'excel' | 'docx' | 'pptx' | 'hwp' | null = null;
+          if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') type = 'excel';
+          else if (ext === 'docx') type = 'docx';
+          else if (ext === 'pptx') type = 'pptx';
+          else if (ext === 'hwp' || ext === 'hwpx') type = 'hwp';
+          if (type) {
+            setFileHandleModal({ type, fileHandle, title: file.name, data: dataUrl });
+          }
+        };
+        reader.readAsDataURL(file);
+      } catch (err) {
+        console.warn('launchQueue fileHandle 로드 실패:', err);
+      }
+    };
+
+    window.addEventListener('mymemo_open_file_handle', handleOpenFileHandle);
+    return () => window.removeEventListener('mymemo_open_file_handle', handleOpenFileHandle);
+  }, []);
 
   const handleOpenFloatingNote = (id: string, isPopout: boolean = false) => {
     setFloatingNotes((prev) => {
@@ -1897,6 +1937,46 @@ export function App() {
         onConfirm={handleConfirmDelete}
         onCancel={() => setDeleteConfirm((prev) => ({ ...prev, isOpen: false }))}
       />
+
+      {/* PWA 파일 연결(launchQueue) 외부 파일 독립 편집기 */}
+      <React.Suspense fallback={null}>
+        {fileHandleModal && fileHandleModal.type === 'excel' && (
+          <ExcelEditorModal
+            isOpen={true}
+            onClose={() => setFileHandleModal(null)}
+            data={fileHandleModal.data}
+            title={fileHandleModal.title}
+            fileHandle={fileHandleModal.fileHandle}
+          />
+        )}
+        {fileHandleModal && fileHandleModal.type === 'docx' && (
+          <DocxEditorModal
+            isOpen={true}
+            onClose={() => setFileHandleModal(null)}
+            data={fileHandleModal.data}
+            title={fileHandleModal.title}
+            fileHandle={fileHandleModal.fileHandle}
+          />
+        )}
+        {fileHandleModal && fileHandleModal.type === 'pptx' && (
+          <PptxEditorModal
+            isOpen={true}
+            onClose={() => setFileHandleModal(null)}
+            data={fileHandleModal.data}
+            title={fileHandleModal.title}
+            fileHandle={fileHandleModal.fileHandle}
+          />
+        )}
+        {fileHandleModal && fileHandleModal.type === 'hwp' && (
+          <HwpEditorModal
+            isOpen={true}
+            onClose={() => setFileHandleModal(null)}
+            data={fileHandleModal.data}
+            title={fileHandleModal.title}
+            fileHandle={fileHandleModal.fileHandle}
+          />
+        )}
+      </React.Suspense>
 
       {/* 플로팅 독립 메모 창 (다중 메모 분리/비교/동시 편집 및 OS 새 창 팝업) */}
       {floatingNotes.map((item, index) => {

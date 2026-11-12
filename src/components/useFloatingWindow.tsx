@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Maximize2, Minimize2 } from 'lucide-react';
+import { Maximize2, Minimize2, Maximize, Minimize } from 'lucide-react';
 
 export interface UseFloatingWindowOptions {
   id?: string;
@@ -28,6 +28,13 @@ export function useFloatingWindow(options: UseFloatingWindowOptions = {}) {
       return false;
     }
   });
+
+  // 전체 화면(몰입형) 모드 활성화 여부 (Alt+Enter 또는 툴바 버튼)
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen((prev) => !prev);
+  }, []);
 
   // 초기 위치 계산: 대화면인 경우 우측에 배치하여 좌측 메모가 보이도록 설정
   const getDefaultPos = useCallback(() => {
@@ -171,8 +178,13 @@ export function useFloatingWindow(options: UseFloatingWindowOptions = {}) {
         userSelect: isDragging ? ('none' as const) : undefined,
       },
     },
+    isFullscreen,
+    setIsFullscreen,
+    toggleFullscreen,
     modalWrapperClass: isFloating
       ? 'fixed inset-0 z-50 pointer-events-none select-none overflow-hidden'
+      : isFullscreen
+      ? 'fixed inset-0 z-50 bg-slate-950 flex flex-col p-0 select-none animate-fadeIn'
       : 'fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center p-2 md:p-4 select-none animate-fadeIn',
     windowContainerProps: {
       style: isFloating
@@ -186,11 +198,30 @@ export function useFloatingWindow(options: UseFloatingWindowOptions = {}) {
             maxHeight: '100vh',
             zIndex: 55,
           }
+        : isFullscreen
+        ? {
+            width: '100vw',
+            height: '100vh',
+            maxWidth: '100vw',
+            maxHeight: '100vh',
+          }
         : undefined,
       className: isFloating
         ? 'pointer-events-auto bg-slate-900 border border-slate-700/80 rounded-2xl shadow-[0_25px_60px_-15px_rgba(0,0,0,0.8)] flex flex-col overflow-hidden ring-1 ring-white/10 relative'
+        : isFullscreen
+        ? 'w-full h-full bg-slate-900 flex flex-col overflow-hidden relative rounded-none border-none'
         : 'w-full max-w-6xl h-[95vh] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden relative',
     },
+    toggleFullscreenButton: (
+      <button
+        type="button"
+        onClick={toggleFullscreen}
+        className="p-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition-colors"
+        title={isFullscreen ? '창 크기 복원 (Alt+Enter)' : '전체 화면 편집 (Alt+Enter)'}
+      >
+        {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+      </button>
+    ),
     toggleFloatingButton: (
       <button
         type="button"
