@@ -1,3 +1,9 @@
+/**
+ * [참고용/레거시]
+ * 본 스크립트는 실 앱 뷰어 연동 전 독립 XML->HTML 변환 렌더링 검증용으로 작성된 레거시 스크립트입니다.
+ * 실제 공식 스크린샷은 MyMemo 앱 내장 PptxViewerModal을 Vite dev 서버 + Playwright로
+ * 실 브라우저 구동하여 캡처하는 `scripts/capture_viewer_screenshots_playwright.mjs`에서 생성됩니다.
+ */
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';

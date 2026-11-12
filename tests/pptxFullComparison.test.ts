@@ -3,10 +3,17 @@ import fs from 'fs';
 import path from 'path';
 import JSZip from 'jszip';
 import { JSDOM } from 'jsdom';
+
+if (typeof globalThis.DOMParser === 'undefined') {
+  const dom = new JSDOM();
+  globalThis.DOMParser = dom.window.DOMParser;
+  globalThis.XMLSerializer = dom.window.XMLSerializer;
+}
 import {
   replaceRunTextInSlideXml,
   deleteSlideFromPptx,
   reorderSlidesInPptx,
+  savePptxPresentation,
 } from '../src/utils/pptxAdapter';
 import { detectPptxUnsupportedFeatures } from '../src/utils/pptxLossDetector';
 
@@ -248,6 +255,50 @@ describe('3단계 PPTX OpenXML In-Place 검증 테스트 스위트', () => {
       expect(editShapes).toBe(origShapes);
       expect(editTables).toBe(origTables);
       expect(editPics).toBe(origPics);
+
+      // ZIP 디렉터리 항목 검사: JSZip에 의한 임의의 디렉터리 항목(ppt/, ppt/slides/ 등)이 원본 대비 추가되지 않아야 함
+      const origDirs = Object.keys(origZip.files).filter((k) => origZip.files[k].dir).sort();
+      const editDirs = Object.keys(editZip.files).filter((k) => editZip.files[k].dir).sort();
+      expect(editDirs).toEqual(origDirs);
     }
+  });
+
+  it('6. 앱 편집기 및 테스트 공통 savePptxPresentation 함수가 diff->run 치환 및 불필요 폴더 제거를 완벽 수행해야 한다', async () => {
+    const rawBuf = fs.readFileSync(path.join(samplesDir, 'PPT_A_사업보고_원본.pptx'));
+    const b64 = rawBuf.toString('base64');
+    const dataUrl = `data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,${b64}`;
+
+    // 슬라이드 2의 본문 단락 수정 (단일 런 치환)
+    const editableSlides = [
+      {
+        slideNumber: 1,
+        title: '사업보고',
+        bodyText: '',
+      },
+      {
+        slideNumber: 2,
+        title: '2. 사업 추진 경과',
+        bodyText: '• 3월: [알림] 신규 서비스 출시 (파랑 테스트 완료)',
+      },
+    ];
+
+    const savedUrl = await savePptxPresentation(dataUrl, editableSlides);
+    expect(savedUrl).toContain('data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,');
+    const savedB64 = savedUrl.replace(/^data:[^;]+;base64,/, '');
+    const savedZip = await JSZip.loadAsync(Buffer.from(savedB64, 'base64'));
+
+    // 치환된 슬라이드 2 XML 확인
+    const s2Xml = await savedZip.file('ppt/slides/slide2.xml')!.async('text');
+    expect(s2Xml).toContain('파랑');
+
+    // 형제 run (서식, 하이퍼링크 등) 보존 확인
+    expect(s2Xml).toContain('<a:highlight');
+    expect(s2Xml).toContain('<a:hlinkClick');
+
+    // 디렉터리 항목 추가 여부 확인 (원본과 동일해야 함)
+    const origZip = await JSZip.loadAsync(rawBuf);
+    const origDirs = Object.keys(origZip.files).filter((k) => origZip.files[k].dir).sort();
+    const savedDirs = Object.keys(savedZip.files).filter((k) => savedZip.files[k].dir).sort();
+    expect(savedDirs).toEqual(origDirs);
   });
 });

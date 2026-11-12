@@ -172,8 +172,13 @@ export function invalidatePptxCache(attId?: string) {
 
 // XML 문자열을 DOM으로 파싱
 function parseXml(xmlText: string): Document {
-  const parser = new DOMParser();
-  return parser.parseFromString(xmlText, 'application/xml');
+  if (typeof DOMParser !== 'undefined') {
+    return new DOMParser().parseFromString(xmlText, 'application/xml');
+  }
+  if (typeof globalThis !== 'undefined' && (globalThis as any).DOMParser) {
+    return new (globalThis as any).DOMParser().parseFromString(xmlText, 'application/xml');
+  }
+  throw new Error('DOMParser를 찾을 수 없습니다.');
 }
 
 // 노드에서 로컬 태그 이름으로 요소들 찾기 (네임스페이스 무관)

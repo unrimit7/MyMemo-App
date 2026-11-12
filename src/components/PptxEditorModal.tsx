@@ -20,9 +20,11 @@ import {
 } from 'lucide-react';
 import {
   parsePptxPresentation,
-  updatePptxSlideTexts,
   type PptxPresentation,
 } from '../utils/pptxViewer';
+import {
+  savePptxPresentation,
+} from '../utils/pptxAdapter';
 import {
   detectPptxUnsupportedFeatures,
   type PptxUnsupportedFeatureReport,
@@ -45,6 +47,7 @@ export interface EditableTableData {
 
 interface EditableSlide {
   slideNumber: number;
+  originalSlideIndex?: number;
   title: string;
   bodyText: string;
   images: { id: string; dataUrl: string }[];
@@ -59,6 +62,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
   onSave,
 }) => {
   const [slides, setSlides] = useState<EditableSlide[]>([]);
+  const [deletedSlideIndices, setDeletedSlideIndices] = useState<number[]>([]);
   const [activeSlideIndex, setActiveSlideIndex] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -152,7 +156,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
           label,
         });
 
-        const editableList: EditableSlide[] = pres.slides.map((s) => {
+        const editableList: EditableSlide[] = pres.slides.map((s, idx) => {
           const bodyLines = s.paragraphs
             .filter((p) => !p.isTitle && p.text !== s.title)
             .map((p) => {
@@ -176,6 +180,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
 
           return {
             slideNumber: s.slideNumber,
+            originalSlideIndex: idx,
             title: s.title,
             bodyText: bodyLines.join('\n'),
             images: s.images.map((img) => ({ id: img.id, dataUrl: img.dataUrl })),
@@ -184,6 +189,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
         });
 
         setSlides(editableList);
+        setDeletedSlideIndices([]);
         setActiveSlideIndex(0);
         setHasChanges(false);
         setLoading(false);
@@ -273,8 +279,12 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
       alert('최소 1개의 슬라이드가 유지되어야 합니다.');
       return;
     }
-    if (!confirm(`'슬라이드 ${slides[index].slideNumber}'을(를) 삭제하시겠습니까?`)) {
+    const targetSlide = slides[index];
+    if (!confirm(`'슬라이드 ${targetSlide.slideNumber}'을(를) 삭제하시겠습니까?`)) {
       return;
+    }
+    if (targetSlide.originalSlideIndex !== undefined && targetSlide.originalSlideIndex >= 0) {
+      setDeletedSlideIndices((prev) => [...prev, targetSlide.originalSlideIndex!]);
     }
     setSlides((prev) => {
       const filtered = prev.filter((_, i) => i !== index);
@@ -312,21 +322,23 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
     setHasChanges(true);
   };
 
-  // 저장 및 메모 반영 (기존 이미지와 레이아웃은 100% 무손실 보존됨)
+  // 저장 및 메모 반영 (새 OpenXML In-Place 어댑터로 무손실 diff -> run 저장)
   const handleSave = async () => {
     setIsSaving(true);
     setSaveToast(null);
     setErrorToast(null);
 
     try {
-      const updatedDataUrl = await updatePptxSlideTexts(
+      const updatedDataUrl = await savePptxPresentation(
         data,
         slides.map((s) => ({
           slideNumber: s.slideNumber,
+          originalSlideIndex: s.originalSlideIndex,
           title: s.title,
           bodyText: s.bodyText,
           tables: s.tables.map((t) => ({ rows: t.rows })),
-        }))
+        })),
+        deletedSlideIndices
       );
 
       if (onSave) {
@@ -347,14 +359,16 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
   // 다운로드
   const handleDownload = async () => {
     try {
-      const updatedDataUrl = await updatePptxSlideTexts(
+      const updatedDataUrl = await savePptxPresentation(
         data,
         slides.map((s) => ({
           slideNumber: s.slideNumber,
+          originalSlideIndex: s.originalSlideIndex,
           title: s.title,
           bodyText: s.bodyText,
           tables: s.tables.map((t) => ({ rows: t.rows })),
-        }))
+        })),
+        deletedSlideIndices
       );
 
       const a = document.createElement('a');
@@ -375,7 +389,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
       setLoading(true);
       parsePptxPresentation(data)
         .then((pres) => {
-          const editableList: EditableSlide[] = pres.slides.map((s) => {
+          const editableList: EditableSlide[] = pres.slides.map((s, idx) => {
             const bodyLines = s.paragraphs
               .filter((p) => !p.isTitle && p.text !== s.title)
               .map((p) => {
@@ -391,6 +405,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
             }
             return {
               slideNumber: s.slideNumber,
+              originalSlideIndex: idx,
               title: s.title,
               bodyText: bodyLines.join('\n'),
               images: s.images.map((img) => ({ id: img.id, dataUrl: img.dataUrl })),
@@ -398,6 +413,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
             };
           });
           setSlides(editableList);
+          setDeletedSlideIndices([]);
           setHasChanges(false);
           setLoading(false);
           setSaveToast('원본 상태로 되돌렸습니다.');

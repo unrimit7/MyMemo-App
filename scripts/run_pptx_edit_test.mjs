@@ -1,117 +1,146 @@
 import fs from 'fs';
 import path from 'path';
-import JSZip from 'jszip';
 import { JSDOM } from 'jsdom';
+
+if (typeof globalThis.DOMParser === 'undefined') {
+  const dom = new JSDOM();
+  globalThis.DOMParser = dom.window.DOMParser;
+  globalThis.XMLSerializer = dom.window.XMLSerializer;
+}
+
+import {
+  savePptxPresentation,
+  bufferToDataUrl,
+  dataUrlToBuffer,
+} from '../src/utils/pptxAdapter.js';
+import { parsePptxPresentation } from '../src/utils/pptxViewer.js';
 
 const OUT_DIR = path.resolve('docs/office-upgrade/out');
 if (!fs.existsSync(OUT_DIR)) {
   fs.mkdirSync(OUT_DIR, { recursive: true });
 }
 
-function replaceRunTextInDoc(doc, findText, replaceText) {
-  const runs = doc.getElementsByTagName('a:r');
-  let replaced = false;
-  for (let i = 0; i < runs.length; i++) {
-    const r = runs[i];
-    const tEls = r.getElementsByTagName('a:t');
-    for (let j = 0; j < tEls.length; j++) {
-      if (tEls[j].textContent && tEls[j].textContent.includes(findText)) {
-        tEls[j].textContent = tEls[j].textContent.replace(findText, replaceText);
-        replaced = true;
-        break;
+async function editPptAWithAppAdapter(inputPath, outputPath) {
+  const buf = fs.readFileSync(inputPath);
+  const dataUrl = bufferToDataUrl(buf);
+  const pres = await parsePptxPresentation(dataUrl);
+
+  const editableSlides = pres.slides.map((s, idx) => {
+    const bodyLines = s.paragraphs
+      .filter((p) => !p.isTitle && p.text !== s.title)
+      .map((p) => {
+        const indent = '  '.repeat(Math.max(0, p.level));
+        return `${indent}• ${p.text}`;
+      });
+
+    const slideTables = [];
+    for (const el of s.elements) {
+      if (el.type === 'table') {
+        const tableRows = el.rows.map((row) =>
+          row.cells.map((cell) => cell.text)
+        );
+        slideTables.push({ rows: tableRows });
       }
     }
-    if (replaced) break;
-  }
-  return replaced;
-}
 
-async function editPptA(inputPath, outputPath) {
-  const buf = fs.readFileSync(inputPath);
-  const zip = await JSZip.loadAsync(buf);
-
-  // 1. Slide 2: 본문 텍스트 run-level 수정 ("빨강" -> "파랑")
-  const s2Xml = await zip.file('ppt/slides/slide2.xml').async('text');
-  const dom2 = new JSDOM(s2Xml, { contentType: 'text/xml' });
-  const replacedS2 = replaceRunTextInDoc(dom2.window.document, '빨강', '파랑');
-  if (!replacedS2) {
-    throw new Error(`slide2.xml에서 "빨강" 텍스트를 찾지 못했습니다 (${inputPath})`);
-  }
-  const serializer = new dom2.window.XMLSerializer();
-  zip.file('ppt/slides/slide2.xml', serializer.serializeToString(dom2.window.document));
-
-  // 2. Slide 3: 표 셀 수정 ("영업" -> "영업(수정)")
-  const s3Xml = await zip.file('ppt/slides/slide3.xml').async('text');
-  const dom3 = new JSDOM(s3Xml, { contentType: 'text/xml' });
-  const replacedS3 = replaceRunTextInDoc(dom3.window.document, '영업', '영업(수정)');
-  if (!replacedS3) {
-    throw new Error(`slide3.xml에서 "영업" 텍스트를 찾지 못했습니다 (${inputPath})`);
-  }
-  zip.file('ppt/slides/slide3.xml', serializer.serializeToString(dom3.window.document));
-
-  const outBuf = await zip.generateAsync({
-    type: 'nodebuffer',
-    compression: 'DEFLATE',
-    compressionOptions: { level: 6 },
+    return {
+      slideNumber: s.slideNumber,
+      originalSlideIndex: idx,
+      title: s.title,
+      bodyText: bodyLines.join('\n'),
+      tables: slideTables,
+    };
   });
+
+  // 1. Slide 2 (인덱스 1): 본문 내 "빨강" -> "파랑" 수정
+  editableSlides[1].bodyText = editableSlides[1].bodyText.replace('빨강', '파랑');
+
+  // 2. Slide 3 (인덱스 2): 표 셀 "영업" -> "영업(수정)"
+  if (editableSlides[2].tables && editableSlides[2].tables.length > 0) {
+    const rows = editableSlides[2].tables[0].rows;
+    for (let r = 0; r < rows.length; r++) {
+      for (let c = 0; c < rows[r].length; c++) {
+        if (rows[r][c] === '영업') {
+          rows[r][c] = '영업(수정)';
+          break;
+        }
+      }
+    }
+  }
+
+  // 앱 편집기(PptxEditorModal handleSave)와 100% 동일한 savePptxPresentation 호출
+  const updatedDataUrl = await savePptxPresentation(dataUrl, editableSlides);
+  const outBuf = dataUrlToBuffer(updatedDataUrl);
   fs.writeFileSync(outputPath, outBuf);
   console.log(`[성공] ${path.basename(outputPath)} 저장 완료 (${outBuf.length.toLocaleString()} 바이트)`);
 }
 
-async function editPptB(inputPath, outputPath) {
+async function editPptBWithAppAdapter(inputPath, outputPath) {
   const buf = fs.readFileSync(inputPath);
-  const zip = await JSZip.loadAsync(buf);
+  const dataUrl = bufferToDataUrl(buf);
+  const pres = await parsePptxPresentation(dataUrl);
 
-  // 1. Slide 2: 본문 텍스트 run-level 수정 ("세로쓰기예시" -> "세로쓰기예시(수정)")
-  const s2Xml = await zip.file('ppt/slides/slide2.xml').async('text');
-  const dom2 = new JSDOM(s2Xml, { contentType: 'text/xml' });
-  const replacedS2 = replaceRunTextInDoc(dom2.window.document, '세로쓰기예시', '세로쓰기예시(수정)');
-  if (!replacedS2) {
-    throw new Error(`slide2.xml에서 "세로쓰기예시" 텍스트를 찾지 못했습니다 (${inputPath})`);
-  }
-  const serializer = new dom2.window.XMLSerializer();
-  zip.file('ppt/slides/slide2.xml', serializer.serializeToString(dom2.window.document));
+  const editableSlides = pres.slides.map((s, idx) => {
+    const bodyLines = s.paragraphs
+      .filter((p) => !p.isTitle && p.text !== s.title)
+      .map((p) => {
+        const indent = '  '.repeat(Math.max(0, p.level));
+        return `${indent}• ${p.text}`;
+      });
 
-  // 2. Slide 4: 사용자 지정 글머리 본문 수정 ("첫째 항목" -> "첫째 항목(수정)")
-  const s4Xml = await zip.file('ppt/slides/slide4.xml').async('text');
-  const dom4 = new JSDOM(s4Xml, { contentType: 'text/xml' });
-  const replacedS4 = replaceRunTextInDoc(dom4.window.document, '첫째 항목', '첫째 항목(수정)');
-  if (!replacedS4) {
-    throw new Error(`slide4.xml에서 "첫째 항목" 텍스트를 찾지 못했습니다 (${inputPath})`);
-  }
-  zip.file('ppt/slides/slide4.xml', serializer.serializeToString(dom4.window.document));
+    const slideTables = [];
+    for (const el of s.elements) {
+      if (el.type === 'table') {
+        const tableRows = el.rows.map((row) =>
+          row.cells.map((cell) => cell.text)
+        );
+        slideTables.push({ rows: tableRows });
+      }
+    }
 
-  const outBuf = await zip.generateAsync({
-    type: 'nodebuffer',
-    compression: 'DEFLATE',
-    compressionOptions: { level: 6 },
+    return {
+      slideNumber: s.slideNumber,
+      originalSlideIndex: idx,
+      title: s.title,
+      bodyText: bodyLines.join('\n'),
+      tables: slideTables,
+    };
   });
+
+  // 1. Slide 2 (인덱스 1): "세로쓰기예시" -> "세로쓰기예시(수정)"
+  editableSlides[1].bodyText = editableSlides[1].bodyText.replace('세로쓰기예시', '세로쓰기예시(수정)');
+
+  // 2. Slide 4 (인덱스 3): "첫째 항목" -> "첫째 항목(수정)"
+  editableSlides[3].bodyText = editableSlides[3].bodyText.replace('첫째 항목', '첫째 항목(수정)');
+
+  const updatedDataUrl = await savePptxPresentation(dataUrl, editableSlides);
+  const outBuf = dataUrlToBuffer(updatedDataUrl);
   fs.writeFileSync(outputPath, outBuf);
   console.log(`[성공] ${path.basename(outputPath)} 저장 완료 (${outBuf.length.toLocaleString()} 바이트)`);
 }
 
 async function main() {
-  console.log('PPTX In-Place run-level 편집 테스트 시작...');
-  await editPptA(
+  console.log('앱 실제 저장 함수(savePptxPresentation)를 이용한 In-Place 편집 테스트 시작...');
+  await editPptAWithAppAdapter(
     'docs/office-upgrade/samples/real/PPT_A_사업보고_원본.pptx',
     path.join(OUT_DIR, 'PPT_A_사업보고_원본_수정저장결과.pptx')
   );
-  await editPptA(
+  await editPptAWithAppAdapter(
     'docs/office-upgrade/samples/real/PPT_A_사업보고_한쇼.pptx',
     path.join(OUT_DIR, 'PPT_A_사업보고_한쇼_수정저장결과.pptx')
   );
-  await editPptB(
+  await editPptBWithAppAdapter(
     'docs/office-upgrade/samples/real/PPT_B_교육자료_원본.pptx',
     path.join(OUT_DIR, 'PPT_B_교육자료_원본_수정저장결과.pptx')
   );
-  await editPptB(
+  await editPptBWithAppAdapter(
     'docs/office-upgrade/samples/real/PPT_B_교육자료_한쇼.pptx',
     path.join(OUT_DIR, 'PPT_B_교육자료_한쇼_수정저장결과.pptx')
   );
-  console.log('4개 파일 In-Place 수정 저장 완료.');
+  console.log('4개 파일 앱 어댑터 수정 저장 완료.');
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('오류 발생:', err);
   process.exit(1);
 });

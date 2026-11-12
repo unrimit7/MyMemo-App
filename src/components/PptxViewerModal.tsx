@@ -854,6 +854,7 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                 return (
                   <div
                     key={s.slideNumber}
+                    data-testid={`slide-thumb-${idx}`}
                     onClick={() => setCurrentSlideIndex(idx)}
                     className={`p-2 rounded-xl border transition-all cursor-pointer flex flex-col gap-1 ${
                       isActive
@@ -956,6 +957,8 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                   /* 1. 한쇼/파워포인트 원본 2차원 절대 좌표 캔버스 렌더링 */
                   <div className="flex flex-col items-center justify-center w-full">
                   <div
+                    data-testid="pptx-slide-canvas"
+                    data-slide-index={currentSlideIndex}
                     style={{
                       aspectRatio: `${slideAspect}`,
                       maxHeight: isSlideShow ? '96vh' : '82vh',
