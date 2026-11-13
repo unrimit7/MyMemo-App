@@ -386,6 +386,14 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
         univerAPIRef.current = univerAPI;
 
         univerAPI.createWorkbook(workbookData);
+        // 계산 결과가 파일에 없는 수식(예: openpyxl로 만든 파일의 =SUM(E4:E12))은 Univer가 열 때
+        // 다시 계산하지 않아 0('-')으로 보인다. 열자마자 전체 수식을 한 번 계산한다.
+        // (수식 계산 결과는 '수정됨' 판정 해시에서 제외되므로 변경으로 잡히지 않음)
+        try {
+          (univerAPI as any).getFormula?.()?.executeCalculation?.();
+        } catch (calcErr) {
+          console.warn('[Excel] 초기 수식 전체 계산 실패 (무시 가능):', calcErr);
+        }
         // 기준 해시는 입력 데이터가 아니라 Univer가 불러온 뒤 내보내는 save() 결과로 잡는다.
         // (Univer는 로드 시 데이터를 정규화하므로 입력값 기준이면 무변경인데도 항상 다르게 판정됨)
         lastSavedSnapshotHashRef.current = '';

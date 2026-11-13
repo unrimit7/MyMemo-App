@@ -1,5 +1,5 @@
 import type { AttachmentItem } from '../types';
-import { parseExcelWorkbook, renderExcelTableHtml } from './excelViewer';
+import { parseExcelWorkbook, renderExcelTableHtml, INLINE_PREVIEW_ROWS } from './excelViewer';
 import { dataUrlToUint8Array, formatHexOffset, formatByteToHex, byteToAsciiChar } from './hexViewer';
 
 // Blob URL 캐시 (대용량 Base64 문자열 반복 파싱 부하 및 메모리 낭비 방지)
@@ -276,7 +276,7 @@ export function createAttachmentCardHtml(
     const parsed = parseExcelWorkbook(att.data, att.id);
     const sheetNames = parsed.sheetNames || ['Sheet1'];
     const firstSheet = sheetNames[0] || 'Sheet1';
-    const { tableHeaderHtml, tableBodyHtml, colCount, totalRows } = renderExcelTableHtml(parsed, firstSheet, 12);
+    const { tableHeaderHtml, tableBodyHtml, colCount, totalRows } = renderExcelTableHtml(parsed, firstSheet, INLINE_PREVIEW_ROWS);
 
     const sheetTabsHtml = sheetNames.length > 1
       ? `<div class="px-3.5 py-1.5 bg-slate-950/80 border-b border-slate-800 flex items-center gap-1.5 overflow-x-auto scrollbar-thin select-none" onwheel="if(!event.shiftKey){event.preventDefault();this.scrollLeft+=event.deltaY;}">
@@ -342,7 +342,7 @@ export function createAttachmentCardHtml(
 
   <!-- 하단 행 카운트 안내 바 -->
   <div class="px-3.5 py-1.5 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
-    <span class="excel-footer-info">전체 ${totalRows}개 행 • ${colCount}개 열 ${totalRows > 12 ? `(상위 12개 행 미리보기)` : ''}</span>
+    <span class="excel-footer-info">전체 ${totalRows}개 행 • ${colCount}개 열 ${totalRows > INLINE_PREVIEW_ROWS ? `(상위 ${INLINE_PREVIEW_ROWS}개 행 미리보기)` : ''}</span>
     <span class="text-slate-500 hidden sm:inline">전체 확인 및 셀 수정은 [🔍 크게 보기] 또는 [✏️ 직접 편집]을 클릭하세요.</span>
   </div>
 </div>

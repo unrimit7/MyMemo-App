@@ -251,11 +251,35 @@ export function formatCellValue(val: any, numFmt?: string): string {
 //   - 연산자: +, -, *, /, 단항 +, 단항 -
 //   - 괄호: (, )
 //   - 허용 함수: TODAY(), NOW(), DATE(y, m, d)
-// 그 외의 함수(MAX, MIN, ROUND, SUM, IF 등), 연산자(^, %, &, <, > 등), 문자열, 타 시트 참조(!),
-// 쉼표(DATE 외부)가 하나라도 존재하면 절대로 계산하지 않고 success: false를 반환합니다.
+//   - 집계 함수: SUM, AVERAGE, MIN, MAX, COUNT
+//       인수는 같은 시트 범위(E4:E24), 셀 참조, 사칙연산식만 허용.
+//       범위/참조 안의 빈칸·글자·논리값은 엑셀과 같이 무시하고 숫자·날짜만 집계한다.
+//       오류 값이나 계산할 수 없는 수식이 범위에 있으면 전체를 계산하지 않는다.
+//   - 계산 결과가 없는(또는 TODAY/NOW를 쓰는) 참조 수식은 같은 계산기로 재귀 계산(깊이 제한)
+// 그 외의 함수(ROUND, IF, SUMIF, COUNTA 등), 연산자(^, %, &, <, > 등), 문자열, 타 시트 참조(!)가
+// 하나라도 존재하면 절대로 계산하지 않고 success: false를 반환합니다.
 // =============================================================================
 
-type TokenType = '+' | '-' | '*' | '/' | '(' | ')' | 'NUMBER' | 'TODAY' | 'NOW' | 'CELL_REF';
+type TokenType = '+' | '-' | '*' | '/' | '(' | ')' | ',' | 'NUMBER' | 'TODAY' | 'NOW' | 'CELL_REF' | 'RANGE' | 'FUNC';
+
+const AGGREGATE_FUNCS = ['SUM', 'AVERAGE', 'MIN', 'MAX', 'COUNT'] as const;
+const MAX_FORMULA_DEPTH = 16;
+const MAX_RANGE_CELLS = 100000;
+
+function splitCellRef(ref: string): { col: number; row: number } {
+  const m = ref.match(/^([A-Z]{1,3})(\d{1,7})$/);
+  if (!m) throw new Error(`Invalid cell ref ${ref}`);
+  let col = 0;
+  for (const ch of m[1]) col = col * 26 + (ch.charCodeAt(0) - 64);
+  return { col: col - 1, row: parseInt(m[2], 10) };
+}
+
+// 범위/참조 집계용 값 변환: 숫자·날짜만 숫자로, 빈칸·글자·논리값은 null(무시)
+function aggregateValue(raw: any): number | null {
+  if (raw instanceof Date) return excelSerialFromDate(raw);
+  if (typeof raw === 'number' && isFinite(raw)) return raw;
+  return null;
+}
 
 interface Token {
   type: TokenType;
@@ -287,8 +311,8 @@ class FormulaTokenizer {
         continue;
       }
 
-      // 사칙연산자 및 괄호
-      if (ch === '+' || ch === '-' || ch === '*' || ch === '/' || ch === '(' || ch === ')') {
+      // 사칙연산자, 괄호, 쉼표(집계 함수 인수 구분 전용 - 파서가 함수 밖 쉼표는 거부)
+      if (ch === '+' || ch === '-' || ch === '*' || ch === '/' || ch === '(' || ch === ')' || ch === ',') {
         tokens.push({ type: ch, value: ch });
         this.pos++;
         continue;
@@ -335,13 +359,43 @@ class FormulaTokenizer {
         continue;
       }
 
-      // 셀 참조: $?열문자$?행번호 (단, 뒤에 !, :, (가 오지 않는 동일 시트 단일 셀 참조만)
+      // 집계 함수 SUM/AVERAGE/MIN/MAX/COUNT (SUMIF, COUNTA, MAXA 등 비슷한 이름은 일치하지 않아 거부됨)
+      const funcMatch = remaining.match(/^(SUM|AVERAGE|MIN|MAX|COUNT)\s*\(/i);
+      if (funcMatch) {
+        tokens.push({ type: 'FUNC', value: funcMatch[1].toUpperCase() });
+        tokens.push({ type: '(', value: '(' });
+        this.pos += funcMatch[0].length;
+        continue;
+      }
+
+      // 셀 참조: $?열문자$?행번호 (동일 시트만). 바로 뒤에 :셀참조가 오면 범위(RANGE)
       const cellRefMatch = remaining.match(/^(\$?[A-Za-z]{1,3}\$?[0-9]{1,7})\b/);
       if (cellRefMatch) {
         const fullMatched = cellRefMatch[1];
-        // 다른 시트 참조(Sheet1!), 범위(A1:B2), 또는 함수 호출(LOG10(x))인 경우 거부
-        const afterRef = remaining.slice(fullMatched.length).trimStart();
-        if (afterRef.startsWith('!') || afterRef.startsWith(':') || afterRef.startsWith('(')) {
+        const rawAfter = remaining.slice(fullMatched.length);
+        const afterRef = rawAfter.trimStart();
+        // 다른 시트 참조(Sheet1!) 또는 함수 호출(LOG10(x))인 경우 거부
+        if (afterRef.startsWith('!') || afterRef.startsWith('(')) {
+          return null;
+        }
+        if (rawAfter.startsWith(':')) {
+          const secondMatch = rawAfter.slice(1).match(/^(\$?[A-Za-z]{1,3}\$?[0-9]{1,7})\b/);
+          if (!secondMatch) return null;
+          const after2 = rawAfter.slice(1 + secondMatch[1].length).trimStart();
+          if (after2.startsWith('!') || after2.startsWith('(') || after2.startsWith(':')) {
+            return null;
+          }
+          tokens.push({
+            type: 'RANGE',
+            value: {
+              start: fullMatched.replace(/\$/g, '').toUpperCase(),
+              end: secondMatch[1].replace(/\$/g, '').toUpperCase(),
+            },
+          });
+          this.pos += fullMatched.length + 1 + secondMatch[1].length;
+          continue;
+        }
+        if (afterRef.startsWith(':')) {
           return null;
         }
         const cleanRef = fullMatched.replace(/\$/g, '').toUpperCase();
@@ -361,11 +415,133 @@ class FormulaTokenizer {
 class FormulaParser {
   private tokens: Token[];
   private resolveCell: (ref: string) => any;
+  private depth: number;
   private pos = 0;
 
-  constructor(tokens: Token[], resolveCell: (ref: string) => any) {
+  constructor(tokens: Token[], resolveCell: (ref: string) => any, depth = 0) {
     this.tokens = tokens;
     this.resolveCell = resolveCell;
+    this.depth = depth;
+  }
+
+  /**
+   * 참조 셀의 실제 값을 구한다.
+   * - 수식 셀: 계산 결과가 없거나 TODAY/NOW를 쓰면 같은 계산기로 재귀 계산,
+   *   실패하면 저장된 계산 결과를 쓰고, 그것도 없으면 예외(전체 계산 포기)
+   * - 오류 값: 예외
+   * - 서식 있는 텍스트/하이퍼링크: 글자로 취급
+   */
+  private resolveRaw(ref: string): any {
+    const raw = this.resolveCell(ref);
+    if (!raw || typeof raw !== 'object' || raw instanceof Date) return raw;
+
+    if (typeof (raw as any).formula === 'string') {
+      const formulaStr = (raw as any).formula as string;
+      const cached = (raw as any).result;
+      const hasCached = cached !== undefined && cached !== null && !(typeof cached === 'object' && 'error' in cached);
+      const isVolatile = /TODAY\s*\(|NOW\s*\(/i.test(formulaStr);
+      if (!hasCached || isVolatile) {
+        if (this.depth < MAX_FORMULA_DEPTH) {
+          const sub = evaluateFormula(formulaStr, this.resolveCell, this.depth + 1);
+          if (sub.success) return sub.result;
+        }
+        if (hasCached) return cached;
+        throw new Error(`Cannot evaluate dependent formula at ${ref}`);
+      }
+      return cached;
+    }
+    if ('result' in raw) {
+      const cached = (raw as any).result;
+      if (cached === undefined || cached === null || (typeof cached === 'object')) {
+        throw new Error(`Unresolved cell object at ${ref}`);
+      }
+      return cached;
+    }
+    if ('error' in raw) throw new Error(`Error value at ${ref}`);
+    if ('richText' in raw && Array.isArray((raw as any).richText)) {
+      return (raw as any).richText.map((t: any) => t?.text || '').join('');
+    }
+    if ('text' in raw) return String((raw as any).text ?? '');
+    throw new Error(`Unsupported cell object at ${ref}`);
+  }
+
+  private collectRange(startRef: string, endRef: string): number[] {
+    const a = splitCellRef(startRef);
+    const b = splitCellRef(endRef);
+    const r1 = Math.min(a.row, b.row);
+    const r2 = Math.max(a.row, b.row);
+    const c1 = Math.min(a.col, b.col);
+    const c2 = Math.max(a.col, b.col);
+    if ((r2 - r1 + 1) * (c2 - c1 + 1) > MAX_RANGE_CELLS) {
+      throw new Error('Range too large');
+    }
+    const nums: number[] = [];
+    for (let r = r1; r <= r2; r++) {
+      for (let c = c1; c <= c2; c++) {
+        const n = aggregateValue(this.resolveRaw(`${getColumnLabel(c)}${r}`));
+        if (n !== null) nums.push(n);
+      }
+    }
+    return nums;
+  }
+
+  private parseAggregate(): number {
+    const name = this.consume('FUNC').value as (typeof AGGREGATE_FUNCS)[number];
+    this.consume('(');
+    if (this.peek()?.type === ')') {
+      throw new Error('Empty argument list');
+    }
+    const nums: number[] = [];
+    while (true) {
+      const t = this.peek();
+      if (!t) throw new Error('Unexpected end of tokens');
+      const next = this.tokens[this.pos + 1];
+      const isArgEnd = next?.type === ',' || next?.type === ')';
+      if (t.type === 'RANGE' && isArgEnd) {
+        this.consume('RANGE');
+        nums.push(...this.collectRange(t.value.start, t.value.end));
+      } else if (t.type === 'CELL_REF' && isArgEnd) {
+        // 단독 셀 참조 인수는 범위와 같이 취급 (빈칸·글자 무시)
+        this.consume('CELL_REF');
+        const n = aggregateValue(this.resolveRaw(t.value));
+        if (n !== null) nums.push(n);
+      } else {
+        // 직접 계산식 인수 (예: SUM(A1*2, 10))
+        nums.push(this.parseExpr());
+      }
+      if (this.peek()?.type === ',') {
+        this.consume(',');
+        continue;
+      }
+      this.consume(')');
+      break;
+    }
+
+    let sum = 0;
+    for (const n of nums) sum += n;
+    switch (name) {
+      case 'SUM':
+        return sum;
+      case 'AVERAGE':
+        if (nums.length === 0) throw new Error('#DIV/0!');
+        return sum / nums.length;
+      case 'MIN': {
+        if (nums.length === 0) return 0;
+        let m = nums[0];
+        for (const n of nums) if (n < m) m = n;
+        return m;
+      }
+      case 'MAX': {
+        if (nums.length === 0) return 0;
+        let m = nums[0];
+        for (const n of nums) if (n > m) m = n;
+        return m;
+      }
+      case 'COUNT':
+        return nums.length;
+      default:
+        throw new Error(`Unsupported function ${name}`);
+    }
   }
 
   private peek(): Token | null {
@@ -438,9 +614,13 @@ class FormulaParser {
       return excelSerialFromDate(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
     }
 
+    if (token.type === 'FUNC') {
+      return this.parseAggregate();
+    }
+
     if (token.type === 'CELL_REF') {
       const ref = this.consume('CELL_REF').value;
-      const rawVal = this.resolveCell(ref);
+      const rawVal = this.resolveRaw(ref);
       const parsed = parseDateOrNumber(rawVal);
       if (parsed === null) {
         throw new Error(`Cannot parse cell reference ${ref} to numeric date/value`);
@@ -465,7 +645,8 @@ class FormulaParser {
  */
 export function evaluateFormula(
   formula: string,
-  resolveCell: (ref: string) => any
+  resolveCell: (ref: string) => any,
+  depth = 0
 ): { success: boolean; result?: any; formulaText: string } {
   const formulaText = formula.startsWith('=') ? formula : `=${formula}`;
   if (!formula || typeof formula !== 'string') {
@@ -479,10 +660,11 @@ export function evaluateFormula(
       return { success: false, formulaText };
     }
 
-    const parser = new FormulaParser(tokens, resolveCell);
+    const parser = new FormulaParser(tokens, resolveCell, depth);
     const result = parser.parse();
     if (typeof result === 'number' && !isNaN(result) && isFinite(result)) {
-      return { success: true, result, formulaText };
+      // 엑셀과 같이 유효숫자 15자리로 정리 (0.1+0.2 = 0.30000000000000004 방지)
+      return { success: true, result: parseFloat(result.toPrecision(15)), formulaText };
     }
     return { success: false, formulaText };
   } catch {
@@ -738,13 +920,9 @@ export async function parseExcelWorkbookWithStyles(dataOrUrl: string, cacheKey?:
         for (let c = 1; c <= colCount; c++) {
           const cell = row.getCell(c);
           const ref = `${getColumnLabel(c - 1)}${r}`;
-          let v = cell.value;
-          if (v && typeof v === 'object') {
-            if ('result' in v && v.result !== undefined && v.result !== null) {
-              v = v.result;
-            }
-          }
-          cellValMap.set(ref, v);
+          // 수식 셀은 { formula, result } 객체 그대로 보관한다.
+          // 계산기가 계산 결과 없음/TODAY 사용 여부를 보고 재귀 계산할지 저장값을 쓸지 정한다.
+          cellValMap.set(ref, cell.value);
         }
       }
 
@@ -1034,6 +1212,9 @@ export function renderExcelTableHtml(
   return { tableHeaderHtml, tableBodyHtml, colCount, totalRows };
 }
 
+/** 메모 본문 엑셀 카드에 미리 보여 주는 최대 행 수 (카드 안에서 세로 스크롤, 최대 높이 460px) */
+export const INLINE_PREVIEW_ROWS = 50;
+
 export async function switchExcelInlineSheet(
   cardElement: HTMLElement,
   sheetName: string,
@@ -1056,7 +1237,7 @@ export async function switchExcelInlineSheet(
     parsed = parseExcelWorkbook(dataOrUrl, attId);
   }
 
-  const { tableHeaderHtml, tableBodyHtml, colCount, totalRows } = renderExcelTableHtml(parsed, sheetName, 12);
+  const { tableHeaderHtml, tableBodyHtml, colCount, totalRows } = renderExcelTableHtml(parsed, sheetName, INLINE_PREVIEW_ROWS);
 
   const tableEl = cardElement.querySelector<HTMLTableElement>('table');
   if (tableEl) {
@@ -1087,7 +1268,7 @@ export async function switchExcelInlineSheet(
   const footerSpan = cardElement.querySelector<HTMLElement>('.excel-footer-info');
   if (footerSpan) {
     const unstyledBadge = isFailed ? ' • <span class="text-amber-400 font-semibold">(서식 미적용)</span>' : '';
-    footerSpan.innerHTML = `전체 ${totalRows}개 행 • ${colCount}개 열 ${totalRows > 12 ? '(상위 12개 행 미리보기)' : ''}${unstyledBadge}`;
+    footerSpan.innerHTML = `전체 ${totalRows}개 행 • ${colCount}개 열 ${totalRows > INLINE_PREVIEW_ROWS ? `(상위 ${INLINE_PREVIEW_ROWS}개 행 미리보기)` : ''}${unstyledBadge}`;
   }
 }
 
@@ -1132,7 +1313,7 @@ export async function hydrateExcelInlineStyles(
 
       const targetSheet = sheetName || styledWb.sheetNames[0] || 'Sheet1';
       if (styledWb.cellStyles?.[targetSheet]) {
-        const { tableHeaderHtml, tableBodyHtml } = renderExcelTableHtml(styledWb, targetSheet, 12);
+        const { tableHeaderHtml, tableBodyHtml } = renderExcelTableHtml(styledWb, targetSheet, INLINE_PREVIEW_ROWS);
         const tableEl = card.querySelector<HTMLTableElement>('table');
         if (tableEl) {
           const thead = tableEl.querySelector('thead');
