@@ -34,6 +34,8 @@ import { getGuideNotes } from './utils/guideNotes';
 const ExcelEditorModal = React.lazy(() => import('./components/ExcelEditorModal').then((m) => ({ default: m.ExcelEditorModal })));
 const DocxEditorModal = React.lazy(() => import('./components/DocxEditorModal').then((m) => ({ default: m.DocxEditorModal })));
 const PptxEditorModal = React.lazy(() => import('./components/PptxEditorModal').then((m) => ({ default: m.PptxEditorModal })));
+const PptxViewerModal = React.lazy(() => import('./components/PptxViewerModal').then((m) => ({ default: m.PptxViewerModal })));
+import { PPTX_EDITING_ENABLED } from './utils/featureFlags';
 const HwpEditorModal = React.lazy(() => import('./components/HwpEditorModal').then((m) => ({ default: m.HwpEditorModal })));
 
 interface DeleteConfirmState {
@@ -1997,13 +1999,23 @@ export function App() {
           />
         )}
         {fileHandleModal && fileHandleModal.type === 'pptx' && (
-          <PptxEditorModal
-            isOpen={true}
-            onClose={() => setFileHandleModal(null)}
-            data={fileHandleModal.data}
-            title={fileHandleModal.title}
-            fileHandle={fileHandleModal.fileHandle}
-          />
+          PPTX_EDITING_ENABLED ? (
+            <PptxEditorModal
+              isOpen={true}
+              onClose={() => setFileHandleModal(null)}
+              data={fileHandleModal.data}
+              title={fileHandleModal.title}
+              fileHandle={fileHandleModal.fileHandle}
+            />
+          ) : (
+            // PPT 편집 비활성: 탐색기에서 연 .pptx는 미리보기 + 슬라이드 쇼(F5)로 연다
+            <PptxViewerModal
+              isOpen={true}
+              onClose={() => setFileHandleModal(null)}
+              data={fileHandleModal.data}
+              title={fileHandleModal.title}
+            />
+          )
         )}
         {fileHandleModal && fileHandleModal.type === 'hwp' && (
           <HwpEditorModal

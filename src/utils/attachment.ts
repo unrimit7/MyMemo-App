@@ -1,5 +1,6 @@
 import type { AttachmentItem } from '../types';
 import { parseExcelWorkbook, renderExcelTableHtml, INLINE_PREVIEW_ROWS } from './excelViewer';
+import { PPTX_EDITING_ENABLED } from './featureFlags';
 import { dataUrlToUint8Array, formatHexOffset, formatByteToHex, byteToAsciiChar } from './hexViewer';
 
 // Blob URL 캐시 (대용량 Base64 문자열 반복 파싱 부하 및 메모리 낭비 방지)
@@ -169,10 +170,10 @@ export function createAttachmentCardHtml(
     </div>
 
     <div class="flex items-center gap-1.5 shrink-0">
-      <!-- 파워포인트 직접 편집 버튼 -->
-      <button type="button" class="pptx-btn-edit px-2.5 py-1 bg-orange-600/20 hover:bg-orange-600/30 text-orange-300 rounded-lg text-xs font-semibold border border-orange-500/30 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="웹에서 파워포인트 슬라이드 직접 편집">
+      <!-- 파워포인트 직접 편집 버튼 (PPTX_EDITING_ENABLED가 꺼져 있으면 숨김) -->
+      ${PPTX_EDITING_ENABLED ? `<button type="button" class="pptx-btn-edit px-2.5 py-1 bg-orange-600/20 hover:bg-orange-600/30 text-orange-300 rounded-lg text-xs font-semibold border border-orange-500/30 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="웹에서 파워포인트 슬라이드 직접 편집">
         <span>✏️ 직접 편집</span>
-      </button>
+      </button>` : ''}
 
       <!-- 본문 메모로 가져오기 버튼 -->
       <button type="button" class="pptx-btn-import px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white rounded-lg text-xs font-semibold border border-indigo-500/40 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="파워포인트 슬라이드 내용을 마크다운으로 메모 본문에 가져오기">

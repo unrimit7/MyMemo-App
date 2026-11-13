@@ -5,6 +5,7 @@ import { compressImageToDataUrl } from '../utils/image';
 import { processFileForNote } from '../utils/file';
 import { cleanLegacyAttachments, renderAttachmentsInHtml, invalidateAttachmentBlobUrl } from '../utils/attachment';
 import { exportNoteToPdf, contentHasDocumentAttachments, type PdfAttachmentMode, type PdfToggleOpenState } from '../utils/exportPdf';
+import { PPTX_EDITING_ENABLED } from '../utils/featureFlags';
 import { getFolderHierarchyPath, updateTitleWithFolderPath, stripFolderPrefixFromTitle } from '../utils/folderPath';
 const PdfViewerModal = React.lazy(() => import('./PdfViewerModal').then((m) => ({ default: m.PdfViewerModal })));
 const PdfEditorModal = React.lazy(() => import('./PdfEditorModal').then((m) => ({ default: m.PdfEditorModal })));
@@ -4824,7 +4825,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           data={activePptxModal.data}
           title={activePptxModal.title}
           attId={activePptxModal.attId}
-          onOpenEditor={() => {
+          onOpenEditor={!PPTX_EDITING_ENABLED ? undefined : () => {
             const attId = activePptxModal.attId || Object.keys(localAttachments).find(
               (id) => localAttachments[id].data === activePptxModal.data
             ) || '';
