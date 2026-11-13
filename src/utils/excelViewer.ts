@@ -17,8 +17,20 @@ export interface CellMergeInfo {
   colSpan: number;
 }
 
+export interface RichTextRun {
+  text: string;
+  color?: string;
+  bold?: boolean;
+  italic?: boolean;
+  size?: number;
+}
+
 export interface CellVisualInfo {
   value: string | number;
+  formattedText?: string;
+  richTextRuns?: RichTextRun[];
+  isFormulaFallback?: boolean;
+  numFmt?: string;
   textColor?: string;      // 원본 지정 글자색 (예: '#ff0000'), 미지정 시 undefined -> 기본 #000000
   bgColor?: string;        // 원본 지정 배경색 (예: '#f7ebdd'), 미지정 시 undefined -> 기본 #ffffff
   bold?: boolean;
@@ -93,7 +105,6 @@ const excelCache = new Map<string, ParsedWorkbook>();
 
 export function invalidateExcelCache(attId?: string) {
   if (attId) {
-    // attId로 시작하는 모든 동적 시그니처 캐시 엔트리 삭제
     for (const key of Array.from(excelCache.keys())) {
       if (key === attId || key.startsWith(`${attId}_`)) {
         excelCache.delete(key);
@@ -105,7 +116,173 @@ export function invalidateExcelCache(attId?: string) {
 }
 
 /**
- * XLSX, XLS, CSV Data URL 또는 Base64 문자열을 워크북 객체로 파싱합니다.
+ * Excel 일련번호(serial date) 계산: 1899-12-30 기준 일수
+ */
+export function excelSerialFromDate(d: Date): number {
+  const utc = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  const epoch = Date.UTC(1899, 11, 30);
+  return Math.round((utc - epoch) / 86400000);
+}
+
+/**
+ * 셀 표시 형식(numFmt) 포맷터
+ * 섹션(양수;음수;0), 문자열 리터럴("원", "일"), 날짜/시간, 백분율, 천 단위 쉼표 지원
+ * Date 객체의 toString() 노출 경로 원천 차단
+ */
+export function formatCellValue(val: any, numFmt?: string): string {
+  if (val === undefined || val === null || val === '') return '';
+
+  const cleanNumFmt = numFmt && numFmt.trim() !== '' && numFmt !== 'General' ? numFmt : undefined;
+
+  // 1. Date 인스턴스인 경우
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return '';
+    if (cleanNumFmt) {
+      try {
+        return XLSX.SSF.format(cleanNumFmt, val);
+      } catch {
+        // SSF 포맷 실패 시 아래 기본 포맷으로 폴백
+      }
+    }
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  // 2. 숫자(number)인 경우
+  if (typeof val === 'number') {
+    if (isNaN(val)) return '';
+    if (cleanNumFmt) {
+      try {
+        return XLSX.SSF.format(cleanNumFmt, val);
+      } catch {
+        // 폴백
+      }
+    }
+    return String(val);
+  }
+
+  // 3. 문자열(string)인 경우
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+
+    // 날짜 문자열(ISO 또는 YYYY-MM-DD 등)
+    if (/^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}/.test(trimmed)) {
+      const parsedD = new Date(trimmed);
+      if (!isNaN(parsedD.getTime())) {
+        if (cleanNumFmt) {
+          try {
+            return XLSX.SSF.format(cleanNumFmt, parsedD);
+          } catch {
+            // 폴백
+          }
+        }
+        const y = parsedD.getFullYear();
+        const m = String(parsedD.getMonth() + 1).padStart(2, '0');
+        const d = String(parsedD.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      }
+    }
+
+    // "Fri Nov 27 2026..." 형태의 문자열이 유입된 경우에도 자동 보정
+    if (/^[A-Za-z]{3}\s+[A-Za-z]{3}\s+\d{1,2}\s+\d{4}/.test(trimmed)) {
+      const parsedD = new Date(trimmed);
+      if (!isNaN(parsedD.getTime())) {
+        if (cleanNumFmt) {
+          try {
+            return XLSX.SSF.format(cleanNumFmt, parsedD);
+          } catch {
+            // 폴백
+          }
+        }
+        const y = parsedD.getFullYear();
+        const m = String(parsedD.getMonth() + 1).padStart(2, '0');
+        const d = String(parsedD.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      }
+    }
+
+    // 숫자형 문자열이고 numFmt가 지정된 경우
+    if (cleanNumFmt && /^-?\d+(\.\d+)?$/.test(trimmed)) {
+      try {
+        return XLSX.SSF.format(cleanNumFmt, Number(trimmed));
+      } catch {
+        // 폴백
+      }
+    }
+
+    return val;
+  }
+
+  return String(val);
+}
+
+/**
+ * 캐시값이 없거나 TODAY()/NOW() 등 휘발성 함수가 포함된 수식을 뷰어 화면 표시용으로 계산합니다.
+ * 저장 파일의 수식/캐시값은 건드리지 않습니다.
+ */
+export function evaluateFormula(
+  formula: string,
+  resolveCell: (ref: string) => any
+): { success: boolean; result?: any; formulaText: string } {
+  const formulaText = formula.startsWith('=') ? formula : `=${formula}`;
+  let f = formula.trim();
+  if (f.startsWith('=')) f = f.slice(1).trim();
+
+  const today = new Date();
+  const todaySerial = excelSerialFromDate(today);
+
+  // DATE(y, m, d)
+  f = f.replace(/DATE\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/gi, (_, y, m, d) => {
+    const dt = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+    return String(excelSerialFromDate(dt));
+  });
+
+  // TODAY() / NOW()
+  f = f.replace(/TODAY\s*\(\s*\)/gi, String(todaySerial));
+  f = f.replace(/NOW\s*\(\s*\)/gi, String(todaySerial));
+
+  // IF(cond, a, b)
+  f = f.replace(/IF\s*\(([^,]+),([^,]+),([^)]+)\)/gi, (_, cond, a, b) => {
+    return `((${cond}) ? (${a}) : (${b}))`;
+  });
+
+  // 셀 참조 (A4, B2 등)
+  f = f.replace(/\b([A-Z]{1,3}[0-9]{1,7})\b/g, (match) => {
+    const rawVal = resolveCell(match.toUpperCase());
+    if (rawVal instanceof Date) {
+      return String(excelSerialFromDate(rawVal));
+    }
+    if (typeof rawVal === 'number') {
+      return String(rawVal);
+    }
+    if (typeof rawVal === 'string') {
+      const d = new Date(rawVal);
+      if (!isNaN(d.getTime()) && /^\d{4}[-/.]/.test(rawVal.trim())) {
+        return String(excelSerialFromDate(d));
+      }
+      const n = Number(rawVal.replace(/,/g, '').trim());
+      if (!isNaN(n)) return String(n);
+    }
+    return '0';
+  });
+
+  try {
+    const sanitized = f.replace(/[^0-9+\-*/().?:\s><=!]/g, '');
+    if (!sanitized) throw new Error('Empty sanitized formula');
+    const computed = Function(`"use strict"; return (${sanitized});`)();
+    if (typeof computed === 'number' && !isNaN(computed)) {
+      return { success: true, result: computed, formulaText };
+    }
+    return { success: false, formulaText };
+  } catch {
+    return { success: false, formulaText };
+  }
+}
+
+/**
+ * XLSX, XLS, CSV Data URL 또는 Base64 문자열을 워크북 객체로 파싱합니다 (동기 파서).
  */
 export function parseExcelWorkbook(dataOrUrl: string, cacheKey?: string): ParsedWorkbook {
   const dataSignature = cacheKey
@@ -126,16 +303,31 @@ export function parseExcelWorkbook(dataOrUrl: string, cacheKey?: string): Parsed
 
     sheetNames.forEach((name) => {
       const sheet = workbook.Sheets[name];
-      if (sheet) {
-        // 2차원 배열 형태로 추출 (빈 셀은 빈 문자열로 보존)
-        const rows = XLSX.utils.sheet_to_json<(string | number)[]>(sheet, {
-          header: 1,
-          defval: '',
-          blankrows: false,
-        });
+      if (sheet && sheet['!ref']) {
+        const range = XLSX.utils.decode_range(sheet['!ref']);
+        const rows: (string | number)[][] = [];
+
+        for (let R = range.s.r; R <= range.e.r; ++R) {
+          const rowVals: (string | number)[] = [];
+          for (let C = range.s.c; C <= range.e.c; ++C) {
+            const addr = XLSX.utils.encode_cell({ r: R, c: C });
+            const cell = sheet[addr];
+            let cellText = '';
+            if (cell) {
+              if (cell.w !== undefined && cell.w !== null) {
+                cellText = cell.w;
+              } else if (cell.t === 'd' && cell.v instanceof Date) {
+                cellText = formatCellValue(cell.v, cell.z);
+              } else if (cell.v !== undefined && cell.v !== null) {
+                cellText = formatCellValue(cell.v, cell.z);
+              }
+            }
+            rowVals.push(cellText);
+          }
+          rows.push(rowVals);
+        }
         sheets[name] = rows;
 
-        // 셀 병합(!merges) 정보 안전하게 추출
         const rawMerges = sheet['!merges'];
         if (Array.isArray(rawMerges) && rawMerges.length > 0) {
           merges[name] = rawMerges
@@ -190,7 +382,7 @@ export function generateExcelDataUrl(
     sheetNames.forEach((name) => {
       const rows = sheets[name] || [];
       const ws = XLSX.utils.aoa_to_sheet(rows);
-      XLSX.utils.book_append_sheet(workbook, ws, name.slice(0, 31)); // 엑셀 시트 이름 최대 31자
+      XLSX.utils.book_append_sheet(workbook, ws, name.slice(0, 31));
     });
   }
 
@@ -211,14 +403,12 @@ export function generateExcelDataUrl(
 export function sheetRowsToMarkdownTable(rows: (string | number)[][]): string {
   if (!rows || rows.length === 0) return '';
 
-  // 최대 컬럼 수 계산
   let maxCols = 0;
   rows.forEach((r) => {
     maxCols = Math.max(maxCols, r.length);
   });
   if (maxCols === 0) return '';
 
-  // 1행을 헤더로 처리 (1행만 있는 경우 기본 헤더 생성)
   const headerRow = rows[0] || [];
   const headerCols: string[] = [];
   for (let c = 0; c < maxCols; c++) {
@@ -227,12 +417,9 @@ export function sheetRowsToMarkdownTable(rows: (string | number)[][]): string {
   }
 
   const lines: string[] = [];
-  // 헤더
   lines.push(`| ${headerCols.join(' | ')} |`);
-  // 구분선
   lines.push(`| ${headerCols.map(() => '---').join(' | ')} |`);
 
-  // 데이터 행들 (2행부터)
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r] || [];
     const cols: string[] = [];
@@ -277,7 +464,7 @@ function parseArgbColor(colorObj: any): string | undefined {
 }
 
 /**
- * ExcelJS를 사용하여 원본 셀 서식(글자색, 채우기색, 굵게, 정렬, 테두리)을 포함해 워크북을 정밀 파싱합니다.
+ * ExcelJS를 사용하여 원본 셀 서식(글자색, 채우기색, 굵게, 정렬, 테두리, numFmt, richText, 수식)을 포함해 워크북을 정밀 파싱합니다.
  */
 export async function parseExcelWorkbookWithStyles(dataOrUrl: string, cacheKey?: string): Promise<ParsedWorkbook> {
   const dataSignature = cacheKey
@@ -317,6 +504,25 @@ export async function parseExcelWorkbookWithStyles(dataOrUrl: string, cacheKey?:
       const rowCount = ws.rowCount || 0;
       const colCount = ws.columnCount || 0;
 
+      // 셀 참조 맵 (수식 평가용)
+      const cellValMap = new Map<string, any>();
+      for (let r = 1; r <= rowCount; r++) {
+        const row = ws.getRow(r);
+        for (let c = 1; c <= colCount; c++) {
+          const cell = row.getCell(c);
+          const ref = `${getColumnLabel(c - 1)}${r}`;
+          let v = cell.value;
+          if (v && typeof v === 'object') {
+            if ('result' in v && v.result !== undefined && v.result !== null) {
+              v = v.result;
+            } else if (v instanceof Date) {
+              // Date
+            }
+          }
+          cellValMap.set(ref, v);
+        }
+      }
+
       for (let r = 1; r <= rowCount; r++) {
         const row = ws.getRow(r);
         const rowVals: (string | number)[] = [];
@@ -324,22 +530,65 @@ export async function parseExcelWorkbookWithStyles(dataOrUrl: string, cacheKey?:
 
         for (let c = 1; c <= colCount; c++) {
           const cell = row.getCell(c);
+          const numFmt = cell.numFmt;
           let val: any = cell.value;
+          let formattedText = '';
+          let richTextRuns: RichTextRun[] | undefined = undefined;
+          let isFormulaFallback = false;
+
           if (val && typeof val === 'object') {
-            if ('result' in val) {
-              val = val.result !== undefined && val.result !== null ? val.result : '';
+            // 1. 수식(formula) 객체 처리
+            if ('formula' in val) {
+              const formulaStr = String(val.formula || '');
+              const hasVolatile = formulaStr.includes('TODAY') || formulaStr.includes('NOW');
+              const hasCachedResult = val.result !== undefined && val.result !== null;
+
+              if (!hasCachedResult || hasVolatile) {
+                // 뷰어에서 동적 평가 시도
+                const evalResult = evaluateFormula(formulaStr, (ref) => cellValMap.get(ref));
+                if (evalResult.success) {
+                  val = evalResult.result;
+                  formattedText = formatCellValue(val, numFmt);
+                } else if (hasCachedResult) {
+                  val = val.result;
+                  formattedText = formatCellValue(val, numFmt);
+                } else {
+                  // 계산 실패 시 수식 문자열을 회색으로 표시
+                  val = evalResult.formulaText;
+                  formattedText = evalResult.formulaText;
+                  isFormulaFallback = true;
+                }
+              } else {
+                val = val.result;
+                formattedText = formatCellValue(val, numFmt);
+              }
+            } else if ('richText' in val && Array.isArray(val.richText)) {
+              // 2. 서식 있는 텍스트(RichText) run 단위 처리
+              const runs: RichTextRun[] = val.richText.map((item: any) => ({
+                text: item.text || '',
+                color: parseArgbColor(item.font?.color),
+                bold: !!item.font?.bold,
+                italic: !!item.font?.italic,
+                size: item.font?.size,
+              }));
+              richTextRuns = runs;
+              val = runs.map((t) => t.text).join('');
+              formattedText = val;
             } else if ('text' in val) {
               val = val.text;
-            } else if ('richText' in val && Array.isArray(val.richText)) {
-              val = val.richText.map((t: any) => t.text || '').join('');
+              formattedText = formatCellValue(val, numFmt);
             } else if (val instanceof Date) {
-              val = val.toISOString().split('T')[0];
+              formattedText = formatCellValue(val, numFmt);
             } else {
               val = String(val);
+              formattedText = formatCellValue(val, numFmt);
             }
+          } else {
+            formattedText = formatCellValue(val, numFmt);
           }
+
           if (val === undefined || val === null) val = '';
-          rowVals.push(val);
+          rowVals.push(formattedText || String(val));
 
           const font = cell.font || {};
           const fill = cell.fill || {};
@@ -362,6 +611,10 @@ export async function parseExcelWorkbookWithStyles(dataOrUrl: string, cacheKey?:
 
           rowStyles.push({
             value: val,
+            formattedText,
+            richTextRuns,
+            isFormulaFallback,
+            numFmt,
             textColor,
             bgColor,
             bold: !!font.bold,
@@ -473,23 +726,42 @@ export function renderExcelTableHtml(
           continue;
         }
 
-        const val = row[cIdx] !== undefined && row[cIdx] !== null ? String(row[cIdx]) : '';
         const colSpanAttr = mergeInfo && mergeInfo.colSpan > 1 ? ` colspan="${mergeInfo.colSpan}"` : '';
         const rowSpanAttr = mergeInfo && mergeInfo.rowSpan > 1 ? ` rowspan="${mergeInfo.rowSpan}"` : '';
         const isMerged = mergeInfo && (mergeInfo.colSpan > 1 || mergeInfo.rowSpan > 1);
 
         const cellVisual = rowStyle ? rowStyle[cIdx] : undefined;
-        // 기본 바탕 흰색, 기본 글자 검정, 원본 지정 색상이 있으면 원본 색상 적용
+        // 기본 바탕 흰색, 기본 글자 검정(rgb(0,0,0)), 원본 지정 색상이 있으면 원본 색상 적용
         const effectiveBg = cellVisual?.bgColor || (isMerged ? '#f8fafc' : '#ffffff');
-        const effectiveColor = cellVisual?.textColor || '#000000';
+        const effectiveColor = cellVisual?.isFormulaFallback
+          ? '#94a3b8'
+          : (cellVisual?.textColor || '#000000');
         const isBold = cellVisual?.bold !== undefined ? cellVisual.bold : isMerged;
         const textAlign = cellVisual?.align || (typeof row[cIdx] === 'number' ? 'right' : 'left');
         const borderColor = cellVisual?.border?.borderColor || '#e2e8f0';
 
+        // 셀 내부 내용: 서식 있는 텍스트(RichText) run 렌더링 지원
+        let cellInnerHtml = '';
+        if (cellVisual?.richTextRuns && cellVisual.richTextRuns.length > 0) {
+          cellInnerHtml = cellVisual.richTextRuns
+            .map((run) => {
+              const runColor = run.color ? `color: ${run.color} !important;` : 'color: inherit !important;';
+              const runWeight = run.bold ? 'font-weight: 700 !important;' : 'font-weight: inherit !important;';
+              const runStyle = run.italic ? 'font-style: italic !important;' : '';
+              return `<span style="${runColor} ${runWeight} ${runStyle}">${run.text}</span>`;
+            })
+            .join('');
+        } else {
+          const textVal = cellVisual?.formattedText !== undefined
+            ? cellVisual.formattedText
+            : (row[cIdx] !== undefined && row[cIdx] !== null ? String(row[cIdx]) : '');
+          cellInnerHtml = textVal;
+        }
+
         const styleAttr = `style="background-color: ${effectiveBg} !important; color: ${effectiveColor} !important; font-weight: ${isBold ? '700' : '400'} !important; text-align: ${textAlign} !important; border-right: 1px solid ${borderColor} !important; border-bottom: 1px solid ${borderColor} !important; padding: 6px 12px; font-size: 12px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; word-break: break-word; white-space: pre-wrap; max-width: 320px;"`;
 
         cellsHtml.push(
-          `<td${colSpanAttr}${rowSpanAttr} class="excel-td" ${styleAttr}>${val}</td>`
+          `<td${colSpanAttr}${rowSpanAttr} class="excel-td" ${styleAttr}>${cellInnerHtml}</td>`
         );
       }
 
@@ -516,7 +788,6 @@ export async function switchExcelInlineSheet(
   if (!cardElement || !sheetName || !dataOrUrl) return;
 
   const attId = cardElement.getAttribute('data-att-id') || '';
-  // 스타일 포함 파싱 시도
   let parsed: ParsedWorkbook;
   try {
     parsed = await parseExcelWorkbookWithStyles(dataOrUrl, attId);

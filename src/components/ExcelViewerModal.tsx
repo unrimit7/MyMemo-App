@@ -362,12 +362,14 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
                         const isMerged = mergeInfo && (mergeInfo.colSpan > 1 || mergeInfo.rowSpan > 1);
                         const cellVisual = workbook?.cellStyles?.[activeSheetName]?.[originalIndex]?.[cIdx];
 
-                        // 테마 독립 스타일: 기본 바탕 흰색, 기본 글자 검정, 원본 색상/서식 보존
+                        // 테마 독립 스타일: 기본 바탕 흰색, 기본 글자 검정(rgb(0,0,0)), 원본 색상/서식 보존
                         const effectiveBg = isMatch
                           ? '#fef08a'
                           : cellVisual?.bgColor || (isMerged ? '#f8fafc' : '#ffffff');
                         const effectiveColor = isMatch
                           ? '#78350f'
+                          : cellVisual?.isFormulaFallback
+                          ? '#94a3b8'
                           : cellVisual?.textColor || '#000000';
                         const isBold = isMatch || (cellVisual?.bold !== undefined ? cellVisual.bold : isMerged);
                         const align = cellVisual?.align || (typeof cellVal === 'number' ? 'right' : 'left');
@@ -388,7 +390,22 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
                             }}
                             className="px-3 py-1.5 text-xs break-words whitespace-pre-wrap max-w-sm leading-relaxed"
                           >
-                            {cellStr}
+                            {cellVisual?.richTextRuns && cellVisual.richTextRuns.length > 0 ? (
+                              cellVisual.richTextRuns.map((run, rIdx) => (
+                                <span
+                                  key={rIdx}
+                                  style={{
+                                    color: run.color || '#000000',
+                                    fontWeight: run.bold ? 700 : 'normal',
+                                    fontStyle: run.italic ? 'italic' : 'normal',
+                                  }}
+                                >
+                                  {run.text}
+                                </span>
+                              ))
+                            ) : (
+                              cellVisual?.formattedText !== undefined ? cellVisual.formattedText : cellStr
+                            )}
                           </td>
                         );
                       })}

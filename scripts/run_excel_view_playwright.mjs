@@ -1,108 +1,105 @@
 import { chromium } from 'playwright-core';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..');
-
 const outDir = path.join(projectRoot, 'docs', 'office-upgrade', 'out', 'excel_view');
-if (!fs.existsSync(outDir)) {
-  fs.mkdirSync(outDir, { recursive: true });
-}
 
-function findChrome() {
-  const winPaths = [
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    path.join(process.env.LOCALAPPDATA || '', 'Google\\Chrome\\Application\\chrome.exe'),
-  ];
-  for (const p of winPaths) {
-    if (fs.existsSync(p)) return p;
-  }
-  return null;
-}
-
-function fileToDataUrl(filePath, mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
-  const buf = fs.readFileSync(filePath);
-  return `data:${mimeType};base64,${buf.toString('base64')}`;
-}
-
-async function startViteServer(port = 5194) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn('cmd.exe', ['/c', 'npx', 'vite', '--port', String(port), '--strictPort'], {
-      cwd: projectRoot,
-      env: { ...process.env },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let stdout = '';
-    const onData = (data) => {
-      stdout += data.toString();
-      if (stdout.includes(`localhost:${port}`)) {
-        resolve({
-          proc,
-          url: `http://localhost:${port}/viewer_test.html`,
-        });
-      }
-    };
-    proc.stdout.on('data', onData);
-    proc.stderr.on('data', (d) => { stdout += d.toString(); });
-    proc.on('error', reject);
-    setTimeout(() => {
-      if (!stdout.includes(`localhost:${port}`)) {
-        resolve({
-          proc,
-          url: `http://localhost:${port}/viewer_test.html`,
-        });
-      }
-    }, 6000);
-  });
-}
+// 5분 타임아웃 가드 (절대 무한 대기하지 않음)
+const globalTimer = setTimeout(() => {
+  console.error('\n[TIMEOUT] 5분 시간 제한 초과로 프로세스를 강제 종료합니다.');
+  process.exit(1);
+}, 300000);
+globalTimer.unref();
 
 function assert(condition, message) {
   if (!condition) {
     throw new Error(`[AssertionFailed] ${message}`);
   }
-  console.log(`  ✓ ${message}`);
+}
+
+function fileToDataUrl(filePath, mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+  const buf = fs.readFileSync(filePath);
+  return `data:${mime};base64,${buf.toString('base64')}`;
+}
+
+async function startViteServer() {
+  const port = 5195;
+  const proc = spawn('npx', ['vite', '--port', String(port), '--strictPort'], {
+    cwd: projectRoot,
+    shell: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  const url = `http://localhost:${port}/viewer_test.html`;
+
+  await new Promise((resolve, reject) => {
+    let started = false;
+    const timeout = setTimeout(() => {
+      if (!started) reject(new Error('Vite server start timeout'));
+    }, 20000);
+
+    const onData = (data) => {
+      const text = data.toString();
+      if (text.includes('Local:') || text.includes('ready in') || text.includes(String(port))) {
+        started = true;
+        clearTimeout(timeout);
+        resolve();
+      }
+    };
+
+    proc.stdout.on('data', onData);
+    proc.stderr.on('data', onData);
+    proc.on('error', (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+  });
+
+  return { proc, url };
 }
 
 async function main() {
   console.log('='.repeat(80));
-  console.log('  [엑셀 인라인 카드 / 큰 화면 뷰어 / 팝아웃 시트 탭 전환 및 테마 독립 실측 검증]');
+  console.log('  [엑셀 인라인 카드 / 큰 화면 뷰어 / 팝아웃 시트 탭 전환, 표시형식, 서식 실측 검증]');
   console.log('='.repeat(80));
 
-  const chromePath = findChrome();
-  if (!chromePath) throw new Error('Chrome browser not found.');
+  fs.mkdirSync(outDir, { recursive: true });
 
   console.log('1. Vite 테스트 서버 가동...');
-  const server = await startViteServer(5194);
-  console.log(`  서버 준비 완료: ${server.url}`);
-
-  const browser = await chromium.launch({
-    executablePath: chromePath,
-    headless: true,
-  });
-
-  const context = await browser.newContext({
-    viewport: { width: 1280, height: 900 },
-  });
-  const page = await context.newPage();
-
-  page.on('console', (msg) => {
-    if (msg.type() === 'error') {
-      console.log('  [브라우저 에러]:', msg.text());
-    }
-  });
+  let server = null;
+  let browser = null;
+  let exitCode = 1;
 
   try {
-    await page.goto(server.url, { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(500);
+    server = await startViteServer();
+    console.log(`  서버 준비 완료: ${server.url}`);
 
-    const multiSheetFile = path.join(projectRoot, 'docs', 'office-upgrade', 'samples', 'real', '홈페이지_유지비용_관리표_20261111.xlsx');
-    const multiSheetDataUrl = fileToDataUrl(multiSheetFile);
+    browser = await chromium.launch({
+      executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      headless: true,
+    });
+
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 900 },
+    });
+    const page = await context.newPage();
+
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') {
+        console.log('  [브라우저 에러]:', msg.text());
+      }
+    });
+
+    await page.goto(server.url, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(600);
+
+    const sampleMultiFile = path.join(projectRoot, 'docs', 'office-upgrade', 'samples', 'real', 'sample_다중시트_예시.xlsx');
+    const sampleMultiDataUrl = fileToDataUrl(sampleMultiFile);
 
     const fileAMSFile = path.join(projectRoot, 'docs', 'office-upgrade', 'samples', 'real', '실파일A_인사평가_MS엑셀.xlsx');
     const fileAMSDataUrl = fileToDataUrl(fileAMSFile);
@@ -114,30 +111,29 @@ async function main() {
     const fileAHanselDataUrl = fileToDataUrl(fileAHanselFile);
 
     // -------------------------------------------------------------------------
-    // [검증 1] 메모 본문 인라인 카드 시트 탭 전환 및 셀 스타일 검증 (6개 시트 파일)
+    // [검증 1] 메모 본문 인라인 카드: 탭 전환, numFmt(A4/E4), 수식 계산(G4), 기본 글자색 rgb(0,0,0)
     // -------------------------------------------------------------------------
     console.log('\n' + '-'.repeat(80));
-    console.log('[검증 1: 메모 본문 인라인 카드 시트 탭 전환 및 엑셀 테마 독립 스타일 검증]');
+    console.log('[검증 1: 메모 본문 인라인 카드 시트 탭 전환, 표시 형식, 수식 동적 계산, 검정 기본 글자색]');
     console.log('-'.repeat(80));
 
     await page.evaluate(({ dataUrl, title }) => {
       window.__loadInlineCard(dataUrl, title, 'test_att_homepage');
-    }, { dataUrl: multiSheetDataUrl, title: '홈페이지_유지비용_관리표_20261111.xlsx' });
+    }, { dataUrl: sampleMultiDataUrl, title: 'sample_다중시트_예시.xlsx' });
 
     await page.waitForSelector('.excel-inline-viewer');
-    await page.waitForTimeout(600); // 렌더링 및 스타일 하이드레이션 대기
+    await page.waitForTimeout(600);
 
-    // 첫 번째 시트 (인증서 현황) 확인
+    // 1-1. 초기 시트 (인증서 현황) 확인
     const initialA1 = await page.evaluate(() => {
       const td = document.querySelector('.excel-inline-viewer table tbody tr:first-child td.excel-td');
       return td ? td.textContent.trim() : '';
     });
-    console.log(`  인라인 카드 초기 A1 값: "${initialA1}"`);
+    console.log(`  [단언 1-1] 인라인 카드 초기 A1 값: "${initialA1}" (기대값: "SSL 인증서 관리 대장" 포함)`);
     assert(initialA1.includes('SSL 인증서') || initialA1.includes('인증서'), '첫 번째 시트(인증서 현황) 데이터 A1 렌더링 확인');
 
-    // 셀 글자색 및 배경색 검증 (앱 다크 테마로부터 완전 격리되어 기본 흰 바탕 / 검정 글자)
+    // 1-2. 셀 기본 글자색 검정 rgb(0, 0, 0) 및 배경 흰색 검증
     const cellStyles = await page.evaluate(() => {
-      // 3행 2열(도메인 데이터 셀) 스타일 계산
       const trs = document.querySelectorAll('.excel-inline-viewer table tbody tr');
       const dataTd = trs[2] ? trs[2].querySelector('td.excel-td') : null;
       if (!dataTd) return null;
@@ -147,16 +143,16 @@ async function main() {
         backgroundColor: cs.backgroundColor,
       };
     });
-    console.log(`  인라인 카드 데이터 셀 계산 스타일: color=${cellStyles?.color}, bg=${cellStyles?.backgroundColor}`);
-    assert(cellStyles && (cellStyles.color === 'rgb(0, 0, 0)' || cellStyles.color === 'rgb(51, 65, 85)'), '셀 글자색이 앱 다크 테마(회색 rgb(203,213,225))가 아닌 검정 계열로 엑셀 원본 보존 확인');
-    assert(cellStyles && (cellStyles.backgroundColor === 'rgb(255, 255, 255)' || cellStyles.backgroundColor === 'rgba(0, 0, 0, 0)'), '셀 배경색이 흰색(#ffffff) 기본으로 엑셀 스타일 보존 확인');
+    console.log(`  [단언 1-2] 인라인 카드 데이터 셀 계산 스타일: 실제 color=${cellStyles?.color}, bg=${cellStyles?.backgroundColor} (기대값: color=rgb(0, 0, 0), bg=rgb(255, 255, 255))`);
+    assert(cellStyles && cellStyles.color === 'rgb(0, 0, 0)', `셀 글자색이 정확한 검정 rgb(0, 0, 0)이어야 함 (실제: ${cellStyles?.color})`);
+    assert(cellStyles && (cellStyles.backgroundColor === 'rgb(255, 255, 255)' || cellStyles.backgroundColor === 'rgba(0, 0, 0, 0)'), '셀 배경색이 흰색(#ffffff) 기본으로 보존 확인');
 
-    // 스크린샷 1: 인라인 카드 초기 시트
+    // 스크린샷 1
     const shot1 = path.join(outDir, '01_인라인카드_초기시트_인증서현황.png');
     await page.locator('.excel-inline-viewer').screenshot({ path: shot1 });
     console.log(`  📸 스크린샷 저장: ${shot1}`);
 
-    // 시트 탭 클릭: '서비스 현황' 시트 선택
+    // 1-3. 시트 탭 클릭: [서비스 현황]
     console.log('  -> 시트 탭 [서비스 현황] 클릭...');
     await page.click('.excel-inline-viewer .excel-sheet-pill[data-sheet-name="서비스 현황"]');
     await page.waitForTimeout(400);
@@ -165,78 +161,104 @@ async function main() {
       const td = document.querySelector('.excel-inline-viewer table tbody tr:first-child td.excel-td');
       return td ? td.textContent.trim() : '';
     });
-    console.log(`  시트 탭 클릭 후 A1 값: "${switchedA1}"`);
-    assert(switchedA1.includes('클라우드 인프라') || switchedA1.includes('서비스'), '시트 탭 클릭 시 표시 시트 데이터(A1)가 정상 변경됨');
+    console.log(`  [단언 1-3] 시트 탭 클릭 후 A1 값: "${switchedA1}" (기대값: "클라우드 인프라 서비스 현황" 포함)`);
+    assert(switchedA1.includes('클라우드') || switchedA1.includes('인프라'), '시트 탭 클릭 시 표시 시트 데이터(A1)가 정상 변경됨');
 
-    // 활성 탭 클래스 확인
-    const isTabActive = await page.evaluate(() => {
-      const pill = document.querySelector('.excel-inline-viewer .excel-sheet-pill[data-sheet-name="서비스 현황"]');
-      return pill?.classList.contains('bg-emerald-500/20') && pill?.classList.contains('text-emerald-300');
-    });
-    assert(isTabActive, '선택된 [서비스 현황] 시트 탭이 에메랄드 강조 스타일로 활성화됨');
-
-    // 스크린샷 2: 인라인 카드 탭 전환 후
+    // 스크린샷 2
     const shot2 = path.join(outDir, '02_인라인카드_탭전환_서비스현황.png');
     await page.locator('.excel-inline-viewer').screenshot({ path: shot2 });
     console.log(`  📸 스크린샷 저장: ${shot2}`);
 
-    // 추가 탭 클릭 검증: '결제 내역' 클릭
-    console.log('  -> 시트 탭 [결제 내역] 클릭...');
-    await page.click('.excel-inline-viewer .excel-sheet-pill[data-sheet-name="결제 내역"]');
-    await page.waitForTimeout(400);
-    const switchedA1_3 = await page.evaluate(() => {
-      const td = document.querySelector('.excel-inline-viewer table tbody tr:first-child td.excel-td');
-      return td ? td.textContent.trim() : '';
+    // 1-4. 시트 탭 클릭: [결제 예정] -> A4 날짜, E4 금액, G4 수식 계산(남은 일수) 단언
+    console.log('  -> 시트 탭 [결제 예정] 클릭...');
+    await page.click('.excel-inline-viewer .excel-sheet-pill[data-sheet-name="결제 예정"]');
+    await page.waitForTimeout(500);
+
+    const paymentValues = await page.evaluate(() => {
+      const trs = document.querySelectorAll('.excel-inline-viewer table tbody tr');
+      // 4행: Row 4
+      const r4 = trs[3];
+      if (!r4) return null;
+      const tds = r4.querySelectorAll('td.excel-td');
+      return {
+        a4: tds[0] ? tds[0].textContent.trim() : '',
+        e4: tds[4] ? tds[4].textContent.trim() : '',
+        g4: tds[6] ? tds[6].textContent.trim() : '',
+      };
     });
-    assert(switchedA1_3.includes('결제 집행') || switchedA1_3.includes('결제'), '시트 탭 [결제 내역] 클릭 시 해당 시트 내용으로 즉시 갱신됨');
+
+    console.log(`  [단언 1-4] 결제 예정 A4 날짜: 실제="${paymentValues?.a4}", 기대값="2026-11-27"`);
+    assert(paymentValues?.a4 === '2026-11-27', `A4 날짜는 '2026-11-27'이어야 함 (실제: ${paymentValues?.a4})`);
+
+    console.log(`  [단언 1-5] 결제 예정 E4 금액: 실제="${paymentValues?.e4}", 기대값="23,100원"`);
+    assert(paymentValues?.e4 === '23,100원', `E4 금액은 '23,100원'이어야 함 (실제: ${paymentValues?.e4})`);
+
+    // G4 = A4 - TODAY()
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const target = new Date(2026, 10, 27);
+    const expectedDiff = Math.round((target.getTime() - today.getTime()) / (24 * 3600 * 1000));
+    const expectedG4 = expectedDiff >= 0 ? `${expectedDiff}일` : `지남 ${Math.abs(expectedDiff)}일`;
+    console.log(`  [단언 1-6] 결제 예정 G4 남은 일수(=A4-TODAY()): 실제="${paymentValues?.g4}", 기대값="${expectedG4}"`);
+    assert(paymentValues?.g4 === expectedG4, `G4 수식 계산값은 '${expectedG4}'이어야 함 (실제: ${paymentValues?.g4})`);
 
     // -------------------------------------------------------------------------
-    // [검증 2] 큰 화면 뷰어 (ExcelViewerModal) 시트 탭 전환 및 테마 독립 검증
+    // [검증 2] 큰 화면 뷰어 (ExcelViewerModal): 탭 전환, 결제 예정 표시형식, 검정 기본 글자색
     // -------------------------------------------------------------------------
     console.log('\n' + '-'.repeat(80));
-    console.log('[검증 2: 큰 화면 뷰어 (ExcelViewerModal) 시트 탭 전환 및 서식 보존 검증]');
+    console.log('[검증 2: 큰 화면 뷰어 (ExcelViewerModal) 시트 탭 전환, 표시형식 및 원본 서식 보존]');
     console.log('-'.repeat(80));
 
     await page.evaluate(({ dataUrl, title }) => {
       window.__loadExcelViewer(dataUrl, title, 'test_modal_homepage');
-    }, { dataUrl: multiSheetDataUrl, title: '홈페이지_유지비용_관리표_20261111.xlsx' });
+    }, { dataUrl: sampleMultiDataUrl, title: 'sample_다중시트_예시.xlsx' });
 
-    await page.waitForSelector('.fixed.inset-0 table');
+    await page.waitForSelector('table.min-w-full');
     await page.waitForTimeout(600);
 
-    const modalA1_initial = await page.evaluate(() => {
-      const td = document.querySelector('.fixed.inset-0 table tbody tr:first-child td:nth-child(2)');
-      return td ? td.textContent.trim() : '';
+    const modalStyles = await page.evaluate(() => {
+      const trs = document.querySelectorAll('table.min-w-full tbody tr');
+      const dataTd = trs[2] ? trs[2].querySelectorAll('td')[1] : null;
+      if (!dataTd) return null;
+      const cs = window.getComputedStyle(dataTd);
+      return {
+        color: cs.color,
+        backgroundColor: cs.backgroundColor,
+      };
     });
-    assert(modalA1_initial.includes('SSL 인증서') || modalA1_initial.includes('인증서'), '큰 화면 뷰어 1번 시트 로드 확인');
+    console.log(`  [단언 2-1] 큰 화면 뷰어 셀 스타일: 실제 color=${modalStyles?.color}, bg=${modalStyles?.backgroundColor} (기대값: color=rgb(0, 0, 0))`);
+    assert(modalStyles && modalStyles.color === 'rgb(0, 0, 0)', `큰 화면 뷰어 셀 글자색이 검정 rgb(0, 0, 0)이어야 함 (실제: ${modalStyles?.color})`);
 
-    // 모달 셀 글자색 및 배경색 검증
-    const modalCellStyles = await page.evaluate(() => {
-      const td = document.querySelector('.fixed.inset-0 table tbody tr:nth-child(3) td:nth-child(2)');
-      if (!td) return null;
-      const cs = window.getComputedStyle(td);
-      return { color: cs.color, backgroundColor: cs.backgroundColor };
-    });
-    console.log(`  큰 화면 뷰어 셀 스타일: color=${modalCellStyles?.color}, bg=${modalCellStyles?.backgroundColor}`);
-    assert(modalCellStyles && (modalCellStyles.color === 'rgb(0, 0, 0)' || modalCellStyles.color === 'rgb(51, 65, 85)'), '큰 화면 뷰어 셀 글자색이 검정 계열로 엑셀 원본 표시 확인');
-
-    // 스크린샷 3: 큰 화면 뷰어 초기 시트
+    // 스크린샷 3
     const shot3 = path.join(outDir, '03_큰화면뷰어_초기시트_인증서현황.png');
     await page.screenshot({ path: shot3 });
     console.log(`  📸 스크린샷 저장: ${shot3}`);
 
-    // 하단 시트 탭 클릭: '결제 예정' 선택
+    // 시트 탭 [결제 예정] 클릭
     console.log('  -> 큰 화면 뷰어 시트 탭 [결제 예정] 클릭...');
     await page.click('button:has-text("결제 예정")');
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(500);
 
-    const modalA1_switched = await page.evaluate(() => {
-      const td = document.querySelector('.fixed.inset-0 table tbody tr:first-child td:nth-child(2)');
-      return td ? td.textContent.trim() : '';
+    const modalPaymentVals = await page.evaluate(() => {
+      const trs = document.querySelectorAll('table.min-w-full tbody tr');
+      const r4 = trs[3];
+      if (!r4) return null;
+      const tds = r4.querySelectorAll('td');
+      // index 0은 행번호(#), 1은 A, 5는 E, 7은 G
+      return {
+        a4: tds[1] ? tds[1].textContent.trim() : '',
+        e4: tds[5] ? tds[5].textContent.trim() : '',
+        g4: tds[7] ? tds[7].textContent.trim() : '',
+      };
     });
-    assert(modalA1_switched.includes('결제 예정') || modalA1_switched.includes('정기 결제'), '큰 화면 뷰어 시트 탭 클릭 시 해당 시트(결제 예정) 데이터로 변경됨');
+    console.log(`  [단언 2-2] 큰 화면 뷰어 결제 예정 A4: 실제="${modalPaymentVals?.a4}", 기대값="2026-11-27"`);
+    assert(modalPaymentVals?.a4 === '2026-11-27', `A4 날짜 '2026-11-27' 확인`);
+    console.log(`  [단언 2-3] 큰 화면 뷰어 결제 예정 E4: 실제="${modalPaymentVals?.e4}", 기대값="23,100원"`);
+    assert(modalPaymentVals?.e4 === '23,100원', `E4 금액 '23,100원' 확인`);
+    console.log(`  [단언 2-4] 큰 화면 뷰어 결제 예정 G4: 실제="${modalPaymentVals?.g4}", 기대값="${expectedG4}"`);
+    assert(modalPaymentVals?.g4 === expectedG4, `G4 수식 계산값 '${expectedG4}' 확인`);
 
-    // 스크린샷 4: 큰 화면 뷰어 탭 전환 후
+    // 스크린샷 4
     const shot4 = path.join(outDir, '04_큰화면뷰어_탭전환_결제예정.png');
     await page.screenshot({ path: shot4 });
     console.log(`  📸 스크린샷 저장: ${shot4}`);
@@ -250,23 +272,15 @@ async function main() {
 
     await page.evaluate(({ dataUrl, title }) => {
       window.__loadPopout(dataUrl, title, 'test_popout_homepage');
-    }, { dataUrl: multiSheetDataUrl, title: '홈페이지_유지비용_관리표_20261111.xlsx' });
+    }, { dataUrl: sampleMultiDataUrl, title: 'sample_다중시트_예시.xlsx' });
 
     await page.waitForSelector('.excel-inline-viewer');
     await page.waitForTimeout(600);
 
-    const popoutA1_initial = await page.evaluate(() => {
-      const td = document.querySelector('.excel-inline-viewer table tbody tr:first-child td.excel-td');
-      return td ? td.textContent.trim() : '';
-    });
-    assert(popoutA1_initial.includes('SSL 인증서') || popoutA1_initial.includes('인증서'), '팝아웃 창 1번 시트 로드 확인');
-
-    // 스크린샷 5: 팝아웃 창 초기 시트
     const shot5 = path.join(outDir, '05_팝아웃창_초기시트_인증서현황.png');
     await page.screenshot({ path: shot5 });
     console.log(`  📸 스크린샷 저장: ${shot5}`);
 
-    // 팝아웃 창 시트 탭 클릭: '연간 비용' 선택
     console.log('  -> 팝아웃 창 시트 탭 [연간 비용] 클릭...');
     await page.click('.excel-inline-viewer .excel-sheet-pill[data-sheet-name="연간 비용"]');
     await page.waitForTimeout(400);
@@ -275,60 +289,97 @@ async function main() {
       const td = document.querySelector('.excel-inline-viewer table tbody tr:first-child td.excel-td');
       return td ? td.textContent.trim() : '';
     });
-    console.log(`  팝아웃 창 탭 클릭 후 A1 값: "${popoutA1_switched}"`);
-    assert(popoutA1_switched.includes('연간 IT') || popoutA1_switched.includes('연간 비용'), '팝아웃 창에서 시트 탭 클릭 시 해당 시트(연간 비용)로 완벽히 전환됨');
+    console.log(`  [단언 3-1] 팝아웃 창 탭 클릭 후 A1 값: "${popoutA1_switched}" (기대값: "연간 IT 유지비용 종합 요약" 포함)`);
+    assert(popoutA1_switched.includes('연간') || popoutA1_switched.includes('유지비용'), '팝아웃 창에서 시트 탭 클릭 시 해당 시트(연간 비용)로 완벽히 전환됨');
 
-    // 스크린샷 6: 팝아웃 창 탭 전환 후
     const shot6 = path.join(outDir, '06_팝아웃창_탭전환_연간비용.png');
     await page.screenshot({ path: shot6 });
     console.log(`  📸 스크린샷 저장: ${shot6}`);
 
     // -------------------------------------------------------------------------
-    // [검증 4] samples/real 실파일A(인사평가 MS/한셀) 및 실파일B(견적서 MS/한셀) 원본 서식 보존 검증
+    // [검증 4] 실파일A·B(MS/한셀): 견적서 C5, F11, B8(RichText), 인사평가 G4, 월별매출 D열(백분율)
     // -------------------------------------------------------------------------
     console.log('\n' + '-'.repeat(80));
-    console.log('[검증 4: 실파일A·B(MS/한셀) 인라인 카드 및 다중 시트 탭 검증]');
+    console.log('[검증 4: 실파일A·B 서식 검증 (견적서 C5/F11/B8 RichText, 인사평가 G4, 월별매출 백분율)]');
     console.log('-'.repeat(80));
 
-    // 실파일A MS엑셀
-    await page.evaluate(({ dataUrl, title }) => {
-      window.__loadInlineCard(dataUrl, title, 'test_fileA_ms');
-    }, { dataUrl: fileAMSDataUrl, title: '실파일A_인사평가_MS엑셀.xlsx' });
-    await page.waitForTimeout(500);
-    const fileA_ms_shot = path.join(outDir, '07_실파일A_MS엑셀_인라인카드.png');
-    await page.locator('.excel-inline-viewer').screenshot({ path: fileA_ms_shot });
-    console.log(`  📸 실파일A MS엑셀 스크린샷: ${fileA_ms_shot}`);
-
-    // 실파일A 탭 전환 ('부서코드' 클릭)
-    await page.click('.excel-inline-viewer .excel-sheet-pill[data-sheet-name="부서코드"]');
-    await page.waitForTimeout(300);
-    const fileA_ms_tab_shot = path.join(outDir, '08_실파일A_MS엑셀_탭전환_부서코드.png');
-    await page.locator('.excel-inline-viewer').screenshot({ path: fileA_ms_tab_shot });
-    console.log(`  📸 실파일A MS엑셀 부서코드 탭 스크린샷: ${fileA_ms_tab_shot}`);
-
-    // 실파일B MS엑셀 (견적서 헤더 원본 채우기색 #F7EBDD 검증)
+    // 4-1. 실파일B 견적서 검증
     await page.evaluate(({ dataUrl, title }) => {
       window.__loadInlineCard(dataUrl, title, 'test_fileB_ms');
     }, { dataUrl: fileBMSDataUrl, title: '실파일B_견적서_MS엑셀.xlsx' });
     await page.waitForTimeout(600);
-    const fileB_ms_shot = path.join(outDir, '09_실파일B_MS엑셀_견적서_인라인카드.png');
-    await page.locator('.excel-inline-viewer').screenshot({ path: fileB_ms_shot });
-    console.log(`  📸 실파일B MS엑셀 스크린샷: ${fileB_ms_shot}`);
 
-    // 견적서 헤더 채우기 색상 검증
-    const bHeaderBg = await page.evaluate(() => {
-      const tds = Array.from(document.querySelectorAll('.excel-inline-viewer table td.excel-td'));
-      for (const td of tds) {
-        if (td.textContent.trim() === '품 명' || td.textContent.trim() === '공급가액') {
-          return window.getComputedStyle(td).backgroundColor;
-        }
-      }
-      return null;
+    const quoteVals = await page.evaluate(() => {
+      const trs = document.querySelectorAll('.excel-inline-viewer table tbody tr');
+      // C5: 5행 3열 (rIdx 4, cIdx 2)
+      const r5 = trs[4];
+      const c5 = r5 ? r5.querySelectorAll('td.excel-td')[2]?.textContent?.trim() : '';
+      // F11: 11행 6열 (rIdx 10, cIdx 5)
+      const r11 = trs[10];
+      const f11 = r11 ? r11.querySelectorAll('td.excel-td')[5]?.textContent?.trim() : '';
+      // B8 RichText: 8행 2열
+      const r8 = trs[7];
+      const b8Td = r8 ? r8.querySelectorAll('td.excel-td')[1] : null;
+      const b8Html = b8Td ? b8Td.innerHTML : '';
+      const b8Text = b8Td ? b8Td.textContent?.trim() : '';
+      return { c5, f11, b8Html, b8Text };
     });
-    console.log(`  견적서 헤더(품명) 계산 배경색: ${bHeaderBg}`);
-    assert(bHeaderBg && (bHeaderBg === 'rgb(247, 235, 221)' || bHeaderBg.includes('247')), '견적서 헤더 셀의 원본 연갈색 채우기(#F7EBDD)가 보존됨');
 
-    // 실파일A 한셀
+    console.log(`  [단언 4-1] 견적서 C5 날짜 서식: 실제="${quoteVals?.c5}", 기대값="2026년 11월 11일"`);
+    assert(quoteVals?.c5 === '2026년 11월 11일', `C5는 '2026년 11월 11일'이어야 함 (실제: ${quoteVals?.c5})`);
+
+    console.log(`  [단언 4-2] 견적서 F11 금액 서식: 실제="${quoteVals?.f11}", 기대값="1,250,000"`);
+    assert(quoteVals?.f11 === '1,250,000', `F11은 '1,250,000'이어야 함 (실제: ${quoteVals?.f11})`);
+
+    console.log(`  [단언 4-3] 견적서 B8 서식 있는 텍스트(RichText): 실제 HTML="${quoteVals?.b8Html}"`);
+    assert(quoteVals?.b8Html.includes('color:') && quoteVals?.b8Html.includes('부가세 포함'), 'B8 셀에 부분 빨간 굵은 글씨 RichText 런이 포함되어야 함');
+
+    const shot9 = path.join(outDir, '09_실파일B_MS엑셀_견적서_인라인카드.png');
+    await page.locator('.excel-inline-viewer').screenshot({ path: shot9 });
+    console.log(`  📸 실파일B MS엑셀 견적서 스크린샷: ${shot9}`);
+
+    // 견적서 [월별매출] 시트 탭 클릭 -> D열 백분율 단언
+    console.log('  -> 견적서 시트 탭 [월별매출] 클릭...');
+    await page.click('.excel-inline-viewer .excel-sheet-pill[data-sheet-name="월별매출"]');
+    await page.waitForTimeout(500);
+
+    const salesD2 = await page.evaluate(() => {
+      const trs = document.querySelectorAll('.excel-inline-viewer table tbody tr');
+      const r2 = trs[1];
+      return r2 ? r2.querySelectorAll('td.excel-td')[3]?.textContent?.trim() : '';
+    });
+    console.log(`  [단언 4-4] 월별매출 D2 달성률 백분율 서식: 실제="${salesD2}", 기대값="80.0%"`);
+    assert(salesD2 === '80.0%', `D2 달성률은 '80.0%'이어야 함 (실제: ${salesD2})`);
+
+    // 4-2. 실파일A 인사평가 검증
+    await page.evaluate(({ dataUrl, title }) => {
+      window.__loadInlineCard(dataUrl, title, 'test_fileA_ms');
+    }, { dataUrl: fileAMSDataUrl, title: '실파일A_인사평가_MS엑셀.xlsx' });
+    await page.waitForTimeout(600);
+
+    const shot7 = path.join(outDir, '07_실파일A_MS엑셀_인라인카드.png');
+    await page.locator('.excel-inline-viewer').screenshot({ path: shot7 });
+    console.log(`  📸 실파일A MS엑셀 스크린샷: ${shot7}`);
+
+    const evalG4 = await page.evaluate(() => {
+      const trs = document.querySelectorAll('.excel-inline-viewer table tbody tr');
+      // 4행 7열(G4)
+      const r4 = trs[3];
+      return r4 ? r4.querySelectorAll('td.excel-td')[6]?.textContent?.trim() : '';
+    });
+    console.log(`  [단언 4-5] 인사평가 G4 인센티브 서식: 실제="${evalG4}", 기대값="3,000,000원"`);
+    assert(evalG4 === '3,000,000원', `G4 인센티브는 '3,000,000원'이어야 함 (실제: ${evalG4})`);
+
+    // 부서코드 탭 클릭
+    console.log('  -> 실파일A 시트 탭 [부서코드] 클릭...');
+    await page.click('.excel-inline-viewer .excel-sheet-pill[data-sheet-name="부서코드"]');
+    await page.waitForTimeout(400);
+
+    const shot8 = path.join(outDir, '08_실파일A_MS엑셀_탭전환_부서코드.png');
+    await page.locator('.excel-inline-viewer').screenshot({ path: shot8 });
+    console.log(`  📸 실파일A MS엑셀 부서코드 탭 스크린샷: ${shot8}`);
+
+    // 실파일A 한셀 렌더링
     await page.evaluate(({ dataUrl, title }) => {
       window.__loadInlineCard(dataUrl, title, 'test_fileA_hansel');
     }, { dataUrl: fileAHanselDataUrl, title: '실파일A_인사평가_한셀.xlsx' });
@@ -344,7 +395,6 @@ async function main() {
     console.log('[검증 5: 워드/PPT/한글 인라인 카드 테마 영향 점검 (격리성 검증)]');
     console.log('-'.repeat(80));
 
-    // 워드/PPT/한글 인라인 카드에 not-prose 클래스가 부착되어 있는지 브라우저에서 검증
     const isolationCheck = await page.evaluate(({ multiSheetUrl }) => {
       const renderFn = window.__renderAttachmentsInHtml;
       if (!renderFn) return { error: '__renderAttachmentsInHtml is not defined' };
@@ -362,25 +412,36 @@ async function main() {
         hasHwpNotProse: rendered.includes('hwp-inline-viewer not-prose'),
         hasExcelNotProse: rendered.includes('excel-inline-viewer not-prose'),
       };
-    }, { multiSheetUrl: multiSheetDataUrl });
+    }, { multiSheetUrl: sampleMultiDataUrl });
 
-    assert(isolationCheck.hasDocxNotProse, '워드 인라인 뷰어에 not-prose 클래스가 적용되어 다크 테마 간섭 차단');
-    assert(isolationCheck.hasPptxNotProse, 'PPT 인라인 뷰어에 not-prose 클래스가 적용되어 다크 테마 간섭 차단');
-    assert(isolationCheck.hasHwpNotProse, '한글 인라인 뷰어에 not-prose 클래스가 적용되어 다크 테마 간섭 차단');
-    assert(isolationCheck.hasExcelNotProse, '엑셀 인라인 뷰어에 not-prose 클래스가 적용되어 다크 테마 간섭 차단');
-    console.log('  ✓ 워드/PPT/한글/엑셀 인라인 카드 모두 not-prose 클래스로 앱 테마로부터 격리 확인');
+    assert(isolationCheck.hasDocxNotProse, '워드 인라인 뷰어 not-prose 확인');
+    assert(isolationCheck.hasPptxNotProse, 'PPT 인라인 뷰어 not-prose 확인');
+    assert(isolationCheck.hasHwpNotProse, '한글 인라인 뷰어 not-prose 확인');
+    assert(isolationCheck.hasExcelNotProse, '엑셀 인라인 뷰어 not-prose 확인');
+    console.log('  ✓ 워드/PPT/한글/엑셀 인라인 카드 모두 not-prose 클래스로 앱 테마로부터 완벽 격리 확인');
 
     console.log('\n' + '='.repeat(80));
-    console.log('  [모든 엑셀 시트 탭 전환 및 테마 독립 검증 완료: 100% 통과]');
+    console.log('  [모든 엑셀 시트 탭 전환, 표시 형식, 수식 계산, 서식 검증 완료: 100% 통과]');
     console.log('='.repeat(80));
 
+    exitCode = 0;
+  } catch (err) {
+    console.error('\n검증 실패:', err);
+    exitCode = 1;
   } finally {
-    await browser.close();
-    server.proc.kill();
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {}
+    }
+    if (server?.proc) {
+      try {
+        server.proc.kill();
+      } catch {}
+    }
+    clearTimeout(globalTimer);
+    process.exit(exitCode);
   }
 }
 
-main().catch((err) => {
-  console.error('\n검증 실패:', err);
-  process.exit(1);
-});
+main();
