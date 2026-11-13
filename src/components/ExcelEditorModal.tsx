@@ -106,12 +106,34 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
       }
       return out;
     };
+    // 수식 셀은 계산 결과(v, t)를 비교에서 제외한다.
+    // Univer는 연 직후(약 1~2초) 수식을 재계산해 결과 값을 셀에 쓰므로(예: =A4-TODAY()),
+    // 결과 값까지 비교하면 아무것도 안 해도 '수정됨'으로 판정된다. 수식 자체(f/si)와 스타일(s)은 비교한다.
+    const normalizeCells = (cellData: any) => {
+      const out: Record<string, any> = {};
+      for (const r of Object.keys(cellData || {})) {
+        const row = cellData[r];
+        if (!row) continue;
+        const outRow: Record<string, any> = {};
+        for (const c of Object.keys(row)) {
+          const cell = row[c];
+          if (!cell) continue;
+          if (cell.f || cell.si) {
+            outRow[c] = { f: cell.f, si: cell.si, s: cell.s };
+          } else {
+            outRow[c] = cell;
+          }
+        }
+        out[r] = outRow;
+      }
+      return out;
+    };
     for (const id of sheetIds) {
       const s = snapshot.sheets?.[id];
       if (!s) continue;
       sheetsSummary[id] = {
         name: s.name,
-        cellData: s.cellData,
+        cellData: normalizeCells(s.cellData),
         mergeData: s.mergeData,
         rowCount: s.rowCount,
         columnCount: s.columnCount,
