@@ -2,6 +2,102 @@ import type { Note, AttachmentItem } from '../types';
 import { marked } from 'marked';
 import { loadPdfDocument } from './pdfViewer';
 import { loadHwpDocument, renderHwpPageToSvg } from './hwpViewer';
+import { parseExcelWorkbookWithStyles, renderExcelTableHtml } from './excelViewer';
+import { renderDocxToContainer } from './docxViewer';
+import { extractPptxTextAndMarkdown } from './pptxViewer';
+
+/**
+ * PDF 내보내기 시 첨부 문서(PDF/한글/엑셀/워드/PPT) 내용 포함 방식
+ * - expanded: 펼친(접기 해제) 첨부만 내용 포함, 접힌 첨부는 이름 한 줄 (기본)
+ * - all: 접힘 상태와 관계없이 모두 내용 포함
+ * - none: 모든 첨부 문서를 이름 한 줄로만 표시 (이미지는 본문의 일부이므로 항상 표시)
+ */
+export type PdfAttachmentMode = 'expanded' | 'all' | 'none';
+
+const EXCEL_PRINT_MAX_ROWS = 200;
+
+const HTML_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+function escapeHtml(s: string): string {
+  return (s || '').replace(/[&<>"']/g, (c) => HTML_ESCAPES[c] || c);
+}
+
+type AttKind = 'pdf' | 'hwp' | 'excel' | 'word' | 'ppt' | 'other';
+
+function getAttachmentKind(att: AttachmentItem): AttKind {
+  const name = (att.name || '').toLowerCase();
+  const type = att.type || '';
+  if (type === 'application/pdf' || name.endsWith('.pdf') || (att.data || '').startsWith('data:application/pdf')) return 'pdf';
+  if (
+    name.endsWith('.hwp') || name.endsWith('.hwpx') ||
+    ['application/x-hwp', 'application/haansofthwp', 'application/vnd.hancom.hwp', 'application/vnd.hancom.hwpx'].includes(type)
+  ) return 'hwp';
+  if (name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv') || /spreadsheetml|ms-excel|text\/csv/.test(type)) return 'excel';
+  if (name.endsWith('.docx') || /wordprocessingml/.test(type)) return 'word';
+  if (name.endsWith('.pptx') || /presentationml/.test(type)) return 'ppt';
+  return 'other';
+}
+
+/** 내용을 PDF에 넣을 수 있는 문서형 첨부인지 (내보내기 선택 창을 띄울지 판단에 사용) */
+export function isPrintableDocumentAttachment(att: AttachmentItem | undefined): boolean {
+  if (!att || !att.data) return false;
+  return getAttachmentKind(att) !== 'other';
+}
+
+/** 본문에서 참조하는 문서형 첨부가 있는지 */
+export function contentHasDocumentAttachments(content: string, attachments: Record<string, AttachmentItem> = {}): boolean {
+  const ids = new Set<string>();
+  (content || '').replace(/(att-[a-zA-Z0-9_-]+)/g, (m) => {
+    ids.add(m);
+    return m;
+  });
+  for (const id of ids) {
+    if (isPrintableDocumentAttachment(attachments[id])) return true;
+  }
+  return false;
+}
+
+const KIND_ICON: Record<AttKind, string> = { pdf: '📄', hwp: '📝', excel: '📊', word: '📘', ppt: '📽️', other: '📎' };
+const KIND_LABEL: Record<AttKind, string> = { pdf: 'PDF 문서', hwp: '한글 문서', excel: '엑셀', word: '워드 문서', ppt: 'PPT', other: '첨부 파일' };
+
+function attachmentCardHtml(att: AttachmentItem, displayName: string, note?: string): string {
+  const kind = getAttachmentKind(att);
+  return `
+    <div class="print-att-card">
+      <span>${KIND_ICON[kind]}</span>
+      <span>${escapeHtml(displayName)} (${KIND_LABEL[kind]}${note ? ` · ${note}` : ''})</span>
+    </div>
+  `;
+}
+
+/**
+ * 마크다운의 접힌 첨부(<details> 로 감싼 '📁 접기' 블록)를 내보내기 방식에 맞게 변환한다.
+ * - all: <details> 를 풀어 안의 첨부가 내용으로 렌더링되게 한다
+ * - expanded / none: 접힌 블록을 '접힌 첨부' 한 줄 카드로 바꾼다
+ * 첨부가 없는 일반 토글(<details>)은 그대로 둔다.
+ */
+function applyCollapsedAttachmentMode(
+  markdown: string,
+  attachments: Record<string, AttachmentItem>,
+  mode: PdfAttachmentMode
+): string {
+  return (markdown || '').replace(
+    /<details[^>]*>\s*<summary>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>/gi,
+    (block: string, _summary: string, inner: string) => {
+      const ids: string[] = [];
+      inner.replace(/(?:\(|attachment:)(att-[a-zA-Z0-9_-]+)/g, (m: string, id: string) => {
+        if (!ids.includes(id)) ids.push(id);
+        return m;
+      });
+      const docAtts = ids.map((id) => attachments[id]).filter((a): a is AttachmentItem => isPrintableDocumentAttachment(a));
+      if (docAtts.length === 0) return block;
+      if (mode === 'all') {
+        return `\n\n${inner.trim()}\n\n`;
+      }
+      const cards = docAtts.map((a) => attachmentCardHtml(a, a.name, '접힌 첨부')).join('');
+      return `\n\n<div class="print-collapsed-group">${cards}</div>\n\n`;
+    }
+  );
+}
 
 /**
  * SVG 문자열에서 viewBox 또는 width/height를 파싱하여 가로(Landscape) 여부를 판별합니다.
@@ -57,7 +153,8 @@ function rotateSvg90Degrees(svgStr: string): string {
  */
 async function renderAttachmentsForPrint(
   html: string,
-  attachments: Record<string, AttachmentItem> = {}
+  attachments: Record<string, AttachmentItem> = {},
+  includeContent: boolean = true
 ): Promise<string> {
   if (!html || Object.keys(attachments).length === 0) return html;
 
@@ -98,24 +195,104 @@ async function renderAttachmentsForPrint(
     const att = attachments[attId];
     if (!att || !att.data) continue;
 
+    // 아이콘(이모지)과 '엑셀:' 같은 접두어 제거. u 플래그로 이모지를 통째로 지워 '�' 깨짐 방지
     const cleanLabel = (label || '')
-      .replace(/^[\s📄📎🖼️📝]*/, '')
-      .replace(/^(?:PDF\s*문서:\s*|한글\s*문서:\s*|한글:\s*|파일:\s*)/i, '')
+      .replace(/<[^>]+>/g, '')
+      .replace(/^[\s\p{Extended_Pictographic}\uFE0F\u200D]*/u, '')
+      .replace(/^(?:PDF\s*문서|PDF|한글\s*문서|한글|엑셀|워드|PPT|파워포인트|파일)\s*:\s*/i, '')
       .trim();
     const displayName = cleanLabel || att.name;
 
-    const isPdf =
-      att.type === 'application/pdf' ||
-      att.name.toLowerCase().endsWith('.pdf') ||
-      att.data.startsWith('data:application/pdf');
+    const kind = getAttachmentKind(att);
+    const isPdf = kind === 'pdf';
+    const isHwp = kind === 'hwp';
 
-    const isHwp =
-      att.name.toLowerCase().endsWith('.hwp') ||
-      att.name.toLowerCase().endsWith('.hwpx') ||
-      att.type === 'application/x-hwp' ||
-      att.type === 'application/haansofthwp' ||
-      att.type === 'application/vnd.hancom.hwp' ||
-      att.type === 'application/vnd.hancom.hwpx';
+    // '첨부 내용 빼기' 모드: 문서형 첨부는 이름 한 줄로만
+    if (!includeContent && kind !== 'other') {
+      result = result.split(fullMatch).join(attachmentCardHtml(att, displayName));
+      continue;
+    }
+
+    if (kind === 'excel') {
+      try {
+        const parsed = await parseExcelWorkbookWithStyles(att.data, att.id);
+        let sheetsHtml = '';
+        for (const sName of parsed.sheetNames || []) {
+          const { tableHeaderHtml, tableBodyHtml, totalRows } = renderExcelTableHtml(parsed, sName, EXCEL_PRINT_MAX_ROWS);
+          if (!totalRows) continue;
+          const cutNote = totalRows > EXCEL_PRINT_MAX_ROWS ? ` (전체 ${totalRows}행 중 앞 ${EXCEL_PRINT_MAX_ROWS}행)` : '';
+          sheetsHtml += `
+            <div class="print-excel-sheet">
+              <div class="print-excel-sheet-name">시트: ${escapeHtml(sName)}${cutNote}</div>
+              <table class="print-excel-table">${tableHeaderHtml}<tbody>${tableBodyHtml}</tbody></table>
+            </div>
+          `;
+        }
+        const replacement = `
+          <div class="print-doc-container print-doc-flow">
+            <div class="print-doc-header">
+              <span class="print-doc-badge print-doc-badge-excel">📊 엑셀</span>
+              <span class="print-doc-title">${escapeHtml(displayName)} (시트 ${(parsed.sheetNames || []).length}개)</span>
+            </div>
+            ${sheetsHtml || '<div class="print-empty">(내용이 없는 통합 문서)</div>'}
+          </div>
+        `;
+        result = result.split(fullMatch).join(replacement);
+      } catch (err) {
+        console.error('엑셀 인쇄용 렌더링 실패:', err);
+        result = result.split(fullMatch).join(attachmentCardHtml(att, displayName, '내용 표시 실패'));
+      }
+      continue;
+    }
+
+    if (kind === 'word') {
+      // docx-preview로 화면 밖 임시 영역에 렌더링한 뒤 HTML(스타일 포함)을 인쇄 문서에 옮긴다.
+      // 이미지는 base64로 넣어 인쇄용 iframe에서도 보이게 한다.
+      const holder = document.createElement('div');
+      holder.style.cssText = 'position:fixed;left:-20000px;top:0;width:900px;visibility:hidden;';
+      document.body.appendChild(holder);
+      try {
+        await renderDocxToContainer(att.data, holder, { useBase64URL: true } as any);
+        const replacement = `
+          <div class="print-doc-container print-doc-flow">
+            <div class="print-doc-header">
+              <span class="print-doc-badge print-doc-badge-word">📘 워드</span>
+              <span class="print-doc-title">${escapeHtml(displayName)}</span>
+            </div>
+            <div class="print-docx">${holder.innerHTML}</div>
+          </div>
+        `;
+        result = result.split(fullMatch).join(replacement);
+      } catch (err) {
+        console.error('워드 인쇄용 렌더링 실패:', err);
+        result = result.split(fullMatch).join(attachmentCardHtml(att, displayName, '내용 표시 실패'));
+      } finally {
+        holder.remove();
+      }
+      continue;
+    }
+
+    if (kind === 'ppt') {
+      // 슬라이드 그림 렌더러는 뷰어 컴포넌트 안에만 있어, 슬라이드별 제목·본문·표를 글로 넣는다.
+      try {
+        const { markdown } = await extractPptxTextAndMarkdown(att.data);
+        const body = marked.parse(markdown.replace(/^# .*\n/, ''), { breaks: true, gfm: true }) as string;
+        const replacement = `
+          <div class="print-doc-container print-doc-flow">
+            <div class="print-doc-header">
+              <span class="print-doc-badge print-doc-badge-ppt">📽️ PPT</span>
+              <span class="print-doc-title">${escapeHtml(displayName)} (슬라이드 내용)</span>
+            </div>
+            <div class="print-ppt-text">${body}</div>
+          </div>
+        `;
+        result = result.split(fullMatch).join(replacement);
+      } catch (err) {
+        console.error('PPT 인쇄용 렌더링 실패:', err);
+        result = result.split(fullMatch).join(attachmentCardHtml(att, displayName, '내용 표시 실패'));
+      }
+      continue;
+    }
 
     if (isPdf) {
       try {
@@ -214,13 +391,7 @@ async function renderAttachmentsForPrint(
         result = result.split(fullMatch).join(fallback);
       }
     } else {
-      const fallback = `
-        <div class="print-att-card">
-          <span>📎</span>
-          <span>${displayName} (첨부 파일)</span>
-        </div>
-      `;
-      result = result.split(fullMatch).join(fallback);
+      result = result.split(fullMatch).join(attachmentCardHtml(att, displayName));
     }
   }
 
@@ -234,13 +405,15 @@ async function renderAttachmentsForPrint(
 export async function exportNoteToPdf(
   note: Note,
   folderBreadcrumbs: string = '',
-  customContent?: string
+  customContent?: string,
+  attachmentMode: PdfAttachmentMode = 'expanded'
 ): Promise<void> {
   const contentToRender = customContent !== undefined ? customContent : note.content;
-  let normalizedContent = (contentToRender || '').replace(/^(\s*-\s*\[[ xX]\])([^\s\n])/gm, '$1 $2');
+  let normalizedContent = applyCollapsedAttachmentMode(contentToRender || '', note.attachments || {}, attachmentMode);
+  normalizedContent = normalizedContent.replace(/^(\s*-\s*\[[ xX]\])([^\s\n])/gm, '$1 $2');
   normalizedContent = normalizedContent.replace(/==([^=\n]+)==/g, '<mark style="background-color: #fef08a; color: #0f172a; padding: 2px 5px; border-radius: 4px;">$1</mark>');
   const rawHtml = marked.parse(normalizedContent, { breaks: true, gfm: true }) as string;
-  const renderedHtml = await renderAttachmentsForPrint(rawHtml, note.attachments);
+  const renderedHtml = await renderAttachmentsForPrint(rawHtml, note.attachments, attachmentMode !== 'none');
 
   const createdDate = new Date(note.createdAt).toLocaleDateString('ko-KR', {
     year: 'numeric',
@@ -559,6 +732,48 @@ export async function exportNoteToPdf(
       font-weight: 600;
       margin-top: 6px;
     }
+
+    /* 엑셀·워드·PPT처럼 길어질 수 있는 첨부는 페이지를 넘겨 이어지게 */
+    .print-doc-container.print-doc-flow {
+      break-inside: auto !important;
+      page-break-inside: auto !important;
+    }
+    .print-doc-badge-excel { background: #059669; }
+    .print-doc-badge-word { background: #2563eb; }
+    .print-doc-badge-ppt { background: #ea580c; }
+    .print-empty { padding: 10px 14px; font-size: 12px; color: #64748b; }
+    .print-excel-sheet { padding: 8px 10px 12px; }
+    .print-excel-sheet + .print-excel-sheet { border-top: 1px dashed #cbd5e1; }
+    .print-excel-sheet-name { font-size: 12px; font-weight: 700; color: #065f46; margin: 2px 0 6px; }
+    table.print-excel-table {
+      width: 100% !important;
+      table-layout: auto;
+      margin: 0 !important;
+      font-size: 9.5px !important;
+      break-inside: auto !important;
+    }
+    table.print-excel-table tr { break-inside: avoid; }
+    table.print-excel-table td, table.print-excel-table th {
+      padding: 3px 5px !important;
+      font-size: 9.5px !important;
+      max-width: none !important;
+      word-break: break-all;
+      white-space: pre-wrap !important;
+    }
+    table.print-excel-table td.excel-td-num { position: static !important; }
+    /* 워드: A4 페이지 폭(210mm)을 인쇄 영역(186mm)에 맞추고 페이지마다 나눠 인쇄 */
+    .print-docx { padding: 6px 0; }
+    .print-docx section {
+      zoom: 0.88;
+      box-shadow: none !important;
+      margin: 0 auto !important;
+      break-after: page;
+      page-break-after: always;
+    }
+    .print-docx section:last-of-type { break-after: auto; page-break-after: auto; }
+    .print-ppt-text { padding: 4px 14px 10px; font-size: 12.5px; }
+    .print-ppt-text h2 { font-size: 13.5px; margin-top: 14px; }
+    .print-collapsed-group { margin: 10px 0; }
 
     .print-att-card {
       border: 1px solid #cbd5e1;

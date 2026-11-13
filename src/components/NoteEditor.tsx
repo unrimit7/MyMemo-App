@@ -4,7 +4,7 @@ import { marked } from 'marked';
 import { compressImageToDataUrl } from '../utils/image';
 import { processFileForNote } from '../utils/file';
 import { cleanLegacyAttachments, renderAttachmentsInHtml, invalidateAttachmentBlobUrl } from '../utils/attachment';
-import { exportNoteToPdf } from '../utils/exportPdf';
+import { exportNoteToPdf, contentHasDocumentAttachments, type PdfAttachmentMode } from '../utils/exportPdf';
 import { getFolderHierarchyPath, updateTitleWithFolderPath, stripFolderPrefixFromTitle } from '../utils/folderPath';
 const PdfViewerModal = React.lazy(() => import('./PdfViewerModal').then((m) => ({ default: m.PdfViewerModal })));
 const PdfEditorModal = React.lazy(() => import('./PdfEditorModal').then((m) => ({ default: m.PdfEditorModal })));
@@ -170,6 +170,15 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const [isProcessingExcel, setIsProcessingExcel] = useState(false);
   const [isProcessingDocx, setIsProcessingDocx] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  // PDF 내보내기 첨부 포함 방식 선택 창 (마지막 선택을 기억)
+  const [showPdfExportDialog, setShowPdfExportDialog] = useState(false);
+  const [pdfAttachmentMode, setPdfAttachmentMode] = useState<PdfAttachmentMode>(() => {
+    try {
+      const saved = localStorage.getItem('mymemo_pdf_attachment_mode');
+      if (saved === 'expanded' || saved === 'all' || saved === 'none') return saved;
+    } catch {}
+    return 'expanded';
+  });
   const [isDragOverEditor, setIsDragOverEditor] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<{ attId: string; src: string; alt: string } | null>(null);
@@ -3175,6 +3184,26 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  // PDF 내보내기 실행 (첨부 포함 방식 지정)
+  const runPdfExport = async (mode: PdfAttachmentMode) => {
+    if (isExportingPdf || !note) return;
+    setIsExportingPdf(true);
+    try {
+      const breadcrumbText = folderBreadcrumbs.map((b) => b.name).join(' > ');
+      await exportNoteToPdf(
+        { ...note, title: localTitle, content: localContent, attachments: localAttachments },
+        breadcrumbText,
+        localContent,
+        mode
+      );
+    } catch (e) {
+      console.error('PDF 내보내기 실패:', e);
+      alert('PDF 내보내기 중 오류가 발생했습니다.');
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
   return (
     <div 
       className={`flex-1 flex flex-col h-full bg-slate-950 overflow-hidden transition-all ${
@@ -3409,26 +3438,18 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
           {/* 📄 PDF 내보내기 / 인쇄 버튼 */}
           <button
-            onClick={async () => {
+            onClick={() => {
               if (isExportingPdf) return;
-              setIsExportingPdf(true);
-              try {
-                const breadcrumbText = folderBreadcrumbs.map((b) => b.name).join(' > ');
-                await exportNoteToPdf(
-                  { ...note, title: localTitle, content: localContent, attachments: localAttachments },
-                  breadcrumbText,
-                  localContent
-                );
-              } catch (e) {
-                console.error('PDF 내보내기 실패:', e);
-                alert('PDF 내보내기 중 오류가 발생했습니다.');
-              } finally {
-                setIsExportingPdf(false);
+              // 문서형 첨부(PDF/한글/엑셀/워드/PPT)가 있을 때만 포함 방식 선택 창을 띄운다
+              if (contentHasDocumentAttachments(localContent, localAttachments)) {
+                setShowPdfExportDialog(true);
+              } else {
+                void runPdfExport('expanded');
               }
             }}
             disabled={isExportingPdf}
             className="flex items-center gap-1 px-2 py-1 md:px-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-indigo-300 border border-slate-800 rounded-lg text-xs font-medium transition-all shadow-sm active:scale-95 shrink-0 disabled:opacity-50"
-            title="현재 메모를 깔끔한 PDF 문서로 내보내기 / 인쇄 (첨부된 PDF/한글 문서 페이지 포함)"
+            title="현재 메모를 깔끔한 PDF 문서로 내보내기 / 인쇄 (첨부 문서 내용 포함 방식 선택)"
           >
             {isExportingPdf ? (
               <Loader2 size={13} className="animate-spin text-indigo-400" />
@@ -5044,6 +5065,95 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                 className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold"
               >
                 닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PDF 내보내기: 첨부 문서 내용 포함 방식 선택 창 */}
+      {showPdfExportDialog && (
+        <div
+          className="fixed inset-0 z-[80] bg-black/70 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setShowPdfExportDialog(false)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setShowPdfExportDialog(false);
+          }}
+        >
+          <div
+            className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl max-w-md w-full p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                <FileDown size={16} className="text-indigo-400" />
+                PDF 내보내기 - 첨부 문서
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowPdfExportDialog(false)}
+                className="p-1 text-slate-400 hover:text-rose-400 rounded-lg"
+                title="닫기 (Esc)"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="space-y-2">
+              {([
+                { value: 'expanded', title: '펼친 첨부만 내용 포함', desc: '화면에 보이는 그대로. 「📁 접기」로 접힌 첨부는 파일 이름 한 줄로 넣습니다.' },
+                { value: 'all', title: '모든 첨부 내용 포함', desc: '접힘 상태와 관계없이 모든 첨부의 내용을 넣습니다.' },
+                { value: 'none', title: '첨부 내용 빼기', desc: '모든 첨부를 파일 이름 한 줄로만 넣습니다. (사진은 그대로 표시)' },
+              ] as { value: PdfAttachmentMode; title: string; desc: string }[]).map((opt) => (
+                <label
+                  key={opt.value}
+                  className={`flex items-start gap-2.5 p-3 rounded-xl border cursor-pointer transition-colors ${
+                    pdfAttachmentMode === opt.value
+                      ? 'border-indigo-500/60 bg-indigo-500/10'
+                      : 'border-slate-800 bg-slate-950/50 hover:border-slate-700'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="pdf-attachment-mode"
+                    className="mt-0.5 accent-indigo-500"
+                    checked={pdfAttachmentMode === opt.value}
+                    onChange={() => setPdfAttachmentMode(opt.value)}
+                  />
+                  <span>
+                    <span className="block text-xs font-semibold text-slate-100">
+                      {opt.title}
+                      {opt.value === 'expanded' && <span className="ml-1.5 text-[10px] text-indigo-300">(기본)</span>}
+                    </span>
+                    <span className="block text-[11px] text-slate-400 mt-0.5 leading-relaxed">{opt.desc}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              엑셀은 시트별 표(시트당 최대 200행), 워드는 문서 페이지, PPT는 슬라이드별 글 내용, PDF·한글은 전체 페이지로 들어갑니다.
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowPdfExportDialog(false)}
+                className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                autoFocus
+                onClick={() => {
+                  try {
+                    localStorage.setItem('mymemo_pdf_attachment_mode', pdfAttachmentMode);
+                  } catch {}
+                  setShowPdfExportDialog(false);
+                  void runPdfExport(pdfAttachmentMode);
+                }}
+                className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5"
+              >
+                <FileDown size={13} />
+                내보내기
               </button>
             </div>
           </div>
