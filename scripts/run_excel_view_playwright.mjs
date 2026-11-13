@@ -180,18 +180,28 @@ async function main() {
       const r4 = trs[3];
       if (!r4) return null;
       const tds = r4.querySelectorAll('td.excel-td');
+      const a4Td = tds[0];
+      const e4Td = tds[4];
+      const g4Td = tds[6];
       return {
-        a4: tds[0] ? tds[0].textContent.trim() : '',
-        e4: tds[4] ? tds[4].textContent.trim() : '',
-        g4: tds[6] ? tds[6].textContent.trim() : '',
+        a4: a4Td ? a4Td.textContent.trim() : '',
+        a4Align: a4Td ? window.getComputedStyle(a4Td).textAlign : '',
+        e4: e4Td ? e4Td.textContent.trim() : '',
+        e4Align: e4Td ? window.getComputedStyle(e4Td).textAlign : '',
+        g4: g4Td ? g4Td.textContent.trim() : '',
+        g4Align: g4Td ? window.getComputedStyle(g4Td).textAlign : '',
       };
     });
 
     console.log(`  [단언 1-4] 결제 예정 A4 날짜: 실제="${paymentValues?.a4}", 기대값="2026-11-27"`);
     assert(paymentValues?.a4 === '2026-11-27', `A4 날짜는 '2026-11-27'이어야 함 (실제: ${paymentValues?.a4})`);
+    console.log(`  [단언 1-4-1] 결제 예정 A4 날짜 가로 정렬: 실제="${paymentValues?.a4Align}", 기대값="right"`);
+    assert(paymentValues?.a4Align === 'right', `A4 날짜 셀 가로 정렬은 right이어야 함 (실제: ${paymentValues?.a4Align})`);
 
     console.log(`  [단언 1-5] 결제 예정 E4 금액: 실제="${paymentValues?.e4}", 기대값="23,100원"`);
     assert(paymentValues?.e4 === '23,100원', `E4 금액은 '23,100원'이어야 함 (실제: ${paymentValues?.e4})`);
+    console.log(`  [단언 1-5-1] 결제 예정 E4 금액 가로 정렬: 실제="${paymentValues?.e4Align}", 기대값="right"`);
+    assert(paymentValues?.e4Align === 'right', `E4 금액 셀 가로 정렬은 right이어야 함 (실제: ${paymentValues?.e4Align})`);
 
     // G4 = A4 - TODAY()
     const now = new Date();
@@ -201,6 +211,8 @@ async function main() {
     const expectedG4 = expectedDiff >= 0 ? `${expectedDiff}일` : `지남 ${Math.abs(expectedDiff)}일`;
     console.log(`  [단언 1-6] 결제 예정 G4 남은 일수(=A4-TODAY()): 실제="${paymentValues?.g4}", 기대값="${expectedG4}"`);
     assert(paymentValues?.g4 === expectedG4, `G4 수식 계산값은 '${expectedG4}'이어야 함 (실제: ${paymentValues?.g4})`);
+    console.log(`  [단언 1-6-1] 결제 예정 G4 가로 정렬: 실제="${paymentValues?.g4Align}", 기대값="right"`);
+    assert(paymentValues?.g4Align === 'right', `G4 셀 가로 정렬은 right이어야 함 (실제: ${paymentValues?.g4Align})`);
 
     // -------------------------------------------------------------------------
     // [검증 2] 큰 화면 뷰어 (ExcelViewerModal): 탭 전환, 결제 예정 표시형식, 검정 기본 글자색
@@ -245,18 +257,30 @@ async function main() {
       if (!r4) return null;
       const tds = r4.querySelectorAll('td');
       // index 0은 행번호(#), 1은 A, 5는 E, 7은 G
+      const a4Td = tds[1];
+      const e4Td = tds[5];
+      const g4Td = tds[7];
       return {
-        a4: tds[1] ? tds[1].textContent.trim() : '',
-        e4: tds[5] ? tds[5].textContent.trim() : '',
-        g4: tds[7] ? tds[7].textContent.trim() : '',
+        a4: a4Td ? a4Td.textContent.trim() : '',
+        a4Align: a4Td ? window.getComputedStyle(a4Td).textAlign : '',
+        e4: e4Td ? e4Td.textContent.trim() : '',
+        e4Align: e4Td ? window.getComputedStyle(e4Td).textAlign : '',
+        g4: g4Td ? g4Td.textContent.trim() : '',
+        g4Align: g4Td ? window.getComputedStyle(g4Td).textAlign : '',
       };
     });
     console.log(`  [단언 2-2] 큰 화면 뷰어 결제 예정 A4: 실제="${modalPaymentVals?.a4}", 기대값="2026-11-27"`);
     assert(modalPaymentVals?.a4 === '2026-11-27', `A4 날짜 '2026-11-27' 확인`);
+    console.log(`  [단언 2-2-1] 큰 화면 뷰어 결제 예정 A4 가로 정렬: 실제="${modalPaymentVals?.a4Align}", 기대값="right"`);
+    assert(modalPaymentVals?.a4Align === 'right', `A4 날짜 가로 정렬 right 확인 (실제: ${modalPaymentVals?.a4Align})`);
     console.log(`  [단언 2-3] 큰 화면 뷰어 결제 예정 E4: 실제="${modalPaymentVals?.e4}", 기대값="23,100원"`);
     assert(modalPaymentVals?.e4 === '23,100원', `E4 금액 '23,100원' 확인`);
+    console.log(`  [단언 2-3-1] 큰 화면 뷰어 결제 예정 E4 가로 정렬: 실제="${modalPaymentVals?.e4Align}", 기대값="right"`);
+    assert(modalPaymentVals?.e4Align === 'right', `E4 금액 가로 정렬 right 확인 (실제: ${modalPaymentVals?.e4Align})`);
     console.log(`  [단언 2-4] 큰 화면 뷰어 결제 예정 G4: 실제="${modalPaymentVals?.g4}", 기대값="${expectedG4}"`);
     assert(modalPaymentVals?.g4 === expectedG4, `G4 수식 계산값 '${expectedG4}' 확인`);
+    console.log(`  [단언 2-4-1] 큰 화면 뷰어 결제 예정 G4 가로 정렬: 실제="${modalPaymentVals?.g4Align}", 기대값="right"`);
+    assert(modalPaymentVals?.g4Align === 'right', `G4 가로 정렬 right 확인 (실제: ${modalPaymentVals?.g4Align})`);
 
     // 스크린샷 4
     const shot4 = path.join(outDir, '04_큰화면뷰어_탭전환_결제예정.png');
@@ -316,13 +340,15 @@ async function main() {
       const c5 = r5 ? r5.querySelectorAll('td.excel-td')[2]?.textContent?.trim() : '';
       // F11: 11행 6열 (rIdx 10, cIdx 5)
       const r11 = trs[10];
-      const f11 = r11 ? r11.querySelectorAll('td.excel-td')[5]?.textContent?.trim() : '';
+      const f11Td = r11 ? r11.querySelectorAll('td.excel-td')[5] : null;
+      const f11 = f11Td ? f11Td.textContent?.trim() : '';
+      const f11Align = f11Td ? window.getComputedStyle(f11Td).textAlign : '';
       // B8 RichText: 8행 2열
       const r8 = trs[7];
       const b8Td = r8 ? r8.querySelectorAll('td.excel-td')[1] : null;
       const b8Html = b8Td ? b8Td.innerHTML : '';
       const b8Text = b8Td ? b8Td.textContent?.trim() : '';
-      return { c5, f11, b8Html, b8Text };
+      return { c5, f11, f11Align, b8Html, b8Text };
     });
 
     console.log(`  [단언 4-1] 견적서 C5 날짜 서식: 실제="${quoteVals?.c5}", 기대값="2026년 11월 11일"`);
@@ -330,6 +356,8 @@ async function main() {
 
     console.log(`  [단언 4-2] 견적서 F11 금액 서식: 실제="${quoteVals?.f11}", 기대값="1,250,000"`);
     assert(quoteVals?.f11 === '1,250,000', `F11은 '1,250,000'이어야 함 (실제: ${quoteVals?.f11})`);
+    console.log(`  [단언 4-2-1] 견적서 F11 금액 가로 정렬: 실제="${quoteVals?.f11Align}", 기대값="right"`);
+    assert(quoteVals?.f11Align === 'right', `견적서 F11 셀 가로 정렬은 right이어야 함 (실제: ${quoteVals?.f11Align})`);
 
     console.log(`  [단언 4-3] 견적서 B8 서식 있는 텍스트(RichText): 실제 HTML="${quoteVals?.b8Html}"`);
     assert(quoteVals?.b8Html.includes('color:') && quoteVals?.b8Html.includes('부가세 포함'), 'B8 셀에 부분 빨간 굵은 글씨 RichText 런이 포함되어야 함');
@@ -365,10 +393,16 @@ async function main() {
       const trs = document.querySelectorAll('.excel-inline-viewer table tbody tr');
       // 4행 7열(G4)
       const r4 = trs[3];
-      return r4 ? r4.querySelectorAll('td.excel-td')[6]?.textContent?.trim() : '';
+      const g4Td = r4 ? r4.querySelectorAll('td.excel-td')[6] : null;
+      return {
+        text: g4Td ? g4Td.textContent?.trim() : '',
+        align: g4Td ? window.getComputedStyle(g4Td).textAlign : '',
+      };
     });
-    console.log(`  [단언 4-5] 인사평가 G4 인센티브 서식: 실제="${evalG4}", 기대값="3,000,000원"`);
-    assert(evalG4 === '3,000,000원', `G4 인센티브는 '3,000,000원'이어야 함 (실제: ${evalG4})`);
+    console.log(`  [단언 4-5] 인사평가 G4 인센티브 서식: 실제="${evalG4?.text}", 기대값="3,000,000원"`);
+    assert(evalG4?.text === '3,000,000원', `G4 인센티브는 '3,000,000원'이어야 함 (실제: ${evalG4?.text})`);
+    console.log(`  [단언 4-5-1] 인사평가 G4 가로 정렬: 실제="${evalG4?.align}", 기대값="right"`);
+    assert(evalG4?.align === 'right', `인사평가 G4 셀 가로 정렬은 right이어야 함 (실제: ${evalG4?.align})`);
 
     // 부서코드 탭 클릭
     console.log('  -> 실파일A 시트 탭 [부서코드] 클릭...');

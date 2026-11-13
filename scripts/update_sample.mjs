@@ -47,7 +47,7 @@ headers.forEach((h, idx) => {
 // E4 = 23100 (numFmt: #,##0"원";-#,##0"원";"-")
 // G4 = =A4-TODAY() (numFmt: 0"일";"지남 "0"일") - 캐시값 없음
 const row4 = sheet.getRow(4);
-row4.getCell(1).value = new Date(2026, 10, 27);
+row4.getCell(1).value = new Date(Date.UTC(2026, 10, 27));
 row4.getCell(1).numFmt = 'yyyy-mm-dd';
 
 row4.getCell(2).value = '도메인';
@@ -66,7 +66,7 @@ row4.getCell(8).value = '결제대기';
 
 // Row 5
 const row5 = sheet.getRow(5);
-row5.getCell(1).value = new Date(2026, 10, 20);
+row5.getCell(1).value = new Date(Date.UTC(2026, 10, 20));
 row5.getCell(1).numFmt = 'yyyy-mm-dd';
 row5.getCell(2).value = 'SSL 인증서';
 row5.getCell(3).value = '와일드카드 인증서';
@@ -80,7 +80,7 @@ row5.getCell(8).value = '승인완료';
 
 // Row 6 (과거 결제 건)
 const row6 = sheet.getRow(6);
-row6.getCell(1).value = new Date(2026, 10, 10);
+row6.getCell(1).value = new Date(Date.UTC(2026, 10, 10));
 row6.getCell(1).numFmt = 'yyyy-mm-dd';
 row6.getCell(2).value = '호스팅';
 row6.getCell(3).value = '기본 웹 서버';
