@@ -4,7 +4,7 @@ import { marked } from 'marked';
 import { compressImageToDataUrl } from '../utils/image';
 import { processFileForNote } from '../utils/file';
 import { cleanLegacyAttachments, renderAttachmentsInHtml, invalidateAttachmentBlobUrl } from '../utils/attachment';
-import { exportNoteToPdf, contentHasDocumentAttachments, type PdfAttachmentMode } from '../utils/exportPdf';
+import { exportNoteToPdf, contentHasDocumentAttachments, type PdfAttachmentMode, type PdfToggleOpenState } from '../utils/exportPdf';
 import { getFolderHierarchyPath, updateTitleWithFolderPath, stripFolderPrefixFromTitle } from '../utils/folderPath';
 const PdfViewerModal = React.lazy(() => import('./PdfViewerModal').then((m) => ({ default: m.PdfViewerModal })));
 const PdfEditorModal = React.lazy(() => import('./PdfEditorModal').then((m) => ({ default: m.PdfEditorModal })));
@@ -3190,11 +3190,21 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     setIsExportingPdf(true);
     try {
       const breadcrumbText = folderBreadcrumbs.map((b) => b.name).join(' > ');
+      // 미리보기 화면에서 각 토글(<details>)을 펼쳐 두었는지 (편집 전용 화면이면 빈 목록 → 모두 접힘)
+      const toggleStates: PdfToggleOpenState[] = [];
+      const previewEl = previewContainerRef.current;
+      if (previewEl) {
+        previewEl.querySelectorAll('details').forEach((d) => {
+          const summaryEl = Array.from(d.children).find((c) => c.tagName === 'SUMMARY');
+          toggleStates.push({ summary: summaryEl?.innerHTML || '', open: (d as HTMLDetailsElement).open });
+        });
+      }
       await exportNoteToPdf(
         { ...note, title: localTitle, content: localContent, attachments: localAttachments },
         breadcrumbText,
         localContent,
-        mode
+        mode,
+        toggleStates
       );
     } catch (e) {
       console.error('PDF 내보내기 실패:', e);
@@ -3441,7 +3451,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             onClick={() => {
               if (isExportingPdf) return;
               // 문서형 첨부(PDF/한글/엑셀/워드/PPT)가 있을 때만 포함 방식 선택 창을 띄운다
-              if (contentHasDocumentAttachments(localContent, localAttachments)) {
+              if (contentHasDocumentAttachments(localContent, localAttachments) || /<details[\s>]/i.test(localContent)) {
                 setShowPdfExportDialog(true);
               } else {
                 void runPdfExport('expanded');
@@ -5087,7 +5097,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
                 <FileDown size={16} className="text-indigo-400" />
-                PDF 내보내기 - 첨부 문서
+                PDF 내보내기 - 토글·첨부 포함 방식
               </h3>
               <button
                 type="button"
@@ -5100,9 +5110,9 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             </div>
             <div className="space-y-2">
               {([
-                { value: 'expanded', title: '펼친 첨부만 내용 포함', desc: '화면에 보이는 그대로. 「📁 접기」로 접힌 첨부는 파일 이름 한 줄로 넣습니다.' },
-                { value: 'all', title: '모든 첨부 내용 포함', desc: '접힘 상태와 관계없이 모든 첨부의 내용을 넣습니다.' },
-                { value: 'none', title: '첨부 내용 빼기', desc: '모든 첨부를 파일 이름 한 줄로만 넣습니다. (사진은 그대로 표시)' },
+                { value: 'expanded', title: '화면에서 펼친 것만 내용 포함', desc: '미리보기에 보이는 그대로. 펼쳐 둔 토글·첨부는 내용까지, 접힌 것은 제목(파일 이름) 한 줄만 넣습니다.' },
+                { value: 'all', title: '모두 펼쳐서 포함', desc: '접힘 상태와 관계없이 모든 토글과 첨부의 내용을 넣습니다.' },
+                { value: 'none', title: '첨부 내용 빼기', desc: '토글은 화면 상태 그대로, 첨부는 파일 이름 한 줄로만 넣습니다. (사진은 그대로 표시)' },
               ] as { value: PdfAttachmentMode; title: string; desc: string }[]).map((opt) => (
                 <label
                   key={opt.value}
@@ -5130,7 +5140,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               ))}
             </div>
             <p className="text-[11px] text-slate-500 leading-relaxed">
-              엑셀은 시트별 표(시트당 최대 200행), 워드는 문서 페이지, PPT는 슬라이드별 글 내용, PDF·한글은 전체 페이지로 들어갑니다.
+              편집 전용 화면(미리보기 없음)에서는 모든 토글을 접힌 것으로 봅니다. 엑셀은 시트별 표(시트당 최대 200행), 워드는 문서 페이지, PPT는 슬라이드별 글 내용, PDF·한글은 전체 페이지로 들어갑니다.
             </p>
             <div className="flex justify-end gap-2 pt-1">
               <button

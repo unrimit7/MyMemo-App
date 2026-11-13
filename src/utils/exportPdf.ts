@@ -69,32 +69,75 @@ function attachmentCardHtml(att: AttachmentItem, displayName: string, note?: str
   `;
 }
 
+/** 미리보기 화면의 토글(<details>) 펼침 상태. 제목(summary 글자)과 순서로 마크다운 블록과 짝을 맞춘다. */
+export interface PdfToggleOpenState {
+  summary: string;
+  open: boolean;
+}
+
+function normalizeSummaryText(s: string): string {
+  return (s || '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/[*_`~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /**
- * 마크다운의 접힌 첨부(<details> 로 감싼 '📁 접기' 블록)를 내보내기 방식에 맞게 변환한다.
- * - all: <details> 를 풀어 안의 첨부가 내용으로 렌더링되게 한다
- * - expanded / none: 접힌 블록을 '접힌 첨부' 한 줄 카드로 바꾼다
- * 첨부가 없는 일반 토글(<details>)은 그대로 둔다.
+ * 마크다운의 토글(<details>) 블록을 내보내기 방식과 화면 펼침 상태에 맞게 변환한다.
+ * 펼침 판정: all → 항상 펼침 / expanded·none → 미리보기 화면에서 펼쳐 둔 것만 펼침
+ *   (미리보기가 없는 편집 전용 화면이면 모두 접힌 것으로 본다)
+ * - 문서형 첨부가 든 블록('📁 접기'): 펼침이면 토글을 풀어 첨부 내용을 넣고, 접힘이면 '접힌 첨부' 한 줄 카드
+ *   (none 모드에서는 풀어도 첨부가 이름 한 줄로 표시됨)
+ * - 글만 있는 토글: 펼침이면 <details open> 으로 내용까지, 접힘이면 제목 한 줄만
  */
-function applyCollapsedAttachmentMode(
+function applyDetailsMode(
   markdown: string,
   attachments: Record<string, AttachmentItem>,
-  mode: PdfAttachmentMode
+  mode: PdfAttachmentMode,
+  openStates?: PdfToggleOpenState[]
 ): string {
+  const used = new Set<number>();
+  const isOpenOnScreen = (summaryRaw: string): boolean => {
+    if (!openStates || openStates.length === 0) return false;
+    const key = normalizeSummaryText(summaryRaw);
+    for (let i = 0; i < openStates.length; i++) {
+      if (used.has(i)) continue;
+      if (normalizeSummaryText(openStates[i].summary) === key) {
+        used.add(i);
+        return openStates[i].open;
+      }
+    }
+    return false;
+  };
+
   return (markdown || '').replace(
-    /<details[^>]*>\s*<summary>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>/gi,
-    (block: string, _summary: string, inner: string) => {
+    /<details([^>]*)>(\s*)<summary>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>/gi,
+    (block: string, attrs: string, gap: string, summary: string, inner: string) => {
+      const open = mode === 'all' ? true : isOpenOnScreen(summary);
+
       const ids: string[] = [];
       inner.replace(/(?:\(|attachment:)(att-[a-zA-Z0-9_-]+)/g, (m: string, id: string) => {
         if (!ids.includes(id)) ids.push(id);
         return m;
       });
       const docAtts = ids.map((id) => attachments[id]).filter((a): a is AttachmentItem => isPrintableDocumentAttachment(a));
-      if (docAtts.length === 0) return block;
-      if (mode === 'all') {
-        return `\n\n${inner.trim()}\n\n`;
+
+      if (docAtts.length > 0) {
+        if (open) {
+          return `\n\n${inner.trim()}\n\n`;
+        }
+        const cards = docAtts.map((a) => attachmentCardHtml(a, a.name, '접힌 첨부')).join('');
+        return `\n\n<div class="print-collapsed-group">${cards}</div>\n\n`;
       }
-      const cards = docAtts.map((a) => attachmentCardHtml(a, a.name, '접힌 첨부')).join('');
-      return `\n\n<div class="print-collapsed-group">${cards}</div>\n\n`;
+
+      // 글 토글: 열림 여부만 바꾼다 (내부 마크다운 해석은 미리보기와 동일하게 유지)
+      const cleanAttrs = attrs.replace(/\s+open(?:=(?:"[^"]*"|'[^']*'|\S+))?/gi, '');
+      if (open) {
+        return block.replace(/^<details[^>]*>/i, `<details${cleanAttrs} open>`);
+      }
+      return `<details${cleanAttrs}>${gap}<summary>${summary}</summary>${inner}</details>`;
     }
   );
 }
@@ -406,10 +449,11 @@ export async function exportNoteToPdf(
   note: Note,
   folderBreadcrumbs: string = '',
   customContent?: string,
-  attachmentMode: PdfAttachmentMode = 'expanded'
+  attachmentMode: PdfAttachmentMode = 'expanded',
+  toggleOpenStates?: PdfToggleOpenState[]
 ): Promise<void> {
   const contentToRender = customContent !== undefined ? customContent : note.content;
-  let normalizedContent = applyCollapsedAttachmentMode(contentToRender || '', note.attachments || {}, attachmentMode);
+  let normalizedContent = applyDetailsMode(contentToRender || '', note.attachments || {}, attachmentMode, toggleOpenStates);
   normalizedContent = normalizedContent.replace(/^(\s*-\s*\[[ xX]\])([^\s\n])/gm, '$1 $2');
   normalizedContent = normalizedContent.replace(/==([^=\n]+)==/g, '<mark style="background-color: #fef08a; color: #0f172a; padding: 2px 5px; border-radius: 4px;">$1</mark>');
   const rawHtml = marked.parse(normalizedContent, { breaks: true, gfm: true }) as string;
@@ -774,6 +818,25 @@ export async function exportNoteToPdf(
     .print-ppt-text { padding: 4px 14px 10px; font-size: 12.5px; }
     .print-ppt-text h2 { font-size: 13.5px; margin-top: 14px; }
     .print-collapsed-group { margin: 10px 0; }
+    /* 글 토글(<details>): 접힌 것은 제목 한 줄, 펼친 것은 테두리 상자 안에 내용까지 */
+    details {
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 8px 14px;
+      margin: 10px 0;
+      background: #ffffff;
+    }
+    details > summary {
+      font-weight: 700;
+      font-size: 13.5px;
+      color: #0f172a;
+      cursor: default;
+    }
+    details[open] > summary {
+      border-bottom: 1px solid #e2e8f0;
+      padding-bottom: 6px;
+      margin-bottom: 8px;
+    }
 
     .print-att-card {
       border: 1px solid #cbd5e1;
