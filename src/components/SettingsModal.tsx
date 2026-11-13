@@ -458,6 +458,52 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
+          {/* 버전 및 빌드 정보 카드 */}
+          <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60 shadow-sm space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-xs">
+                  ℹ️
+                </div>
+                <h4 className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
+                  <span>앱 버전 및 빌드 정보</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-normal">
+                    PWA
+                  </span>
+                </h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const info = `MyMemo Build: ${typeof __APP_COMMIT_HASH__ !== 'undefined' ? __APP_COMMIT_HASH__ : 'dev'} (${typeof __APP_BUILD_TIME__ !== 'undefined' ? __APP_BUILD_TIME__ : 'dev'})`;
+                  navigator.clipboard.writeText(info);
+                  alert(`버전 정보가 클립보드에 복사되었습니다:\n${info}`);
+                }}
+                className="text-[10px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center gap-1 transition-colors cursor-pointer"
+                title="버전 정보 복사"
+              >
+                <Copy size={10} />
+                <span>정보 복사</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-0.5">
+              <div className="flex items-center justify-between p-2 rounded-lg bg-slate-900/80 border border-slate-800">
+                <span className="text-slate-400">커밋 해시 (ID) :</span>
+                <span className="font-mono font-bold text-emerald-400 text-xs px-1.5 py-0.5 rounded bg-emerald-950/40 border border-emerald-500/30 app-commit-hash">
+                  {typeof __APP_COMMIT_HASH__ !== 'undefined' ? __APP_COMMIT_HASH__ : 'dev'}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between p-2 rounded-lg bg-slate-900/80 border border-slate-800 min-w-0">
+                <span className="text-slate-400 shrink-0">빌드 일시 :</span>
+                <span className="font-mono text-[11px] text-slate-300 truncate" title={typeof __APP_BUILD_TIME__ !== 'undefined' ? __APP_BUILD_TIME__ : 'dev'}>
+                  {typeof __APP_BUILD_TIME__ !== 'undefined' ? __APP_BUILD_TIME__ : 'dev'}
+                </span>
+              </div>
+            </div>
+          </div>
+
           {/* 제작자 정보 & 피드백 안내 카드 */}
           <div className="p-4 rounded-xl border border-indigo-500/30 bg-gradient-to-br from-indigo-950/30 via-slate-900/80 to-slate-950/60 shadow-sm space-y-2.5">
             <div className="flex items-center justify-between">

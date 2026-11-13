@@ -1,4 +1,6 @@
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
+import { normalizeHancellXlsx } from './univerAdapter';
 
 export interface ParsedSheetData {
   name: string;
@@ -89,15 +91,25 @@ export function buildMergeMap(merges: CellMergeRange[] = []): Map<string, CellMe
   return map;
 }
 
-function dataUrlToUint8Array(dataOrUrl: string): Uint8Array {
+export function dataUrlToUint8Array(dataOrUrl: string): Uint8Array {
   const commaIdx = dataOrUrl.indexOf(',');
-  const base64 = commaIdx !== -1 ? dataOrUrl.slice(commaIdx + 1) : dataOrUrl;
+  let base64 = commaIdx !== -1 ? dataOrUrl.slice(commaIdx + 1) : dataOrUrl;
+  base64 = base64.replace(/\s+/g, '');
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes;
+}
+
+export async function getBytesFromDataOrUrl(dataOrUrl: string): Promise<Uint8Array> {
+  if (dataOrUrl.startsWith('blob:') || dataOrUrl.startsWith('http:') || dataOrUrl.startsWith('https:')) {
+    const res = await fetch(dataOrUrl);
+    const buf = await res.arrayBuffer();
+    return new Uint8Array(buf);
+  }
+  return dataUrlToUint8Array(dataOrUrl);
 }
 
 const excelCache = new Map<string, ParsedWorkbook>();
@@ -694,16 +706,16 @@ export async function parseExcelWorkbookWithStyles(dataOrUrl: string, cacheKey?:
   }
 
   try {
-    const bytes = dataUrlToUint8Array(dataOrUrl);
+    const rawBytes = await getBytesFromDataOrUrl(dataOrUrl);
     const isCsv = (dataOrUrl || '').startsWith('data:text/csv') || (dataOrUrl || '').includes('csv;base64');
     if (isCsv) {
       return parseExcelWorkbook(dataOrUrl, cacheKey);
     }
 
-    const ExcelJS = await import('exceljs');
-    const WorkbookClass = (ExcelJS as any).Workbook || (ExcelJS as any).default?.Workbook || ExcelJS;
-    const wb = new WorkbookClass();
-    await wb.xlsx.load(bytes);
+    const bytes = await normalizeHancellXlsx(rawBytes);
+    const wb = new ExcelJS.Workbook();
+    const arrayBuf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    await wb.xlsx.load(arrayBuf as any);
 
     const sheetNames: string[] = [];
     const sheets: Record<string, (string | number)[][]> = {};
@@ -910,7 +922,7 @@ export async function parseExcelWorkbookWithStyles(dataOrUrl: string, cacheKey?:
 
     return parsedWb;
   } catch (err) {
-    console.warn('ExcelJS 스타일 파싱 실패, XLSX 기본 파서로 폴백:', err);
+    console.warn('[parseExcelWorkbookWithStyles] ExcelJS 스타일 파싱 실패 (cacheKey: ' + cacheKey + '):', err);
     return parseExcelWorkbook(dataOrUrl, cacheKey);
   }
 }
@@ -1031,9 +1043,16 @@ export async function switchExcelInlineSheet(
 
   const attId = cardElement.getAttribute('data-att-id') || '';
   let parsed: ParsedWorkbook;
+  let isFailed = false;
   try {
     parsed = await parseExcelWorkbookWithStyles(dataOrUrl, attId);
-  } catch {
+    if (!parsed.hasDetailedStyles) {
+      isFailed = true;
+      console.warn('[switchExcelInlineSheet] 상세 서식 누락 (attId: ' + attId + ')');
+    }
+  } catch (err) {
+    isFailed = true;
+    console.warn('[switchExcelInlineSheet] 서식 적용 실패 (attId: ' + attId + '):', err);
     parsed = parseExcelWorkbook(dataOrUrl, attId);
   }
 
@@ -1058,14 +1077,17 @@ export async function switchExcelInlineSheet(
     const pName = pill.getAttribute('data-sheet-name');
     if (pName === sheetName) {
       pill.className = 'excel-sheet-pill px-2.5 py-1 text-[11px] font-semibold rounded-md shrink-0 whitespace-nowrap transition-all cursor-pointer bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-xs';
+      pill.setAttribute('data-active', 'true');
     } else {
       pill.className = 'excel-sheet-pill px-2.5 py-1 text-[11px] font-semibold rounded-md shrink-0 whitespace-nowrap transition-all cursor-pointer bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/60';
+      pill.removeAttribute('data-active');
     }
   });
 
   const footerSpan = cardElement.querySelector<HTMLElement>('.excel-footer-info');
   if (footerSpan) {
-    footerSpan.textContent = `전체 ${totalRows}개 행 • ${colCount}개 열 ${totalRows > 12 ? '(상위 12개 행 미리보기)' : ''}`;
+    const unstyledBadge = isFailed ? ' • <span class="text-amber-400 font-semibold">(서식 미적용)</span>' : '';
+    footerSpan.innerHTML = `전체 ${totalRows}개 행 • ${colCount}개 열 ${totalRows > 12 ? '(상위 12개 행 미리보기)' : ''}${unstyledBadge}`;
   }
 }
 
@@ -1079,14 +1101,35 @@ export async function hydrateExcelInlineStyles(
   for (const card of Array.from(cards)) {
     const attId = card.getAttribute('data-att-id') || '';
     const fileName = card.getAttribute('data-file-name') || '';
+    const footerSpan = card.querySelector<HTMLElement>('.excel-footer-info');
     const data = getAttachmentData(attId, fileName);
-    if (!data) continue;
+    if (!data) {
+      console.warn('[hydrateExcelInlineStyles] 첨부 데이터 없음 (attId: ' + attId + ', fileName: ' + fileName + ')');
+      if (footerSpan && !footerSpan.innerHTML.includes('(서식 미적용)')) {
+        footerSpan.innerHTML += ' • <span class="text-amber-400 font-semibold">(서식 미적용)</span>';
+      }
+      continue;
+    }
 
-    const activePill = card.querySelector<HTMLElement>('.excel-sheet-pill.bg-emerald-500\\/20');
+    const pills = Array.from(card.querySelectorAll<HTMLElement>('.excel-sheet-pill'));
+    const activePill = pills.find(
+      (p) => p.classList.contains('bg-emerald-500/20') || p.getAttribute('data-active') === 'true'
+    ) || pills[0];
     const sheetName = activePill?.getAttribute('data-sheet-name') || undefined;
 
     try {
       const styledWb = await parseExcelWorkbookWithStyles(data, attId);
+      if (!styledWb.hasDetailedStyles) {
+        console.warn('[hydrateExcelInlineStyles] 상세 서식 누락 (attId: ' + attId + ')');
+        if (footerSpan && !footerSpan.innerHTML.includes('(서식 미적용)')) {
+          footerSpan.innerHTML += ' • <span class="text-amber-400 font-semibold">(서식 미적용)</span>';
+        }
+      } else {
+        if (footerSpan) {
+          footerSpan.innerHTML = footerSpan.innerHTML.replace(/\s*•\s*<span[^>]*>\(서식 미적용\)<\/span>/g, '');
+        }
+      }
+
       const targetSheet = sheetName || styledWb.sheetNames[0] || 'Sheet1';
       if (styledWb.cellStyles?.[targetSheet]) {
         const { tableHeaderHtml, tableBodyHtml } = renderExcelTableHtml(styledWb, targetSheet, 12);
@@ -1102,8 +1145,11 @@ export async function hydrateExcelInlineStyles(
           }
         }
       }
-    } catch {
-      // 무시
+    } catch (err) {
+      console.warn('[hydrateExcelInlineStyles] 서식 하이드레이션 실패 (attId: ' + attId + '):', err);
+      if (footerSpan && !footerSpan.innerHTML.includes('(서식 미적용)')) {
+        footerSpan.innerHTML += ' • <span class="text-amber-400 font-semibold">(서식 미적용)</span>';
+      }
     }
   }
 }

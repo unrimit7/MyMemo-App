@@ -60,6 +60,7 @@ export function App() {
   const [isSidebarOpenMobile, setIsSidebarOpenMobile] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncToast, setSyncToast] = useState<string | null>(null);
+  const [pwaUpdateAvailable, setPwaUpdateAvailable] = useState<(() => void) | null>(null);
   const [otherTabsCount, setOtherTabsCount] = useState<number>(0);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
 
@@ -114,6 +115,16 @@ export function App() {
 
     window.addEventListener('mymemo_open_file_handle', handleOpenFileHandle);
     return () => window.removeEventListener('mymemo_open_file_handle', handleOpenFileHandle);
+  }, []);
+
+  useEffect(() => {
+    const handlePwaUpdate = (e: any) => {
+      if (e.detail?.update) {
+        setPwaUpdateAvailable(() => e.detail.update);
+      }
+    };
+    window.addEventListener('mymemo_pwa_update_available', handlePwaUpdate);
+    return () => window.removeEventListener('mymemo_pwa_update_available', handlePwaUpdate);
   }, []);
 
   const handleOpenFloatingNote = (id: string, isPopout: boolean = false) => {
@@ -1668,6 +1679,33 @@ export function App() {
       {syncToast && (
         <div className="fixed top-4 right-4 z-50 bg-slate-800 border border-indigo-500/50 text-slate-100 text-xs py-2 px-4 rounded-xl shadow-xl animate-in slide-in-from-top duration-200">
           {syncToast}
+        </div>
+      )}
+
+      {/* PWA 새 버전 업데이트 알림 배너 */}
+      {pwaUpdateAvailable && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] max-w-lg w-[92%] sm:w-auto bg-gradient-to-r from-indigo-950 via-slate-900 to-indigo-950 border border-indigo-400/80 text-white px-4 py-2.5 rounded-2xl shadow-2xl flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-4 duration-300 ring-2 ring-indigo-500/20">
+          <div className="flex items-center gap-2 text-xs min-w-0">
+            <span className="text-base shrink-0 animate-bounce">🚀</span>
+            <span className="truncate sm:whitespace-normal font-medium">MyMemo 새 버전이 배포되었습니다. 최신 기능을 적용하려면 새로고침하세요.</span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => pwaUpdateAvailable()}
+              className="px-3 py-1 bg-indigo-500 hover:bg-indigo-400 text-white font-bold text-xs rounded-lg active:scale-95 transition-all shadow-md cursor-pointer"
+            >
+              지금 새로고침
+            </button>
+            <button
+              type="button"
+              onClick={() => setPwaUpdateAvailable(null)}
+              className="p-1 text-slate-400 hover:text-white rounded-md text-xs cursor-pointer ml-1"
+              title="나중에"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 

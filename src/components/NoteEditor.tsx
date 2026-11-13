@@ -428,6 +428,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         );
         setLocalContent(cleanedContent);
         setLocalAttachments(cleanedAttachments);
+        localAttachmentsRef.current = cleanedAttachments;
 
         // 히스토리 초기화
         historyRef.current = [{ content: cleanedContent, cursorPos: 0 }];
@@ -461,6 +462,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           );
           setLocalContent(cleanedContent);
           setLocalAttachments(cleanedAttachments);
+          localAttachmentsRef.current = cleanedAttachments;
           pushHistory(cleanedContent, prevStart);
 
           // 외부 동기화로 갱신되더라도 커서 위치 보존
@@ -478,6 +480,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   useEffect(() => {
     if (note?.attachments) {
       setLocalAttachments(note.attachments);
+      localAttachmentsRef.current = note.attachments;
     }
   }, [note?.attachments]);
 
@@ -1165,9 +1168,12 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
     // 엑셀 인라인 뷰어 원본 서식(글자색, 채우기색, 테두리) 비동기 하이드레이션
     hydrateExcelInlineStyles(preview, (attId, fileName) => {
-      const att = (attId && localAttachments[attId])
-        || Object.values(localAttachments).find((a) => a.id === attId || a.name === fileName)
-        || Object.values(localAttachments).find((a) => {
+      const attMap = localAttachmentsRef.current || localAttachments || note?.attachments || {};
+      const att = (attId && attMap[attId])
+        || Object.values(attMap).find((a) => a.id === attId || a.name === fileName)
+        || (note?.attachments && attId && note.attachments[attId])
+        || (note?.attachments && Object.values(note.attachments).find((a) => a.id === attId || a.name === fileName))
+        || Object.values(attMap).find((a) => {
           const n = (a.name || '').toLowerCase();
           return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv');
         });
@@ -2898,9 +2904,12 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       const attId = sheetPill.getAttribute('data-att-id') || card?.getAttribute('data-att-id') || '';
       const fileName = sheetPill.getAttribute('data-file-name') || card?.getAttribute('data-file-name') || '';
 
-      const targetAtt = (attId && localAttachments[attId])
-        || Object.values(localAttachments).find((a) => a.id === attId || a.name === fileName)
-        || Object.values(localAttachments).find((a) => {
+      const attMap = localAttachmentsRef.current || localAttachments || note?.attachments || {};
+      const targetAtt = (attId && attMap[attId])
+        || Object.values(attMap).find((a) => a.id === attId || a.name === fileName)
+        || (note?.attachments && attId && note.attachments[attId])
+        || (note?.attachments && Object.values(note.attachments).find((a) => a.id === attId || a.name === fileName))
+        || Object.values(attMap).find((a) => {
           const n = (a.name || '').toLowerCase();
           return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv');
         });

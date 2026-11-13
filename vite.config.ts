@@ -2,6 +2,23 @@ import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import { execSync } from 'child_process';
+
+let commitHash = 'dev';
+try {
+  commitHash = execSync('git rev-parse --short HEAD').toString().trim();
+} catch {}
+
+const buildTime = new Date().toLocaleString('ko-KR', {
+  timeZone: 'Asia/Seoul',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
 
 // 모바일 브라우저(Samsung Internet, iOS Safari, 모바일 웹뷰 등) 웹 워커 내 ES2024 호환성 완벽 폴리필 플러그인
 function patchPdfWorkerPlugin() {
@@ -144,7 +161,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       workbox: {
         maximumFileSizeToCacheInBytes: 30 * 1024 * 1024, // rhwp_bg.wasm(26.8MB) 오프라인 프리캐시 허용
         globPatterns: [
@@ -232,6 +249,10 @@ export default defineConfig({
   ],
   build: {
     target: ['es2020', 'chrome80', 'safari13', 'edge80'],
+  },
+  define: {
+    __APP_COMMIT_HASH__: JSON.stringify(commitHash),
+    __APP_BUILD_TIME__: JSON.stringify(buildTime),
   },
   base: './' // 상대 경로로 빌드하여 GitHub Pages 등 어디서나 서브디렉토리 배포 가능
 });

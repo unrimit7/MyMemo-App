@@ -129,13 +129,13 @@ async function main() {
       const td = document.querySelector('.excel-inline-viewer table tbody tr:first-child td.excel-td');
       return td ? td.textContent.trim() : '';
     });
-    console.log(`  [단언 1-1] 인라인 카드 초기 A1 값: "${initialA1}" (기대값: "SSL 인증서 관리 대장" 포함)`);
-    assert(initialA1.includes('SSL 인증서') || initialA1.includes('인증서'), '첫 번째 시트(인증서 현황) 데이터 A1 렌더링 확인');
+    console.log(`  [단언 1-1] 인라인 카드 초기 A1 값: "${initialA1}" (기대값: "2026년 11월 정기 결제 예정" 또는 "SSL 인증서 관리 대장" 포함)`);
+    assert(initialA1.includes('결제 예정') || initialA1.includes('SSL 인증서') || initialA1.includes('인증서'), '첫 번째 시트 데이터 A1 렌더링 확인');
 
-    // 1-2. 셀 기본 글자색 검정 rgb(0, 0, 0) 및 배경 흰색 검증
+    // 1-2. 셀 기본 글자색 검정 rgb(0, 0, 0) 및 배경 흰색 검증 (데이터 행 Row 4)
     const cellStyles = await page.evaluate(() => {
       const trs = document.querySelectorAll('.excel-inline-viewer table tbody tr');
-      const dataTd = trs[2] ? trs[2].querySelector('td.excel-td') : null;
+      const dataTd = trs[3] ? trs[3].querySelector('td.excel-td') : null;
       if (!dataTd) return null;
       const cs = window.getComputedStyle(dataTd);
       return {
@@ -195,8 +195,8 @@ async function main() {
 
     console.log(`  [단언 1-4] 결제 예정 A4 날짜: 실제="${paymentValues?.a4}", 기대값="2026-11-27"`);
     assert(paymentValues?.a4 === '2026-11-27', `A4 날짜는 '2026-11-27'이어야 함 (실제: ${paymentValues?.a4})`);
-    console.log(`  [단언 1-4-1] 결제 예정 A4 날짜 가로 정렬: 실제="${paymentValues?.a4Align}", 기대값="right"`);
-    assert(paymentValues?.a4Align === 'right', `A4 날짜 셀 가로 정렬은 right이어야 함 (실제: ${paymentValues?.a4Align})`);
+    console.log(`  [단언 1-4-1] 결제 예정 A4 날짜 가로 정렬: 실제="${paymentValues?.a4Align}", 기대값="center"`);
+    assert(paymentValues?.a4Align === 'center', `A4 날짜 셀 가로 정렬은 center이어야 함 (실제: ${paymentValues?.a4Align})`);
 
     console.log(`  [단언 1-5] 결제 예정 E4 금액: 실제="${paymentValues?.e4}", 기대값="23,100원"`);
     assert(paymentValues?.e4 === '23,100원', `E4 금액은 '23,100원'이어야 함 (실제: ${paymentValues?.e4})`);
@@ -230,7 +230,7 @@ async function main() {
 
     const modalStyles = await page.evaluate(() => {
       const trs = document.querySelectorAll('table.min-w-full tbody tr');
-      const dataTd = trs[2] ? trs[2].querySelectorAll('td')[1] : null;
+      const dataTd = trs[3] ? trs[3].querySelectorAll('td')[1] : null;
       if (!dataTd) return null;
       const cs = window.getComputedStyle(dataTd);
       return {
@@ -271,8 +271,8 @@ async function main() {
     });
     console.log(`  [단언 2-2] 큰 화면 뷰어 결제 예정 A4: 실제="${modalPaymentVals?.a4}", 기대값="2026-11-27"`);
     assert(modalPaymentVals?.a4 === '2026-11-27', `A4 날짜 '2026-11-27' 확인`);
-    console.log(`  [단언 2-2-1] 큰 화면 뷰어 결제 예정 A4 가로 정렬: 실제="${modalPaymentVals?.a4Align}", 기대값="right"`);
-    assert(modalPaymentVals?.a4Align === 'right', `A4 날짜 가로 정렬 right 확인 (실제: ${modalPaymentVals?.a4Align})`);
+    console.log(`  [단언 2-2-1] 큰 화면 뷰어 결제 예정 A4 가로 정렬: 실제="${modalPaymentVals?.a4Align}", 기대값="center"`);
+    assert(modalPaymentVals?.a4Align === 'center', `A4 날짜 가로 정렬 center 확인 (실제: ${modalPaymentVals?.a4Align})`);
     console.log(`  [단언 2-3] 큰 화면 뷰어 결제 예정 E4: 실제="${modalPaymentVals?.e4}", 기대값="23,100원"`);
     assert(modalPaymentVals?.e4 === '23,100원', `E4 금액 '23,100원' 확인`);
     console.log(`  [단언 2-3-1] 큰 화면 뷰어 결제 예정 E4 가로 정렬: 실제="${modalPaymentVals?.e4Align}", 기대값="right"`);

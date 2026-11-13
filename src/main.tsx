@@ -120,18 +120,27 @@ import { registerSW } from 'virtual:pwa-register';
 import './index.css';
 import App from './App.tsx';
 
-// PWA 서비스 워커 자동 등록 및 새 배포 버전 감지 시 즉시 갱신
-registerSW({
+// PWA 서비스 워커 자동 등록 및 새 배포 버전 감지 시 프롬프트 알림 이벤트 발송
+const updateSW = registerSW({
   immediate: true,
   onNeedRefresh() {
-    window.location.reload();
+    window.dispatchEvent(
+      new CustomEvent('mymemo_pwa_update_available', {
+        detail: {
+          update: () => updateSW(true),
+        },
+      })
+    );
+  },
+  onOfflineReady() {
+    console.log('[PWA] 오프라인 캐시가 준비되었습니다.');
   },
   onRegisteredSW(_swUrl, registration) {
     if (registration) {
-      // 5분마다 새 버전 배포 확인
+      // 1분마다 새 버전 배포 확인
       setInterval(() => {
         registration.update();
-      }, 5 * 60 * 1000);
+      }, 60 * 1000);
     }
   },
 });
