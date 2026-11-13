@@ -761,6 +761,7 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
 
   // 닫기 요청
   const handleRequestClose = () => {
+    // 참고: Enter로 확정하지 않은 '입력 중' 글자는 변경으로 보지 않는다(사용자 결정, 2026-11-13).
     const activeWb = univerAPIRef.current?.getActiveWorkbook?.();
     if (activeWb && lastSavedSnapshotHashRef.current) {
       try {
@@ -771,6 +772,11 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
           onClose();
           return;
         }
+        // 내용이 다르면 '수정됨' 표시(0.4초 지연 판정) 여부와 관계없이 확인 창을 띄운다.
+        // (Enter 직후 바로 닫아도 확정한 내용이 조용히 사라지지 않게)
+        setHasChanges(true);
+        setShowExitConfirm(true);
+        return;
       } catch (e) {
         console.warn('스냅샷 해시 비교 실패:', e);
       }
