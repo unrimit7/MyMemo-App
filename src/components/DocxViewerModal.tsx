@@ -116,6 +116,20 @@ export const DocxViewerModal: React.FC<DocxViewerModalProps> = ({
     document.body.removeChild(link);
   };
 
+  // Esc 키 모달 닫기
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (

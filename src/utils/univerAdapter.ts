@@ -371,14 +371,18 @@ export async function dataUrlToUniverWorkbook(
         ySplit = views[0].ySplit || 0;
       }
 
+      // Univer IFreeze 규격: startRow/startColumn은 고정 분할선 이후의 스크롤 시작 행/열 (0-based)
+      const startRow = ySplit > 0 ? ySplit : -1;
+      const startColumn = xSplit > 0 ? xSplit : -1;
+
       const uSheet: IWorksheetData = {
         id: sheetId,
         name: sheetName,
         tabColor: '',
         hidden: 0,
-        freeze: { xSplit, ySplit, startRow: -1, startColumn: -1 },
-        rowCount: Math.max(100, maxRow + 20),
-        columnCount: Math.max(26, maxCol + 10),
+        freeze: { xSplit, ySplit, startRow, startColumn },
+        rowCount: Math.max(1000, maxRow + 100),
+        columnCount: Math.max(52, maxCol + 20),
         zoomRatio: 1,
         scrollTop: 0,
         scrollLeft: 0,
@@ -1254,6 +1258,147 @@ async function cleanAndNormalizeWorkbookBuffer(
   }
 }
 
+export interface XlsxIntegrityMetrics {
+  formulaCount: number;
+  cellXfsCount: number;
+  mergeCount: number;
+  dateCellCount: number;
+  hasGmtString: boolean;
+  /** JavaScript Date 문자열 형식으로 저장된 셀 수 */
+  gmtStringCount: number;
+}
+
+// JavaScript Date.toString() 형식만 정확히 검출 (예: "Fri Nov 27 2026 00:00:00 GMT+0900 (한국 표준시)")
+// 셀에 '한국 표준시'나 'GMT+0900'을 일반 문장으로 쓴 경우는 손상으로 보지 않는다.
+const JS_DATE_STRING_RE = /\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{2} \d{4} \d{2}:\d{2}:\d{2} GMT[+-]\d{4}/g;
+
+export async function extractXlsxIntegrityMetrics(bytes: Uint8Array): Promise<XlsxIntegrityMetrics> {
+  const zip = await JSZip.loadAsync(bytes);
+  let gmtStringCount = 0;
+  let formulaCount = 0;
+  let mergeCount = 0;
+  let dateCellCount = 0;
+  let hasGmtString = false;
+  let cellXfsCount = 1;
+
+  // 1. styles.xml 분석
+  const stylesFile = zip.file('xl/styles.xml');
+  if (stylesFile) {
+    const stylesXml = await stylesFile.async('string');
+    const xfsMatch = stylesXml.match(/<cellXfs\b[^>]*count="(\d+)"/);
+    if (xfsMatch) {
+      cellXfsCount = parseInt(xfsMatch[1], 10);
+    } else {
+      const matches = stylesXml.match(/<xf\b/g);
+      cellXfsCount = matches ? matches.length : 1;
+    }
+  }
+
+  // 2. sharedStrings.xml 분석 (문자열에 GMT+ 또는 한국 표준시 포함 여부)
+  const sstFile = zip.file('xl/sharedStrings.xml');
+  if (sstFile) {
+    const sstXml = await sstFile.async('string');
+    const sstHits = sstXml.match(JS_DATE_STRING_RE);
+    if (sstHits) {
+      hasGmtString = true;
+      gmtStringCount += sstHits.length;
+    }
+  }
+
+  // 3. 워크시트 파일들 분석
+  const sheetFiles = Object.keys(zip.files).filter((name) =>
+    name.startsWith('xl/worksheets/sheet') && name.endsWith('.xml')
+  );
+
+  for (const sheetPath of sheetFiles) {
+    const file = zip.file(sheetPath);
+    if (!file) continue;
+    const xml = await file.async('string');
+
+    // GMT+ 문자열 직접 인라인 셀(<is><t>...</t></is> 또는 <v>...</v>) 검출
+    const sheetHits = xml.match(JS_DATE_STRING_RE);
+    if (sheetHits) {
+      hasGmtString = true;
+      gmtStringCount += sheetHits.length;
+    }
+
+    // 수식 개수
+    const fMatches = xml.match(/<f\b/g);
+    if (fMatches) {
+      formulaCount += fMatches.length;
+    }
+
+    // 병합 셀 개수
+    const mergeMatch = xml.match(/<mergeCells\b[^>]*count="(\d+)"/);
+    if (mergeMatch) {
+      mergeCount += parseInt(mergeMatch[1], 10);
+    } else {
+      const mMatches = xml.match(/<mergeCell\b/g);
+      if (mMatches) {
+        mergeCount += mMatches.length;
+      }
+    }
+
+    // 날짜형 셀 개수 (t="d")
+    const dMatches = xml.match(/<c\b[^>]*\bt="d"/g);
+    if (dMatches) {
+      dateCellCount += dMatches.length;
+    }
+  }
+
+  return {
+    formulaCount,
+    cellXfsCount,
+    mergeCount,
+    dateCellCount,
+    hasGmtString,
+    gmtStringCount,
+  };
+}
+
+/**
+ * 원본 XLSX 바이트와 저장 직후 XLSX 바이트를 비교하여 무결성을 검증합니다.
+ * - 날짜가 JavaScript 문자열("GMT+")로 오염되었는지 검사
+ * - 수식, 셀 스타일(cellXfs), 병합 셀이 비정상적으로 소실되었는지 검사
+ * 위반 시 Error를 throw하여 손실 저장을 즉시 차단합니다.
+ */
+export async function validateExcelIntegrity(
+  origBytes: Uint8Array,
+  savedBytes: Uint8Array
+): Promise<void> {
+  const savedMetrics = await extractXlsxIntegrityMetrics(savedBytes);
+  const origMetrics = await extractXlsxIntegrityMetrics(origBytes);
+
+  // 1. 날짜가 JavaScript 문자열("Fri Nov 27 2026 00:00:00 GMT+0900")로 새로 오염되었는지 검사
+  //    (원본에 이미 같은 문자열이 있던 손상 파일도 저장할 수 있도록 증가한 경우만 차단)
+  if (savedMetrics.gmtStringCount > origMetrics.gmtStringCount) {
+    throw new Error(
+      `저장 직후 무결성 검증 실패: 날짜 데이터가 JavaScript 문자열("GMT+")로 변환되었습니다 (원본: ${origMetrics.gmtStringCount}개, 저장: ${savedMetrics.gmtStringCount}개). 원본은 안전하게 보존됩니다.`
+    );
+  }
+
+  // 2. 수식 전량 소실 검사 (원본에 수식이 3개 이상 있었는데 저장 후 0개가 된 경우)
+  if (origMetrics.formulaCount >= 3 && savedMetrics.formulaCount === 0) {
+    throw new Error(
+      `저장 직후 무결성 검증 실패: 수식이 전량 누락되었습니다 (원본: ${origMetrics.formulaCount}개, 저장: 0개). 원본은 안전하게 보존됩니다.`
+    );
+  }
+
+  // 3. 셀 서식(cellXfs) 급감 검사 (원본 5개 이상인데 2개 이하로 축소된 경우)
+  if (origMetrics.cellXfsCount >= 5 && savedMetrics.cellXfsCount <= 2) {
+    throw new Error(
+      `저장 직후 무결성 검증 실패: 셀 스타일(cellXfs)이 비정상적으로 축소되었습니다 (원본: ${origMetrics.cellXfsCount}개, 저장: ${savedMetrics.cellXfsCount}개). 원본은 안전하게 보존됩니다.`
+    );
+  }
+
+  // 4. 셀 병합 전량 소실 검사 (원본에 병합이 2개 이상 있었는데 저장 후 0개가 된 경우)
+  if (origMetrics.mergeCount >= 2 && savedMetrics.mergeCount === 0) {
+    throw new Error(
+      `저장 직후 무결성 검증 실패: 셀 병합이 전량 누락되었습니다 (원본: ${origMetrics.mergeCount}개, 저장: 0개). 원본은 안전하게 보존됩니다.`
+    );
+  }
+}
+
 /**
  * Univer의 스냅샷(IWorkbookData)을 다시 XLSX 또는 CSV Data URL 문자열로 생성합니다.
  * engine: 'exceljs' (기본값, 서식/열너비/행높이 보존) | 'sheetjs' (기존 가벼운 데이터 모드)
@@ -1276,12 +1421,13 @@ export async function univerSnapshotToDataUrl(
   try {
     const wb = new ExcelJS.Workbook();
     let isLoadedFromOriginal = false;
+    let origRawBytes: Uint8Array | null = null;
     let origDefaultFont: DefaultFontInfo | null = null;
     const modifiedRowsBySheet = new Map<string, Set<number>>();
 
     if (originalDataOrUrl) {
       try {
-        const origRawBytes = dataUrlToUint8Array(originalDataOrUrl);
+        origRawBytes = dataUrlToUint8Array(originalDataOrUrl);
         origDefaultFont = await extractOriginalDocDefaults(origRawBytes);
         const origBytes = await normalizeHancellXlsx(origRawBytes);
         await wb.xlsx.load(origBytes as any);
@@ -1645,6 +1791,12 @@ export async function univerSnapshotToDataUrl(
 
     const rawBuffer = await wb.xlsx.writeBuffer();
     const uint8 = await cleanAndNormalizeWorkbookBuffer(rawBuffer, origDefaultFont, modifiedRowsBySheet);
+
+    // 원본 데이터가 존재하면 저장 직후 무결성 검증 (날짜 GMT+ 문자열화, 수식 누락, cellXfs 급감, 병합 누락 차단)
+    if (origRawBytes) {
+      await validateExcelIntegrity(origRawBytes, uint8);
+    }
+
     let binary = '';
     const len = uint8.byteLength;
     for (let i = 0; i < len; i++) {
@@ -1653,6 +1805,10 @@ export async function univerSnapshotToDataUrl(
     const b64 = btoa(binary);
     return `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${b64}`;
   } catch (err) {
+    if (format === 'xlsx') {
+      console.error('ExcelJS 저장 실패 (데이터 손실 방지를 위해 SheetJS 대체 저장을 차단합니다):', err);
+      throw err;
+    }
     console.error('ExcelJS 저장 실패, SheetJS로 대체 저장합니다:', err);
     return univerSnapshotToDataUrlWithSheetJS(snapshot, format);
   }

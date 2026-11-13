@@ -338,8 +338,11 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
 
         superdocRef.current = superdoc;
 
+        let isDocReady = false;
+
         superdoc.on('ready', () => {
           if (!isDisposed) {
+            isDocReady = true;
             setIsLoading(false);
             (window as any).__currentSuperDoc = superdoc;
             (window as any).__docxIsReady = () => Boolean(superdocRef.current);
@@ -347,13 +350,13 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
         });
 
         superdoc.on('editor-update', () => {
-          if (!isDisposed) {
+          if (!isDisposed && isDocReady) {
             setHasChanges(true);
           }
         });
 
         superdoc.on('history-change', () => {
-          if (!isDisposed) {
+          if (!isDisposed && isDocReady) {
             setHasChanges(true);
           }
         });

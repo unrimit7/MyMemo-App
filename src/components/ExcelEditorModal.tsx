@@ -86,6 +86,51 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
   const [showDraftRecoveryModal, setShowDraftRecoveryModal] = useState<boolean>(false);
   const [showFileConflictModal, setShowFileConflictModal] = useState<boolean>(false);
   const fileContextRef = useRef<FileHandleContext | null>(null);
+  const lastSavedSnapshotHashRef = useRef<string>('');
+
+  // 스냅샷 내용 해시 계산 (실제 데이터/서식/구조 변경 여부만 정확히 추출)
+  const getWorkbookContentHash = (snapshot: any): string => {
+    if (!snapshot) return '';
+    const sheetsSummary: Record<string, any> = {};
+    const sheetIds = snapshot.sheetOrder || Object.keys(snapshot.sheets || {});
+    // 화면 렌더링 중 자동 계산되는 값(자동 행 높이 ah, 자동 높이 플래그 ia 등)은 비교에서 제외하고
+    // 사용자가 직접 바꾸는 높이(h)/너비(w)/숨김(hd)만 비교한다.
+    const pickSizes = (data: any, sizeKey: 'h' | 'w') => {
+      const out: Record<string, any> = {};
+      for (const k of Object.keys(data || {})) {
+        const item = data[k];
+        if (!item) continue;
+        if (item[sizeKey] !== undefined || item.hd) {
+          out[k] = { [sizeKey]: item[sizeKey], hd: item.hd || 0 };
+        }
+      }
+      return out;
+    };
+    for (const id of sheetIds) {
+      const s = snapshot.sheets?.[id];
+      if (!s) continue;
+      sheetsSummary[id] = {
+        name: s.name,
+        cellData: s.cellData,
+        mergeData: s.mergeData,
+        rowCount: s.rowCount,
+        columnCount: s.columnCount,
+        rowData: pickSizes(s.rowData, 'h'),
+        columnData: pickSizes(s.columnData, 'w'),
+        freeze: s.freeze,
+      };
+    }
+    const payload = JSON.stringify({
+      sheetOrder: snapshot.sheetOrder,
+      styles: snapshot.styles,
+      sheets: sheetsSummary,
+    });
+    let hash = 5381;
+    for (let i = 0; i < payload.length; i++) {
+      hash = (hash * 33) ^ payload.charCodeAt(i);
+    }
+    return `${hash >>> 0}_${payload.length}`;
+  };
 
   // 원본 해시 1회 계산 캐시
   const baseOriginalHashRef = useRef<string>('');
@@ -307,6 +352,9 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
                 sheetBar: true,
                 statisticBar: true,
               },
+              sheets: {
+                allowArrowKeyWrapOnSheetBoundary: false,
+              },
             }),
           ],
         });
@@ -316,6 +364,22 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
         univerAPIRef.current = univerAPI;
 
         univerAPI.createWorkbook(workbookData);
+        // 기준 해시는 입력 데이터가 아니라 Univer가 불러온 뒤 내보내는 save() 결과로 잡는다.
+        // (Univer는 로드 시 데이터를 정규화하므로 입력값 기준이면 무변경인데도 항상 다르게 판정됨)
+        lastSavedSnapshotHashRef.current = '';
+        setHasChanges(false);
+        setTimeout(() => {
+          if (isDisposed) return;
+          try {
+            const loadedWb = univerAPI.getActiveWorkbook?.();
+            if (loadedWb) {
+              lastSavedSnapshotHashRef.current = getWorkbookContentHash(loadedWb.save());
+            }
+          } catch (e) {
+            console.warn('[Excel] 기준 스냅샷 해시 계산 실패:', e);
+          }
+          setHasChanges(false);
+        }, 1200);
 
         if (typeof window !== 'undefined') {
           (window as any).__excelUniverAPI = univerAPI;
@@ -338,6 +402,24 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
           isInitial = false;
         }, 100);
 
+        // 데이터 변경 명령 이후 내용 해시를 기준값과 비교해 '수정됨' 여부를 결정 (디바운스)
+        let recomputeTimer: any = null;
+        const scheduleChangeRecompute = () => {
+          clearTimeout(recomputeTimer);
+          recomputeTimer = setTimeout(() => {
+            if (isDisposed) return;
+            const base = lastSavedSnapshotHashRef.current;
+            if (!base) return; // 기준값 설정 전(로드 직후)에는 판정하지 않음
+            try {
+              const wbNow = univerAPI.getActiveWorkbook?.();
+              if (!wbNow) return;
+              setHasChanges(getWorkbookContentHash(wbNow.save()) !== base);
+            } catch {
+              setHasChanges(true);
+            }
+          }, 400);
+        };
+
         const commandService = (univerAPI as any)._commandService;
         let disposable: any = null;
         if (commandService && typeof commandService.onCommandExecuted === 'function') {
@@ -347,8 +429,26 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
             if (id.includes('row') || id.includes('sheet') || id.includes('unit') || id.includes('dispose')) {
               console.log('[Univer Command]', id, cmd?.params);
             }
-            if (!isInitial) {
-              setHasChanges(true);
+
+            // 단순 뷰, 스크롤, 선택, 확대축소, 시트 활성화, 커서 이동 연산은 데이터 변경으로 취급하지 않음
+            const isNonMutation =
+              id.includes('.operation.') ||
+              id.includes('selection') ||
+              id.includes('scroll') ||
+              id.includes('zoom') ||
+              id.includes('cursor') ||
+              id.includes('pointer') ||
+              id.includes('hover') ||
+              id.includes('focus') ||
+              id.includes('blur') ||
+              id.includes('active-sheet') ||
+              id.includes('set-work-sheet-active') ||
+              id.includes('set-cell-edit-visible') ||
+              id.includes('render') ||
+              id.includes('theme');
+
+            if (!isInitial && !isNonMutation) {
+              scheduleChangeRecompute();
             }
 
             // 행/열 삽입 및 삭제 mutation 감지하여 In-Place 패치용 큐에 기록 (mutation ID 정확 매칭)
@@ -453,8 +553,9 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
   }, [isOpen, data, title]);
 
   // 실제 저장 실행 함수
-  const executeSave = async () => {
-    if (!univerAPIRef.current || isSaving) return;
+  // 반환값: 저장 성공 여부 (실패/취소 시 false → '저장하고 닫기'가 창을 닫지 않도록)
+  const executeSave = async (): Promise<boolean> => {
+    if (!univerAPIRef.current || isSaving) return false;
 
     try {
       setIsSaving(true);
@@ -476,7 +577,7 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
           );
           if (!proceed) {
             setIsSaving(false);
-            return;
+            return false;
           }
           // 그래도 저장을 선택한 경우 originalDataOrUrl 없이 새 워크북으로 저장
           updatedDataUrl = await univerSnapshotToDataUrl(snapshot, format, engine, undefined, ops);
@@ -504,7 +605,7 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
         if (await checkFileHandleConflict(fileContextRef.current)) {
           setShowFileConflictModal(true);
           setIsSaving(false);
-          return;
+          return false;
         }
 
         const updatedB64 = updatedDataUrl.split(',')[1] || '';
@@ -519,25 +620,30 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
         await onSave(updatedDataUrl, engine);
       }
 
+      lastSavedSnapshotHashRef.current = getWorkbookContentHash(snapshot);
       setHasChanges(false);
       setSaveToast(`메모에 엑셀이 저장되었습니다 (${engine === 'exceljs' ? 'ExcelJS 서식보존' : 'SheetJS 경량'})`);
       setTimeout(() => setSaveToast(null), 3000);
-    } catch (err) {
+      return true;
+    } catch (err: any) {
       console.error('엑셀 저장 실패:', err);
-      setErrorToast('저장에 실패했습니다.');
-      setTimeout(() => setErrorToast(null), 3000);
+      const displayMsg = '저장 실패: 원본은 그대로입니다.';
+      setErrorToast(displayMsg);
+      alert(`${displayMsg}\n\n${err?.message || ''}`);
+      setTimeout(() => setErrorToast(null), 5000);
+      return false;
     } finally {
       setIsSaving(false);
     }
   };
 
   // 저장 버튼 클릭 (미보존 요소 감지 시 경고 다이얼로그 띄움, 1회 승인 시 세션 유지)
-  const handleSave = async () => {
+  const handleSave = async (): Promise<boolean> => {
     if (lossReport && lossReport.unsupportedList.length > 0 && !hasConfirmedLoss) {
       setShowLossWarningModal(true);
-      return;
+      return false;
     }
-    await executeSave();
+    return await executeSave();
   };
 
   // 다운로드 처리
@@ -633,6 +739,20 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
 
   // 닫기 요청
   const handleRequestClose = () => {
+    const activeWb = univerAPIRef.current?.getActiveWorkbook?.();
+    if (activeWb && lastSavedSnapshotHashRef.current) {
+      try {
+        const currentSnapshot = activeWb.save();
+        const currentHash = getWorkbookContentHash(currentSnapshot);
+        if (currentHash === lastSavedSnapshotHashRef.current) {
+          setHasChanges(false);
+          onClose();
+          return;
+        }
+      } catch (e) {
+        console.warn('스냅샷 해시 비교 실패:', e);
+      }
+    }
     if (hasChanges) {
       setShowExitConfirm(true);
     } else {
@@ -643,10 +763,26 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
   // 5단계 공통 단축키 훅 (Ctrl+S 통일, Alt+Enter 전체화면, Esc 셀편집 보호)
   useOfficeShortcuts({
     enabled: isOpen,
-    onSave: handleSave,
+    onSave: async () => {
+      await handleSave();
+    },
     onClose: handleRequestClose,
     hasChanges,
-    onConfirmCloseNeeded: () => setShowExitConfirm(true),
+    onConfirmCloseNeeded: () => {
+      const activeWb = univerAPIRef.current?.getActiveWorkbook?.();
+      if (activeWb && lastSavedSnapshotHashRef.current) {
+        try {
+          const currentSnapshot = activeWb.save();
+          const currentHash = getWorkbookContentHash(currentSnapshot);
+          if (currentHash === lastSavedSnapshotHashRef.current) {
+            setHasChanges(false);
+            onClose();
+            return;
+          }
+        } catch {}
+      }
+      setShowExitConfirm(true);
+    },
     isEditingCellOrDialog: () => {
       const active = document.activeElement;
       if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.getAttribute('contenteditable') === 'true')) {
@@ -660,11 +796,69 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
     toggleFullscreen: floating.toggleFullscreen,
   });
 
+  // 방향키 경계 이탈 방지 가드 (A열에서 ←, 1행에서 ↑ 시 줄바꿈/이탈 차단, 셀 편집 중에는 텍스트 커서 허용)
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleArrowBoundaryKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowUp' && e.key !== 'ArrowRight' && e.key !== 'ArrowDown') {
+        return;
+      }
+      // 셀 편집 중이거나 다이얼로그 상태일 때는 텍스트 커서 이동 허용 (방어하지 않음)
+      const active = document.activeElement;
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.getAttribute('contenteditable') === 'true')) {
+        return;
+      }
+      if (document.querySelector('.univer-cell-editor, .univer-dialog, .univer-modal, [class*="cell-editor"], [class*="find-replace"]')) {
+        return;
+      }
+
+      const univerAPI = univerAPIRef.current;
+      if (!univerAPI) return;
+
+      try {
+        const activeWb = univerAPI.getActiveWorkbook?.();
+        const activeWs = activeWb?.getActiveSheet?.();
+        if (!activeWs) return;
+
+        const selection = activeWs.getSelection?.();
+        const currentCell = selection?.getCurrentCell?.();
+        if (!currentCell) return;
+
+        const { actualRow, actualColumn } = currentCell;
+
+        if (e.key === 'ArrowLeft' && actualColumn <= 0) {
+          e.preventDefault();
+          e.stopPropagation();
+        } else if (e.key === 'ArrowUp' && actualRow <= 0) {
+          e.preventDefault();
+          e.stopPropagation();
+        } else if (e.key === 'ArrowRight' && actualColumn >= (activeWs.getColumnCount?.() || 52) - 1) {
+          e.preventDefault();
+          e.stopPropagation();
+        } else if (e.key === 'ArrowDown' && actualRow >= (activeWs.getRowCount?.() || 1000) - 1) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      } catch (err) {
+        // 무시
+      }
+    };
+
+    window.addEventListener('keydown', handleArrowBoundaryKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', handleArrowBoundaryKeyDown, true);
+    };
+  }, [isOpen]);
+
   // 변경사항 저장 후 닫기
   const handleSaveAndExit = async () => {
-    await handleSave();
     setShowExitConfirm(false);
-    onClose();
+    const ok = await handleSave();
+    // 저장 실패/취소(손실 경고 대기 포함) 시 창을 닫지 않아 편집 내용을 잃지 않게 한다
+    if (ok) {
+      onClose();
+    }
   };
 
   // 저장하지 않고 닫기
@@ -690,6 +884,15 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
         univerAPIRef.current?.createWorkbook({ ...wbData, id: 'workbook' });
         structuralOpsRef.current = [];
         setHasChanges(false);
+        // 되돌린 원본 기준으로 '수정됨' 판정 기준값 재설정
+        lastSavedSnapshotHashRef.current = '';
+        setTimeout(() => {
+          try {
+            const wbR = univerAPIRef.current?.getActiveWorkbook?.();
+            if (wbR) lastSavedSnapshotHashRef.current = getWorkbookContentHash(wbR.save());
+          } catch {}
+          setHasChanges(false);
+        }, 1200);
         setSaveToast('원본 파일로 성공적으로 되돌렸습니다.');
         setTimeout(() => setSaveToast(null), 3000);
         return;
@@ -1061,18 +1264,26 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
                 onClick={async () => {
                   setShowFileConflictModal(false);
                   if (fileContextRef.current && univerAPIRef.current) {
-                    const activeWb = univerAPIRef.current.getActiveWorkbook();
-                    const snapshot = activeWb.save();
-                    const ops = [...structuralOpsRef.current];
-                    const updatedDataUrl = await univerSnapshotToDataUrl(snapshot, format, engine, currentDataRef.current, ops);
-                    const updatedB64 = updatedDataUrl.split(',')[1] || '';
-                    const updatedBin = atob(updatedB64);
-                    const saveBytes = new Uint8Array(updatedBin.length);
-                    for (let i = 0; i < updatedBin.length; i++) saveBytes[i] = updatedBin.charCodeAt(i);
-                    await saveToFileHandle(fileContextRef.current, saveBytes);
-                    setHasChanges(false);
-                    setSaveToast('원래 파일에 성공적으로 덮어썼습니다.');
-                    setTimeout(() => setSaveToast(null), 3000);
+                    try {
+                      const activeWb = univerAPIRef.current.getActiveWorkbook();
+                      const snapshot = activeWb.save();
+                      const ops = [...structuralOpsRef.current];
+                      const updatedDataUrl = await univerSnapshotToDataUrl(snapshot, format, engine, currentDataRef.current, ops);
+                      const updatedB64 = updatedDataUrl.split(',')[1] || '';
+                      const updatedBin = atob(updatedB64);
+                      const saveBytes = new Uint8Array(updatedBin.length);
+                      for (let i = 0; i < updatedBin.length; i++) saveBytes[i] = updatedBin.charCodeAt(i);
+                      await saveToFileHandle(fileContextRef.current, saveBytes);
+                      lastSavedSnapshotHashRef.current = getWorkbookContentHash(snapshot);
+                      setHasChanges(false);
+                      setSaveToast('원래 파일에 성공적으로 덮어썼습니다.');
+                      setTimeout(() => setSaveToast(null), 3000);
+                    } catch (err: any) {
+                      console.error('덮어쓰기 저장 실패:', err);
+                      const displayMsg = '저장 실패: 원본은 그대로입니다.';
+                      setErrorToast(displayMsg);
+                      alert(`${displayMsg}\n\n${err?.message || ''}`);
+                    }
                   }
                 }}
                 className="py-2.5 px-3 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"

@@ -1330,8 +1330,9 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
   };
 
   // 주석 저장 및 메모 반영
-  const handleSave = async () => {
-    if (isSaving) return;
+  // 반환값: 저장 성공 여부 (실패 시 '저장하고 닫기'가 창을 닫지 않도록)
+  const handleSave = async (): Promise<boolean> => {
+    if (isSaving) return false;
     setIsSaving(true);
     setErrorMessage(null);
 
@@ -1359,9 +1360,11 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
 
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
+      return true;
     } catch (err: any) {
       console.error('PDF 주석 저장 실패:', err);
       setErrorMessage(`PDF 저장 실패: ${err.message || '문서를 저장할 수 없습니다.'}`);
+      return false;
     } finally {
       setIsSaving(false);
     }
@@ -1394,10 +1397,32 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     onClose();
   };
 
+  // Esc 키 모달 닫기 (변경 사항이 있으면 확인창 표시)
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        handleClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+    };
+  }, [isOpen, hasChanges]);
+
   const handleSaveAndExit = async () => {
-    await handleSave();
     setShowExitConfirm(false);
-    onClose();
+    const ok = await handleSave();
+    if (ok) {
+      onClose();
+    }
   };
 
   const handleDiscardAndExit = () => {
@@ -1414,11 +1439,11 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
         {/* 상단 툴바: 제목, 도구 선택, 저장 및 닫기 */}
         <div 
           {...floating.headerProps}
-          className="flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-800 gap-2 shrink-0 overflow-x-auto"
+          className="flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-800 gap-2 shrink-0 overflow-hidden"
         >
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-emerald-400 font-bold text-xs sm:text-sm">✏️ PDF 주석/서명</span>
-          <span className="text-xs sm:text-sm font-semibold truncate text-slate-200 max-w-[120px] sm:max-w-[200px]" title={title}>
+          <span className="text-xs sm:text-sm font-semibold truncate text-slate-200 max-w-[100px] sm:max-w-[160px]" title={title}>
             {title}
           </span>
           {saveSuccess && (
@@ -1428,8 +1453,8 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
           )}
         </div>
 
-        {/* 중앙: 주석 도구 팔레트 */}
-        <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 shrink-0">
+        {/* 중앙: 주석 도구 팔레트 (너비 부족 시 내부 가로 스크롤) */}
+        <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 overflow-x-auto min-w-0 max-w-fit scrollbar-thin">
           {/* 손/이동 툴 */}
           <button
             type="button"
@@ -1547,13 +1572,13 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
           </button>
         </div>
 
-        {/* 우측: 저장, 다운로드, 닫기 */}
-        <div className="flex items-center gap-1.5 shrink-0">
+        {/* 우측: 저장, 다운로드, 닫기 (절대 화면 밖으로 밀려나지 않는 shrink-0 고정 영역) */}
+        <div className="flex items-center gap-1.5 shrink-0 ml-auto pl-1">
           <button
             type="button"
             onClick={handleSave}
             disabled={isSaving}
-            className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all shadow-md active:scale-95 disabled:opacity-50"
+            className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all shadow-md active:scale-95 disabled:opacity-50 cursor-pointer"
           >
             {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
             <span>저장 및 반영</span>
@@ -1562,7 +1587,7 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
           <button
             type="button"
             onClick={handleDownload}
-            className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-lg text-xs font-semibold border border-slate-700 transition-all active:scale-95"
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-lg text-xs font-semibold border border-slate-700 transition-all active:scale-95 cursor-pointer"
             title="수정된 PDF 다운로드"
           >
             <Download size={14} />
@@ -1574,8 +1599,8 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
           <button
             type="button"
             onClick={handleClose}
-            className="p-1.5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 rounded-lg transition-colors"
-            title="닫기"
+            className="p-1.5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 rounded-lg transition-colors cursor-pointer"
+            title="닫기 (Esc)"
           >
             <X size={18} />
           </button>
