@@ -260,9 +260,80 @@ export function formatCellValue(val: any, numFmt?: string): string {
 // 하나라도 존재하면 절대로 계산하지 않고 success: false를 반환합니다.
 // =============================================================================
 
-type TokenType = '+' | '-' | '*' | '/' | '(' | ')' | ',' | 'NUMBER' | 'TODAY' | 'NOW' | 'CELL_REF' | 'RANGE' | 'FUNC';
+type TokenType = '+' | '-' | '*' | '/' | '(' | ')' | ',' | 'NUMBER' | 'STRING' | 'TODAY' | 'NOW' | 'CELL_REF' | 'RANGE' | 'FUNC';
 
 const AGGREGATE_FUNCS = ['SUM', 'AVERAGE', 'MIN', 'MAX', 'COUNT'] as const;
+const CONDITIONAL_FUNCS = ['SUMIF', 'COUNTIF', 'AVERAGEIF'] as const;
+
+const isBlankValue = (v: any) => v === undefined || v === null || v === '';
+
+/**
+ * SUMIF/COUNTIF/AVERAGEIF 조건 비교 (엑셀 규칙의 안전한 부분집합)
+ * - "KACF": 대소문자 무시 같음, 와일드카드 * ? 지원 (~* ~? 는 문자 그대로)
+ * - ">0", "<=100", "<>0", "=5": 숫자 비교
+ * - "<>": 빈칸이 아닌 칸, "" 또는 "=": 빈칸
+ * 지원하지 않는 조건(문자 크기 비교 "<abc", 날짜 문자열 비교 등)은 예외 → 계산 포기
+ */
+function buildCriteriaMatcher(criteria: any): (cellVal: any) => boolean {
+  if (typeof criteria === 'number') {
+    return (v) => aggregateValue(v) === criteria;
+  }
+  if (typeof criteria !== 'string') {
+    throw new Error('Unsupported criteria');
+  }
+  const m = criteria.match(/^(<=|>=|<>|=|<|>)?([\s\S]*)$/)!;
+  const op = m[1] || '=';
+  const operand = m[2];
+
+  if (operand === '') {
+    if (op === '=') return (v) => isBlankValue(v);
+    if (op === '<>') return (v) => !isBlankValue(v);
+    throw new Error('Unsupported empty criteria');
+  }
+
+  const num = Number(operand.replace(/,/g, ''));
+  if (operand.trim() !== '' && isFinite(num)) {
+    return (v) => {
+      const n = aggregateValue(v);
+      if (op === '<>') return n === null ? true : n !== num;
+      if (n === null) {
+        // 숫자처럼 생긴 글자("100")는 같음 비교에서만 인정
+        return op === '=' && typeof v === 'string' && v.trim() === operand.trim();
+      }
+      switch (op) {
+        case '=': return n === num;
+        case '<': return n < num;
+        case '>': return n > num;
+        case '<=': return n <= num;
+        case '>=': return n >= num;
+        default: return false;
+      }
+    };
+  }
+
+  if (op !== '=' && op !== '<>') {
+    throw new Error('Unsupported text comparison criteria');
+  }
+  let pattern = '';
+  for (let i = 0; i < operand.length; i++) {
+    const ch = operand[i];
+    if (ch === '~' && (operand[i + 1] === '*' || operand[i + 1] === '?' || operand[i + 1] === '~')) {
+      pattern += '\\' + operand[i + 1];
+      i++;
+    } else if (ch === '*') {
+      pattern += '[\\s\\S]*';
+    } else if (ch === '?') {
+      pattern += '[\\s\\S]';
+    } else {
+      pattern += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+  }
+  const re = new RegExp(`^${pattern}$`, 'i');
+  const textOf = (v: any) => (isBlankValue(v) ? '' : v instanceof Date ? '' : String(v));
+  return op === '='
+    ? (v) => typeof v === 'string' && re.test(textOf(v))
+    : (v) => !(typeof v === 'string' && re.test(textOf(v)));
+}
 const MAX_FORMULA_DEPTH = 16;
 const MAX_RANGE_CELLS = 100000;
 
@@ -359,8 +430,33 @@ class FormulaTokenizer {
         continue;
       }
 
-      // 집계 함수 SUM/AVERAGE/MIN/MAX/COUNT (SUMIF, COUNTA, MAXA 등 비슷한 이름은 일치하지 않아 거부됨)
-      const funcMatch = remaining.match(/^(SUM|AVERAGE|MIN|MAX|COUNT)\s*\(/i);
+      // 문자열 리터럴 ("" 는 큰따옴표 하나). 파서는 SUMIF/COUNTIF/AVERAGEIF의 조건 인수에서만 허용한다.
+      if (ch === '"') {
+        let s = '';
+        this.pos++;
+        let closed = false;
+        while (this.pos < len) {
+          const c = this.input[this.pos];
+          if (c === '"') {
+            if (this.input[this.pos + 1] === '"') {
+              s += '"';
+              this.pos += 2;
+              continue;
+            }
+            closed = true;
+            this.pos++;
+            break;
+          }
+          s += c;
+          this.pos++;
+        }
+        if (!closed) return null;
+        tokens.push({ type: 'STRING', value: s });
+        continue;
+      }
+
+      // 집계/조건 함수 (SUMIFS, COUNTA, MAXA 등 비슷한 이름은 바로 뒤가 '('가 아니라서 거부됨)
+      const funcMatch = remaining.match(/^(SUMIF|COUNTIF|AVERAGEIF|SUM|AVERAGE|MIN|MAX|COUNT)\s*\(/i);
       if (funcMatch) {
         tokens.push({ type: 'FUNC', value: funcMatch[1].toUpperCase() });
         tokens.push({ type: '(', value: '(' });
@@ -483,6 +579,98 @@ class FormulaParser {
       }
     }
     return nums;
+  }
+
+  /** 범위 또는 단일 셀 인수를 행 우선 셀 주소 목록으로 펼친다 (크기도 함께 반환) */
+  private consumeRefArg(): { refs: string[]; rows: number; cols: number; startRow: number; startCol: number } {
+    const t = this.peek();
+    let startRef: string;
+    let endRef: string;
+    if (t?.type === 'RANGE') {
+      this.consume('RANGE');
+      startRef = t.value.start;
+      endRef = t.value.end;
+    } else if (t?.type === 'CELL_REF') {
+      this.consume('CELL_REF');
+      startRef = endRef = t.value;
+    } else {
+      throw new Error('Range argument expected');
+    }
+    const a = splitCellRef(startRef);
+    const b = splitCellRef(endRef);
+    const r1 = Math.min(a.row, b.row);
+    const r2 = Math.max(a.row, b.row);
+    const c1 = Math.min(a.col, b.col);
+    const c2 = Math.max(a.col, b.col);
+    const rows = r2 - r1 + 1;
+    const cols = c2 - c1 + 1;
+    if (rows * cols > MAX_RANGE_CELLS) throw new Error('Range too large');
+    const refs: string[] = [];
+    for (let r = r1; r <= r2; r++) {
+      for (let c = c1; c <= c2; c++) refs.push(`${getColumnLabel(c)}${r}`);
+    }
+    return { refs, rows, cols, startRow: r1, startCol: c1 };
+  }
+
+  /** SUMIF(조건범위, 조건, [합계범위]) / COUNTIF(조건범위, 조건) / AVERAGEIF(조건범위, 조건, [평균범위]) */
+  private parseConditional(): number {
+    const name = this.consume('FUNC').value as (typeof CONDITIONAL_FUNCS)[number];
+    this.consume('(');
+    const critRange = this.consumeRefArg();
+    this.consume(',');
+
+    // 조건: 문자열, 숫자(단항 -), 또는 셀 참조의 값
+    let criteria: any;
+    const ct = this.peek();
+    if (ct?.type === 'STRING') {
+      criteria = this.consume('STRING').value;
+    } else if (ct?.type === 'NUMBER') {
+      criteria = this.consume('NUMBER').value;
+    } else if (ct?.type === '-' && this.tokens[this.pos + 1]?.type === 'NUMBER') {
+      this.consume('-');
+      criteria = -this.consume('NUMBER').value;
+    } else if (ct?.type === 'CELL_REF') {
+      const v = this.resolveRaw(this.consume('CELL_REF').value);
+      if (isBlankValue(v)) throw new Error('Blank criteria cell');
+      criteria = v instanceof Date ? excelSerialFromDate(v) : v;
+    } else {
+      throw new Error('Unsupported criteria argument');
+    }
+    const matches = buildCriteriaMatcher(criteria);
+
+    let valueRefs: string[] | null = null;
+    if (name !== 'COUNTIF' && this.peek()?.type === ',') {
+      this.consume(',');
+      const sumArg = this.consumeRefArg();
+      // 엑셀 규칙: 합계 범위는 왼쪽 위 칸을 기준으로 조건 범위와 같은 크기로 맞춘다
+      valueRefs = [];
+      for (let r = 0; r < critRange.rows; r++) {
+        for (let c = 0; c < critRange.cols; c++) {
+          valueRefs.push(`${getColumnLabel(sumArg.startCol + c)}${sumArg.startRow + r}`);
+        }
+      }
+    }
+    this.consume(')');
+
+    let count = 0;
+    let sum = 0;
+    let numericCount = 0;
+    critRange.refs.forEach((ref, idx) => {
+      const cv = this.resolveRaw(ref);
+      if (!matches(cv)) return;
+      count++;
+      const target = valueRefs ? this.resolveRaw(valueRefs[idx]) : cv;
+      const n = aggregateValue(target);
+      if (n !== null) {
+        sum += n;
+        numericCount++;
+      }
+    });
+
+    if (name === 'COUNTIF') return count;
+    if (name === 'SUMIF') return sum;
+    if (numericCount === 0) throw new Error('#DIV/0!');
+    return sum / numericCount;
   }
 
   private parseAggregate(): number {
@@ -615,12 +803,18 @@ class FormulaParser {
     }
 
     if (token.type === 'FUNC') {
+      if ((CONDITIONAL_FUNCS as readonly string[]).includes(token.value)) {
+        return this.parseConditional();
+      }
       return this.parseAggregate();
     }
 
     if (token.type === 'CELL_REF') {
       const ref = this.consume('CELL_REF').value;
       const rawVal = this.resolveRaw(ref);
+      // 엑셀과 같이 사칙연산에서 빈칸은 0, 논리값은 1/0
+      if (isBlankValue(rawVal)) return 0;
+      if (typeof rawVal === 'boolean') return rawVal ? 1 : 0;
       const parsed = parseDateOrNumber(rawVal);
       if (parsed === null) {
         throw new Error(`Cannot parse cell reference ${ref} to numeric date/value`);

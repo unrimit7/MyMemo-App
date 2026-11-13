@@ -230,8 +230,8 @@ describe('excelViewer evaluateFormula 화이트리스트 안전 수식 계산기
       expect(evaluateFormula('=SUM(E7:E8)', rc).result).toBe(0);
     });
 
-    it('비슷한 이름의 미지원 함수(SUMIF, COUNTA, MAXA)와 타 시트 범위는 거부', () => {
-      expect(evaluateFormula('=SUMIF(E4:E9,">0")', rc).success).toBe(false);
+    it('비슷한 이름의 미지원 함수(SUMIFS, COUNTA, MAXA)와 타 시트 범위는 거부', () => {
+      expect(evaluateFormula('=SUMIFS(E4:E9,E4:E9,">0")', rc).success).toBe(false);
       expect(evaluateFormula('=COUNTA(E4:E9)', rc).success).toBe(false);
       expect(evaluateFormula('=MAXA(E4:E9)', rc).success).toBe(false);
       expect(evaluateFormula('=SUM(Sheet1!E4:E9)', rc).success).toBe(false);
@@ -244,6 +244,77 @@ describe('excelViewer evaluateFormula 화이트리스트 안전 수식 계산기
 
     it('부동소수점 오차 정리: SUM(L1:L2) = 0.3', () => {
       expect(evaluateFormula('=SUM(L1:L2)', rc).result).toBe(0.3);
+    });
+
+    it('사칙연산에서 빈칸은 0 (엑셀과 동일): E5*2 = 0, E7+A1 = 5', () => {
+      expect(evaluateFormula('=E5*2', rc).result).toBe(0);
+      expect(evaluateFormula('=E7+A1', rc).result).toBe(5);
+    });
+
+    it('사칙연산에 일반 글자 셀이 있으면 계산 포기 (엑셀 #VALUE!)', () => {
+      expect(evaluateFormula('=E8*2', rc).success).toBe(false);
+    });
+
+    it('빈칸을 곱하는 수식이 범위에 있어도 합계 계산: SUM(M1:M2) = 100', () => {
+      const cells2: Record<string, any> = { M1: 100, M2: { formula: 'N2*O2' } }; // N2 빈칸 → M2 = 0
+      expect(evaluateFormula('=SUM(M1:M2)', (r) => cells2[r]).result).toBe(100);
+    });
+
+    it('문자열은 조건 함수 인수에서만 허용: SUM("5")는 거부', () => {
+      expect(evaluateFormula('=SUM("5")', rc).success).toBe(false);
+      expect(evaluateFormula('="abc"', rc).success).toBe(false);
+    });
+  });
+
+  describe('5. 조건 함수(SUMIF/COUNTIF/AVERAGEIF)', () => {
+    const cells: Record<string, any> = {
+      A10: 'KACF', B10: 100,
+      A11: 'kacf', B11: 50,
+      A12: 'AIFILMSCHOOL', B12: 7,
+      A13: '', B13: 999,
+      A14: '인공지능 영화 저널', B14: { formula: 'D14*E14' }, // D14 빈칸 → 0
+      C10: 10, C11: -5, C12: 0, C13: 20,
+    };
+    const rc = (r: string) => cells[r];
+
+    it('SUMIF 합계 범위 사용, 대소문자 무시: SUMIF(A10:A13,"KACF",B10:B13) = 150', () => {
+      const res = evaluateFormula('=SUMIF(A10:A13,"KACF",B10:B13)', rc);
+      expect(res.success).toBe(true);
+      expect(res.result).toBe(150);
+    });
+
+    it('한글 조건과 계산 결과 없는 수식: SUMIF(A10:A14,"인공지능 영화 저널",B10:B14) = 0', () => {
+      const res = evaluateFormula('=SUMIF(A10:A14,"인공지능 영화 저널",B10:B14)', rc);
+      expect(res.success).toBe(true);
+      expect(res.result).toBe(0);
+    });
+
+    it('합계 범위 없이 숫자 조건: SUMIF(C10:C13,">0") = 30, SUMIF(C10:C13,"<=0") = -5', () => {
+      expect(evaluateFormula('=SUMIF(C10:C13,">0")', rc).result).toBe(30);
+      expect(evaluateFormula('=SUMIF(C10:C13,"<=0")', rc).result).toBe(-5);
+    });
+
+    it('COUNTIF: 같음, 와일드카드, 빈칸 아님, 빈칸', () => {
+      expect(evaluateFormula('=COUNTIF(A10:A13,"kacf")', rc).result).toBe(2);
+      expect(evaluateFormula('=COUNTIF(A10:A13,"AI*")', rc).result).toBe(1);
+      expect(evaluateFormula('=COUNTIF(A10:A13,"<>")', rc).result).toBe(3);
+      expect(evaluateFormula('=COUNTIF(A10:A13,"")', rc).result).toBe(1);
+      expect(evaluateFormula('=COUNTIF(C10:C13,0)', rc).result).toBe(1);
+    });
+
+    it('AVERAGEIF: AVERAGEIF(A10:A13,"KACF",B10:B13) = 75, 맞는 값이 없으면 계산 포기', () => {
+      expect(evaluateFormula('=AVERAGEIF(A10:A13,"KACF",B10:B13)', rc).result).toBe(75);
+      expect(evaluateFormula('=AVERAGEIF(A10:A13,"없음",B10:B13)', rc).success).toBe(false);
+    });
+
+    it('조건 함수를 더하기: SUMIF(...)+SUMIF(...) = 157', () => {
+      const res = evaluateFormula('=SUMIF(A10:A13,"KACF",B10:B13)+SUMIF(A10:A13,"AIFILMSCHOOL",B10:B13)', rc);
+      expect(res.result).toBe(157);
+    });
+
+    it('지원하지 않는 조건(글자 크기 비교)과 닫히지 않은 문자열은 계산 포기', () => {
+      expect(evaluateFormula('=SUMIF(A10:A13,"<abc",B10:B13)', rc).success).toBe(false);
+      expect(evaluateFormula('=SUMIF(A10:A13,"KACF,B10:B13)', rc).success).toBe(false);
     });
   });
 });
