@@ -1,16 +1,6 @@
 import type { AttachmentItem } from '../types';
-import { parseExcelWorkbook, buildMergeMap } from './excelViewer';
+import { parseExcelWorkbook, renderExcelTableHtml } from './excelViewer';
 import { dataUrlToUint8Array, formatHexOffset, formatByteToHex, byteToAsciiChar } from './hexViewer';
-
-function getColumnLabel(index: number): string {
-  let label = '';
-  let num = index;
-  while (num >= 0) {
-    label = String.fromCharCode((num % 26) + 65) + label;
-    num = Math.floor(num / 26) - 1;
-  }
-  return label;
-}
 
 // Blob URL 캐시 (대용량 Base64 문자열 반복 파싱 부하 및 메모리 낭비 방지)
 interface BlobCacheEntry {
@@ -167,7 +157,7 @@ export function createAttachmentCardHtml(
 
   if (isPptx) {
     return `
-<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl pptx-inline-viewer" data-att-id="${att.id}" data-file-name="${displayName}">
+<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl pptx-inline-viewer not-prose" data-att-id="${att.id}" data-file-name="${displayName}">
   <!-- 상단 헤더: 문서명, 직접 편집, 메모로 가져오기, 전면 뷰어, 다운로드 버튼 -->
   <div class="px-3.5 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
     <div class="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-100 min-w-0">
@@ -233,7 +223,7 @@ export function createAttachmentCardHtml(
 
   if (isDocx) {
     return `
-<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl docx-inline-viewer" data-att-id="${att.id}" data-file-name="${displayName}">
+<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl docx-inline-viewer not-prose" data-att-id="${att.id}" data-file-name="${displayName}">
   <!-- 상단 헤더: 문서명, 직접 편집, 메모로 가져오기, 전면 뷰어, 다운로드 버튼 -->
   <div class="px-3.5 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
     <div class="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-100 min-w-0">
@@ -286,70 +276,19 @@ export function createAttachmentCardHtml(
     const parsed = parseExcelWorkbook(att.data, att.id);
     const sheetNames = parsed.sheetNames || ['Sheet1'];
     const firstSheet = sheetNames[0] || 'Sheet1';
-    const rows = parsed.sheets[firstSheet] || [];
-    const sheetMerges = parsed.merges?.[firstSheet] || [];
-    const totalRows = rows.length;
-    let maxCols = 0;
-    rows.forEach((r) => {
-      maxCols = Math.max(maxCols, r.length);
-    });
-    sheetMerges.forEach((m) => {
-      maxCols = Math.max(maxCols, m.e.c + 1);
-    });
-    const colCount = Math.max(maxCols, 1);
-    const previewRows = rows.slice(0, 12);
+    const { tableHeaderHtml, tableBodyHtml, colCount, totalRows } = renderExcelTableHtml(parsed, firstSheet, 12);
 
     const sheetTabsHtml = sheetNames.length > 1
       ? `<div class="px-3.5 py-1.5 bg-slate-950/80 border-b border-slate-800 flex items-center gap-1.5 overflow-x-auto scrollbar-thin select-none" onwheel="if(!event.shiftKey){event.preventDefault();this.scrollLeft+=event.deltaY;}">
           <span class="text-[11px] font-bold text-slate-400 shrink-0">시트 (${sheetNames.length}):</span>
           ${sheetNames.map((sName, sIdx) => `
-            <button type="button" class="excel-sheet-pill px-2.5 py-1 text-[11px] font-semibold rounded-md shrink-0 whitespace-nowrap transition-all cursor-pointer ${sIdx === 0 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-xs' : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/60'}" data-att-id="${att.id}" data-sheet-name="${sName}">${sName}</button>
+            <button type="button" class="excel-sheet-pill px-2.5 py-1 text-[11px] font-semibold rounded-md shrink-0 whitespace-nowrap transition-all cursor-pointer ${sIdx === 0 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-xs' : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/60'}" data-att-id="${att.id}" data-file-name="${displayName}" data-sheet-name="${sName}">${sName}</button>
           `).join('')}
         </div>`
       : '';
 
-    const tableHeaderHtml = `
-      <thead class="bg-[#f3f4f6] sticky top-0 z-10 border-b border-[#cbd5e1]">
-        <tr>
-          <th class="w-10 px-2 py-1.5 text-center text-[10px] font-bold text-[#64748b] bg-[#e2e8f0] border-r border-[#cbd5e1] sticky left-0 z-20 select-none">#</th>
-          ${Array.from({ length: colCount }).map((_, cIdx) => `
-            <th class="px-3 py-1.5 text-[11px] font-mono font-semibold text-[#334155] border-r border-[#cbd5e1] min-w-[85px] bg-[#f1f5f9] text-center select-none">${getColumnLabel(cIdx)}</th>
-          `).join('')}
-        </tr>
-      </thead>
-    `;
-
-    const mergeMap = buildMergeMap(sheetMerges);
-
-    const tableBodyHtml = previewRows.map((row, rIdx) => {
-      const cellsHtml: string[] = [];
-      for (let cIdx = 0; cIdx < colCount; cIdx++) {
-        const mergeInfo = mergeMap.get(`${rIdx},${cIdx}`);
-        if (mergeInfo?.isCovered) {
-          // 병합으로 가려진 셀은 렌더링 건너뜀
-          continue;
-        }
-
-        const val = row[cIdx] !== undefined && row[cIdx] !== null ? String(row[cIdx]) : '';
-        const colSpanAttr = mergeInfo && mergeInfo.colSpan > 1 ? ` colspan="${mergeInfo.colSpan}"` : '';
-        const rowSpanAttr = mergeInfo && mergeInfo.rowSpan > 1 ? ` rowspan="${mergeInfo.rowSpan}"` : '';
-        const isMerged = mergeInfo && (mergeInfo.colSpan > 1 || mergeInfo.rowSpan > 1);
-
-        cellsHtml.push(
-          `<td${colSpanAttr}${rowSpanAttr} class="px-3 py-1.5 text-xs text-[#0f172a] border-r border-[#e2e8f0] break-words whitespace-pre-wrap max-w-xs font-sans leading-relaxed ${isMerged ? 'bg-slate-50/70 font-semibold' : ''}">${val}</td>`
-        );
-      }
-
-      return `
-        <tr class="hover:bg-[#ecfdf5] transition-colors border-b border-[#e2e8f0]">
-          <td class="px-2 py-1.5 text-center text-[10px] font-mono font-semibold text-[#64748b] bg-[#f8fafc] border-r border-[#cbd5e1] sticky left-0 z-10 select-none">${rIdx + 1}</td>
-          ${cellsHtml.join('')}
-        </tr>
-      `;
-    }).join('');
-
     return `
-<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl excel-inline-viewer" data-att-id="${att.id}" data-file-name="${displayName}">
+<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl excel-inline-viewer not-prose" data-att-id="${att.id}" data-file-name="${displayName}">
   <!-- 상단 헤더: 문서명, 직접 편집, 메모로 가져오기, 전면 뷰어, 다운로드 버튼 -->
   <div class="px-3.5 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
     <div class="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-100 min-w-0">
@@ -388,12 +327,11 @@ export function createAttachmentCardHtml(
 
   <!-- 시트가 여러 개일 때 표시되는 독립된 시트 탭 바 (가로 휠 스크롤 지원) -->
   ${sheetTabsHtml}
-  </div>
 
-  <!-- 인라인 표 그리드 뷰어 (편집기와 일치하는 진짜 엑셀 시트 룩앤필) -->
-  <div class="w-full bg-[#f8fafc] p-2 md:p-3 overflow-x-auto max-h-[460px]">
-    <div class="inline-block min-w-full align-middle border border-[#cbd5e1] rounded-lg overflow-hidden bg-white shadow-sm">
-      <table class="min-w-full border-collapse text-left font-sans bg-white" id="excel-table-${att.id}">
+  <!-- 인라인 표 그리드 뷰어 (앱 다크 테마로부터 완전 격리된 엑셀 기본 흰 바탕/검정 글자 룩앤필) -->
+  <div class="w-full bg-[#f8fafc] p-2 md:p-3 overflow-x-auto max-h-[460px]" style="background-color: #f8fafc !important;">
+    <div class="inline-block min-w-full align-middle border border-[#cbd5e1] rounded-lg overflow-hidden bg-white shadow-sm" style="background-color: #ffffff !important; border: 1px solid #cbd5e1 !important;">
+      <table class="min-w-full border-collapse text-left font-sans" id="excel-table-${att.id}" style="background-color: #ffffff !important; color: #000000 !important; width: 100% !important; border-collapse: collapse !important;">
         ${tableHeaderHtml}
         <tbody class="divide-y divide-[#e2e8f0]">
           ${tableBodyHtml}
@@ -404,7 +342,7 @@ export function createAttachmentCardHtml(
 
   <!-- 하단 행 카운트 안내 바 -->
   <div class="px-3.5 py-1.5 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
-    <span>전체 ${totalRows}개 행 • ${colCount}개 열 ${totalRows > 12 ? `(상위 12개 행 미리보기)` : ''}</span>
+    <span class="excel-footer-info">전체 ${totalRows}개 행 • ${colCount}개 열 ${totalRows > 12 ? `(상위 12개 행 미리보기)` : ''}</span>
     <span class="text-slate-500 hidden sm:inline">전체 확인 및 셀 수정은 [🔍 크게 보기] 또는 [✏️ 직접 편집]을 클릭하세요.</span>
   </div>
 </div>
@@ -413,7 +351,7 @@ export function createAttachmentCardHtml(
 
   if (isHwp) {
     return `
-<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl hwp-inline-viewer" data-att-id="${att.id}" data-file-name="${displayName}">
+<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl hwp-inline-viewer not-prose" data-att-id="${att.id}" data-file-name="${displayName}">
   <!-- 상단 헤더: 문서명, 페이지 이동, 메모로 가져오기, 전면 뷰어, 다운로드 버튼 -->
   <div class="px-3.5 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
     <div class="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-100 min-w-0">
@@ -470,7 +408,7 @@ export function createAttachmentCardHtml(
 
   if (isPdf) {
     return `
-<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl pdf-inline-viewer" data-att-id="${att.id}" data-file-name="${displayName}">
+<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl pdf-inline-viewer not-prose" data-att-id="${att.id}" data-file-name="${displayName}">
   <!-- 상단 헤더: 문서명, 페이지 이동, 전면 뷰어, 다운로드 버튼 -->
   <div class="px-3.5 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
     <div class="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-100 min-w-0">

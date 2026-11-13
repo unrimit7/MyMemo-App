@@ -10,7 +10,7 @@ import {
   ZoomIn, 
   ZoomOut 
 } from 'lucide-react';
-import { parseExcelWorkbook, sheetRowsToMarkdownTable, buildMergeMap, getColumnLabel, type ParsedWorkbook } from '../utils/excelViewer';
+import { parseExcelWorkbook, parseExcelWorkbookWithStyles, sheetRowsToMarkdownTable, buildMergeMap, getColumnLabel, type ParsedWorkbook } from '../utils/excelViewer';
 import { useFloatingWindow } from './useFloatingWindow';
 
 interface ExcelViewerModalProps {
@@ -41,18 +41,30 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const floating = useFloatingWindow({ id: 'excel-viewer', defaultWidth: 920, defaultHeight: 800 });
 
-  // 워크북 로드
+  // 워크북 로드 (동기 즉시 표시 + 비동기 원본 서식/스타일 보강)
   useEffect(() => {
     if (!isOpen || !data) return;
+    let isCancelled = false;
     try {
-      const parsed = parseExcelWorkbook(data, attId);
-      setWorkbook(parsed);
-      setActiveSheetName(parsed.sheetNames[0] || 'Sheet1');
+      // 1. 빠른 초기 파싱으로 즉시 표시
+      const quickParsed = parseExcelWorkbook(data, attId);
+      setWorkbook(quickParsed);
+      setActiveSheetName(quickParsed.sheetNames[0] || 'Sheet1');
       setSearchQuery('');
       setZoom(1.0);
+
+      // 2. 비동기 ExcelJS 스타일 파싱으로 글자색/채우기색/테두리 완벽 반영
+      parseExcelWorkbookWithStyles(data, attId).then((styledParsed) => {
+        if (!isCancelled && styledParsed.cellStyles) {
+          setWorkbook(styledParsed);
+        }
+      });
     } catch (err) {
       console.error('엑셀 뷰어 로드 실패:', err);
     }
+    return () => {
+      isCancelled = true;
+    };
   }, [isOpen, data, attId]);
 
   // 현재 활성화된 시트 데이터
@@ -348,19 +360,33 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
                           cellStr.toLowerCase().includes(searchQuery.trim().toLowerCase());
 
                         const isMerged = mergeInfo && (mergeInfo.colSpan > 1 || mergeInfo.rowSpan > 1);
+                        const cellVisual = workbook?.cellStyles?.[activeSheetName]?.[originalIndex]?.[cIdx];
+
+                        // 테마 독립 스타일: 기본 바탕 흰색, 기본 글자 검정, 원본 색상/서식 보존
+                        const effectiveBg = isMatch
+                          ? '#fef08a'
+                          : cellVisual?.bgColor || (isMerged ? '#f8fafc' : '#ffffff');
+                        const effectiveColor = isMatch
+                          ? '#78350f'
+                          : cellVisual?.textColor || '#000000';
+                        const isBold = isMatch || (cellVisual?.bold !== undefined ? cellVisual.bold : isMerged);
+                        const align = cellVisual?.align || (typeof cellVal === 'number' ? 'right' : 'left');
+                        const borderColor = cellVisual?.border?.borderColor || '#e2e8f0';
 
                         return (
                           <td
                             key={cIdx}
                             colSpan={mergeInfo && mergeInfo.colSpan > 1 ? mergeInfo.colSpan : undefined}
                             rowSpan={mergeInfo && mergeInfo.rowSpan > 1 ? mergeInfo.rowSpan : undefined}
-                            className={`px-3 py-1.5 text-xs text-[#0f172a] border-r border-[#e2e8f0] break-words whitespace-pre-wrap max-w-sm leading-relaxed ${
-                              isMatch
-                                ? 'bg-amber-200/70 text-amber-950 font-bold'
-                                : isMerged
-                                ? 'bg-slate-50/70 font-semibold'
-                                : ''
-                            }`}
+                            style={{
+                              backgroundColor: effectiveBg,
+                              color: effectiveColor,
+                              fontWeight: isBold ? 700 : 400,
+                              textAlign: align,
+                              borderRight: `1px solid ${borderColor}`,
+                              borderBottom: `1px solid ${borderColor}`,
+                            }}
+                            className="px-3 py-1.5 text-xs break-words whitespace-pre-wrap max-w-sm leading-relaxed"
                           >
                             {cellStr}
                           </td>

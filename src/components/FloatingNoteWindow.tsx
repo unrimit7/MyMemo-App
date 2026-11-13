@@ -12,7 +12,7 @@ const HwpViewerModal = React.lazy(() => import('./HwpViewerModal').then((m) => (
 const DocxViewerModal = React.lazy(() => import('./DocxViewerModal').then((m) => ({ default: m.DocxViewerModal })));
 const ExcelViewerModal = React.lazy(() => import('./ExcelViewerModal').then((m) => ({ default: m.ExcelViewerModal })));
 const ExcelEditorModal = React.lazy(() => import('./ExcelEditorModal').then((m) => ({ default: m.ExcelEditorModal })));
-import { invalidateExcelCache } from '../utils/excelViewer';
+import { invalidateExcelCache, switchExcelInlineSheet, hydrateExcelInlineStyles } from '../utils/excelViewer';
 import {
   X,
   Maximize2,
@@ -290,6 +290,18 @@ export const FloatingNoteWindow: React.FC<FloatingNoteWindowProps> = ({
       if (attId) {
         renderInlineDocx(attId);
       }
+    });
+
+    // 엑셀 인라인 뷰어 원본 서식(글자색, 채우기색, 테두리) 비동기 하이드레이션
+    const atts = note.attachments || {};
+    hydrateExcelInlineStyles(preview, (attId, fileName) => {
+      const att = (attId && atts[attId])
+        || Object.values(atts).find((a) => a.id === attId || a.name === fileName)
+        || Object.values(atts).find((a) => {
+          const n = (a.name || '').toLowerCase();
+          return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv');
+        });
+      return att?.data;
     });
   };
 
@@ -622,6 +634,30 @@ export const FloatingNoteWindow: React.FC<FloatingNoteWindowProps> = ({
       if (targetAtt && targetAtt.data) {
         const resolvedAttId = targetAtt.id || attId || Object.keys(atts).find((k) => atts[k] === targetAtt) || '';
         setActiveExcelModal({ data: targetAtt.data, title: targetAtt.name || title, attId: resolvedAttId });
+      }
+      return;
+    }
+
+    // 엑셀 인라인 시트 탭 전환 클릭
+    const sheetPill = target.closest<HTMLElement>('.excel-sheet-pill');
+    if (sheetPill) {
+      e.preventDefault();
+      e.stopPropagation();
+      const card = sheetPill.closest<HTMLElement>('.excel-inline-viewer');
+      const sheetName = sheetPill.getAttribute('data-sheet-name');
+      const attId = sheetPill.getAttribute('data-att-id') || card?.getAttribute('data-att-id') || '';
+      const fileName = sheetPill.getAttribute('data-file-name') || card?.getAttribute('data-file-name') || '';
+      const atts = note.attachments || {};
+
+      const targetAtt = (attId && atts[attId])
+        || Object.values(atts).find((a) => a.id === attId || a.name === fileName)
+        || Object.values(atts).find((a) => {
+          const n = (a.name || '').toLowerCase();
+          return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv');
+        });
+
+      if (card && sheetName && targetAtt?.data) {
+        switchExcelInlineSheet(card, sheetName, targetAtt.data);
       }
       return;
     }

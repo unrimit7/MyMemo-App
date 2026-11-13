@@ -15,7 +15,7 @@ const HwpEditorModal = React.lazy(() => import('./HwpEditorModal').then((m) => (
 import { loadHwpDocument, renderHwpPageToSvg, extractHwpText, invalidateHwpCache } from '../utils/hwpViewer';
 const ExcelViewerModal = React.lazy(() => import('./ExcelViewerModal').then((m) => ({ default: m.ExcelViewerModal })));
 const ExcelEditorModal = React.lazy(() => import('./ExcelEditorModal').then((m) => ({ default: m.ExcelEditorModal })));
-import { parseExcelWorkbook, sheetRowsToMarkdownTable, invalidateExcelCache, generateExcelDataUrl, buildMergeMap, getColumnLabel } from '../utils/excelViewer';
+import { parseExcelWorkbook, sheetRowsToMarkdownTable, invalidateExcelCache, generateExcelDataUrl, switchExcelInlineSheet, hydrateExcelInlineStyles } from '../utils/excelViewer';
 const DocxViewerModal = React.lazy(() => import('./DocxViewerModal').then((m) => ({ default: m.DocxViewerModal })));
 const DocxEditorModal = React.lazy(() => import('./DocxEditorModal').then((m) => ({ default: m.DocxEditorModal })));
 import { renderDocxToContainer, extractDocxTextAndHtml, invalidateDocxCache } from '../utils/docxViewer';
@@ -1161,6 +1161,17 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       if (attId) {
         renderInlineDocx.current(attId);
       }
+    });
+
+    // 엑셀 인라인 뷰어 원본 서식(글자색, 채우기색, 테두리) 비동기 하이드레이션
+    hydrateExcelInlineStyles(preview, (attId, fileName) => {
+      const att = (attId && localAttachments[attId])
+        || Object.values(localAttachments).find((a) => a.id === attId || a.name === fileName)
+        || Object.values(localAttachments).find((a) => {
+          const n = (a.name || '').toLowerCase();
+          return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv');
+        });
+      return att?.data;
     });
 
     // <details> 토글 목록이 펼쳐질 때 내부의 워드/한글/PDF 뷰어 자동 재렌더링
@@ -2882,69 +2893,20 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     if (sheetPill) {
       e.preventDefault();
       e.stopPropagation();
-      const attId = sheetPill.getAttribute('data-att-id');
+      const card = sheetPill.closest<HTMLElement>('.excel-inline-viewer');
       const sheetName = sheetPill.getAttribute('data-sheet-name');
-      const preview = previewContainerRef.current;
-      if (attId && sheetName && preview && localAttachments[attId]) {
-        const viewer = preview.querySelector<HTMLElement>(`.excel-inline-viewer[data-att-id="${attId}"]`);
-        if (viewer) {
-          const parsed = parseExcelWorkbook(localAttachments[attId].data, attId);
-          const rows = parsed.sheets[sheetName] || [];
-          const sheetMerges = parsed.merges?.[sheetName] || [];
-          const tableEl = viewer.querySelector<HTMLTableElement>(`#excel-table-${attId}`);
-          if (tableEl) {
-            let maxCols = 0;
-            rows.forEach((r) => { maxCols = Math.max(maxCols, r.length); });
-            sheetMerges.forEach((m) => { maxCols = Math.max(maxCols, m.e.c + 1); });
-            const colCount = Math.max(maxCols, 1);
-            const previewRows = rows.slice(0, 12);
-            const mergeMap = buildMergeMap(sheetMerges);
+      const attId = sheetPill.getAttribute('data-att-id') || card?.getAttribute('data-att-id') || '';
+      const fileName = sheetPill.getAttribute('data-file-name') || card?.getAttribute('data-file-name') || '';
 
-            const thead = tableEl.querySelector('thead');
-            if (thead) {
-              const colHeaders = Array.from({ length: colCount }).map((_, cIdx) => {
-                return `<th class="px-3 py-1.5 text-[11px] font-mono font-semibold text-[#334155] border-r border-[#cbd5e1] min-w-[85px] bg-[#f1f5f9] text-center select-none">${getColumnLabel(cIdx)}</th>`;
-              }).join('');
-              thead.innerHTML = `<tr><th class="w-10 px-2 py-1.5 text-center text-[10px] font-bold text-[#64748b] bg-[#e2e8f0] border-r border-[#cbd5e1] sticky left-0 z-20 select-none">#</th>${colHeaders}</tr>`;
-            }
+      const targetAtt = (attId && localAttachments[attId])
+        || Object.values(localAttachments).find((a) => a.id === attId || a.name === fileName)
+        || Object.values(localAttachments).find((a) => {
+          const n = (a.name || '').toLowerCase();
+          return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv');
+        });
 
-            const tbody = tableEl.querySelector('tbody');
-            if (tbody) {
-              tbody.innerHTML = previewRows.map((row, rIdx) => {
-                const cellsHtml: string[] = [];
-                for (let cIdx = 0; cIdx < colCount; cIdx++) {
-                  const mergeInfo = mergeMap.get(`${rIdx},${cIdx}`);
-                  if (mergeInfo?.isCovered) {
-                    continue;
-                  }
-                  const val = row[cIdx] !== undefined && row[cIdx] !== null ? String(row[cIdx]) : '';
-                  const colSpanAttr = mergeInfo && mergeInfo.colSpan > 1 ? ` colspan="${mergeInfo.colSpan}"` : '';
-                  const rowSpanAttr = mergeInfo && mergeInfo.rowSpan > 1 ? ` rowspan="${mergeInfo.rowSpan}"` : '';
-                  const isMerged = mergeInfo && (mergeInfo.colSpan > 1 || mergeInfo.rowSpan > 1);
-
-                  cellsHtml.push(
-                    `<td${colSpanAttr}${rowSpanAttr} class="px-3 py-1.5 text-xs text-[#0f172a] border-r border-[#e2e8f0] break-words whitespace-pre-wrap max-w-xs font-sans leading-relaxed ${isMerged ? 'bg-slate-50/70 font-semibold' : ''}">${val}</td>`
-                  );
-                }
-
-                return `
-                  <tr class="hover:bg-[#ecfdf5] transition-colors border-b border-[#e2e8f0]">
-                    <td class="px-2 py-1.5 text-center text-[10px] font-mono font-semibold text-[#64748b] bg-[#f8fafc] border-r border-[#cbd5e1] sticky left-0 z-10 select-none">${rIdx + 1}</td>
-                    ${cellsHtml.join('')}
-                  </tr>
-                `;
-              }).join('');
-            }
-
-            viewer.querySelectorAll('.excel-sheet-pill').forEach((pill) => {
-              if (pill.getAttribute('data-sheet-name') === sheetName) {
-                pill.className = 'excel-sheet-pill px-2.5 py-1 text-[11px] font-semibold rounded-md shrink-0 whitespace-nowrap transition-all cursor-pointer bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-xs';
-              } else {
-                pill.className = 'excel-sheet-pill px-2.5 py-1 text-[11px] font-semibold rounded-md shrink-0 whitespace-nowrap transition-all cursor-pointer bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/60';
-              }
-            });
-          }
-        }
+      if (card && sheetName && targetAtt?.data) {
+        switchExcelInlineSheet(card, sheetName, targetAtt.data);
       }
       return;
     }
