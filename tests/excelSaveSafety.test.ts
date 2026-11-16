@@ -179,6 +179,39 @@ describe('Excel 저장 안전성 및 무결성 검증 테스트 (무음 손실 �
     expect(compactTrailingEmptyRows(small)).toBe(small);
   });
 
+  it('10. 같은 서식을 공유하는 셀 중 하나에만 테두리를 넣으면 그 셀에만 저장되고, 행/열 크기 변경도 저장', async () => {
+    const src = new ExcelJS.Workbook();
+    const sws = src.addWorksheet('S');
+    const shared = { font: { name: '맑은 고딕', size: 11 } } as any;
+    for (const a of ['A1', 'B1', 'C1', 'D1']) {
+      sws.getCell(a).value = a;
+      sws.getCell(a).style = shared;
+    }
+    const srcBuf = Buffer.from(await src.xlsx.writeBuffer());
+    const origDataUrl = bufferToDataUrl(srcBuf);
+    const snap: any = await dataUrlToUniverWorkbook(origDataUrl, 'S');
+    const sid = snap.sheetOrder[0];
+    const sheet = snap.sheets[sid];
+    const baseStyleId = sheet.cellData[0][1].s;
+    const base = baseStyleId ? snap.styles[baseStyleId] : {};
+    snap.styles.bdTest = { ...base, bd: { t: { s: 13, cl: { rgb: '#FF0000' } }, b: { s: 1, cl: { rgb: '#000000' } } } };
+    sheet.cellData[0][1].s = 'bdTest'; // B1에만 테두리
+    sheet.rowData = { ...(sheet.rowData || {}), 0: { h: 60 } }; // 1행 높이 (원본 기본 높이)
+    sheet.columnData = { ...(sheet.columnData || {}), 2: { w: 200 } }; // C열 너비 (원본 기본 너비)
+
+    const saved = await univerSnapshotToDataUrl(snap, 'xlsx', 'exceljs', origDataUrl);
+    const out = new ExcelJS.Workbook();
+    await out.xlsx.load(Buffer.from(saved.split(',')[1], 'base64') as any);
+    const ows = out.worksheets[0];
+    expect(ows.getCell('B1').border?.top?.style).toBe('thick');
+    expect(ows.getCell('B1').border?.bottom?.style).toBe('thin');
+    for (const a of ['A1', 'C1', 'D1']) {
+      expect(ows.getCell(a).border?.top?.style).toBeUndefined();
+    }
+    expect(Math.round(ows.getRow(1).height || 0)).toBe(45);
+    expect(Math.round(ows.getColumn(3).width || 0)).toBe(24);
+  });
+
   it('7. 셀에 "한국 표준시"나 "GMT+0900"을 일반 문장으로 쓴 경우는 손상으로 판정하지 않아야 한다', async () => {
     const origBuf = fs.readFileSync(sampleFile);
     const normalText = await withInlineText(origBuf, '회의 시간은 한국 표준시(GMT+0900) 기준');

@@ -1853,6 +1853,15 @@ export async function univerSnapshotToDataUrl(
             excelCell.value = null;
           }
 
+          // ExcelJS는 같은 서식을 쓰는 셀들이 style 객체를 공유한다. 한 셀의 테두리·글꼴 등을 바꾸면
+          // 같은 서식의 다른 셀까지 바뀌거나, 뒤에서 처리되는 셀이 앞의 변경을 되돌린다.
+          // 서식을 건드리기 전에 셀마다 독립된 복사본을 갖게 한다. (저장 시 같은 서식은 다시 하나로 합쳐짐)
+          try {
+            excelCell.style = JSON.parse(JSON.stringify(excelCell.style || {}));
+          } catch {
+            // 복사 실패 시 기존 동작 유지
+          }
+
           // 스타일 적용 (폰트, 배경색, 정렬, 표시 형식)
           if (cell.s) {
             const styleObj = typeof cell.s === 'string' ? styles[cell.s] : (cell.s as IStyleData);
