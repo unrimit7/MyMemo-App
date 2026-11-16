@@ -12,6 +12,11 @@ const HwpViewerModal = React.lazy(() => import('./HwpViewerModal').then((m) => (
 const DocxViewerModal = React.lazy(() => import('./DocxViewerModal').then((m) => ({ default: m.DocxViewerModal })));
 const ExcelViewerModal = React.lazy(() => import('./ExcelViewerModal').then((m) => ({ default: m.ExcelViewerModal })));
 const ExcelEditorModal = React.lazy(() => import('./ExcelEditorModal').then((m) => ({ default: m.ExcelEditorModal })));
+const PptxViewerModal = React.lazy(() => import('./PptxViewerModal').then((m) => ({ default: m.PptxViewerModal })));
+const DocxEditorModal = React.lazy(() => import('./DocxEditorModal').then((m) => ({ default: m.DocxEditorModal })));
+const HwpEditorModal = React.lazy(() => import('./HwpEditorModal').then((m) => ({ default: m.HwpEditorModal })));
+const PdfEditorModal = React.lazy(() => import('./PdfEditorModal').then((m) => ({ default: m.PdfEditorModal })));
+import { resolveCardAction, buildImportBlock, importErrorMessage, withSavedAttachment, withRestoredOriginal, invalidateCardCaches } from '../utils/attachmentCardActions';
 import { invalidateExcelCache, switchExcelInlineSheet, hydrateExcelInlineStyles } from '../utils/excelViewer';
 import {
   X,
@@ -63,6 +68,9 @@ export const FloatingNoteWindow: React.FC<FloatingNoteWindowProps> = ({
   const [activeDocxModal, setActiveDocxModal] = useState<{ data: string; title: string } | null>(null);
   const [activeExcelModal, setActiveExcelModal] = useState<{ data: string; title: string; attId?: string } | null>(null);
   const [activeExcelEditorModal, setActiveExcelEditorModal] = useState<{ data: string; title: string; attId?: string } | null>(null);
+  const [activePptxModal, setActivePptxModal] = useState<{ data: string; title: string; attId: string } | null>(null);
+  // 워드·한글·PDF 직접 편집기 (메인 편집기와 같은 저장 규칙: 처음 저장 시 원본 보관)
+  const [activeDocEditor, setActiveDocEditor] = useState<{ kind: 'docx' | 'hwp' | 'pdf'; data: string; title: string; attId: string } | null>(null);
 
   // 미리보기 컨테이너 및 문서 페이지 번호 관리
   const previewContainerRef = useRef<HTMLDivElement>(null);
@@ -549,6 +557,40 @@ export const FloatingNoteWindow: React.FC<FloatingNoteWindowProps> = ({
       return;
     }
 
+    // 4-1. 공통 카드 동작: 가져오기(모든 형식), 워드·한글·PDF 직접 편집, PPT 크게 보기, 워드 용지 클릭
+    const cardAction = resolveCardAction(target);
+    if (cardAction) {
+      const att = cardAction.attId ? note.attachments?.[cardAction.attId] : undefined;
+      const handled =
+        cardAction.action === 'import'
+        || (cardAction.action === 'edit' && cardAction.kind !== 'excel' && cardAction.kind !== 'pptx')
+        || (cardAction.action === 'fullscreen' && (cardAction.kind === 'pptx' || cardAction.el.classList.contains('docx-container')));
+      if (handled) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!att || !att.data) return;
+        const title = cardAction.fileName || att.name;
+        if (cardAction.action === 'import') {
+          buildImportBlock(cardAction.kind, att)
+            .then(({ block, message }) => {
+              handleContentChange(`${localContent}${block}`);
+              alert(message);
+            })
+            .catch((err) => {
+              console.error('첨부 내용 가져오기 실패:', err);
+              alert(importErrorMessage(cardAction.kind, err));
+            });
+        } else if (cardAction.action === 'edit') {
+          setActiveDocEditor({ kind: cardAction.kind as 'docx' | 'hwp' | 'pdf', data: att.data, title, attId: cardAction.attId });
+        } else if (cardAction.kind === 'pptx') {
+          setActivePptxModal({ data: att.data, title, attId: cardAction.attId });
+        } else {
+          setActiveDocxModal({ data: att.data, title });
+        }
+        return;
+      }
+    }
+
     // 5. [🔍 크게 보기] 모달 열기
     const fullscreenPdfBtn = target.closest<HTMLElement>('.pdf-btn-fullscreen') || target.closest<HTMLCanvasElement>('canvas.pdf-canvas');
     if (fullscreenPdfBtn) {
@@ -820,6 +862,84 @@ export const FloatingNoteWindow: React.FC<FloatingNoteWindowProps> = ({
                 }
               }
             }}
+          />
+        );
+      })()}
+      {activePptxModal && (
+        <PptxViewerModal
+          isOpen={true}
+          data={activePptxModal.data}
+          title={activePptxModal.title}
+          attId={activePptxModal.attId}
+          onClose={() => setActivePptxModal(null)}
+          onImportMarkdown={(markdown) => {
+            handleContentChange(`${localContent}
+
+${markdown}
+
+`);
+            alert(`'${activePptxModal.title}' 슬라이드 내용을 메모 본문에 삽입했습니다!`);
+          }}
+        />
+      )}
+      {activeDocEditor && (() => {
+        const { kind, attId, title, data } = activeDocEditor;
+        const existing = note.attachments?.[attId];
+        const save = async (updatedDataUrl: string, extra: { editorEngine?: 'superdoc' | 'legacy' } = {}) => {
+          invalidateCardCaches(kind, attId);
+          onUpdateNote({ attachments: withSavedAttachment(note.attachments || {}, attId, updatedDataUrl, extra) }, note.id);
+          setActiveDocEditor((prev) => (prev ? { ...prev, data: updatedDataUrl } : null));
+        };
+        const restore = async () => {
+          const restored = withRestoredOriginal(note.attachments || {}, attId);
+          if (!restored) return;
+          invalidateCardCaches(kind, attId);
+          onUpdateNote({ attachments: restored }, note.id);
+          setActiveDocEditor((prev) => (prev ? { ...prev, data: restored[attId].data } : null));
+          if (kind !== 'pdf') alert('최초 원본 버전으로 성공적으로 복원되었습니다.');
+        };
+        const close = () => setActiveDocEditor(null);
+        if (kind === 'docx') {
+          return (
+            <DocxEditorModal
+              isOpen={true}
+              onClose={close}
+              data={data}
+              title={title}
+              attId={attId}
+              originalData={existing?.originalData}
+              originalDate={existing?.originalDate}
+              initialEngine={existing?.editorEngine === 'legacy' ? 'legacy' : 'superdoc'}
+              onSave={(url, engine = 'superdoc') => save(url, { editorEngine: engine })}
+              onRestoreOriginal={restore}
+            />
+          );
+        }
+        if (kind === 'hwp') {
+          return (
+            <HwpEditorModal
+              isOpen={true}
+              onClose={close}
+              data={data}
+              title={title}
+              attId={attId}
+              originalData={existing?.originalData}
+              originalDate={existing?.originalDate}
+              onSave={(url) => save(url)}
+              onRestoreOriginal={restore}
+            />
+          );
+        }
+        return (
+          <PdfEditorModal
+            isOpen={true}
+            onClose={close}
+            data={data}
+            title={title}
+            attId={attId}
+            originalData={existing?.originalData}
+            onSave={(url) => save(url)}
+            onRestoreOriginal={restore}
           />
         );
       })()}

@@ -6,23 +6,24 @@ import { processFileForNote } from '../utils/file';
 import { cleanLegacyAttachments, renderAttachmentsInHtml, invalidateAttachmentBlobUrl } from '../utils/attachment';
 import { exportNoteToPdf, contentHasDocumentAttachments, type PdfAttachmentMode, type PdfToggleOpenState } from '../utils/exportPdf';
 import { PPTX_EDITING_ENABLED } from '../utils/featureFlags';
+import { resolveCardAction, buildImportBlock, importErrorMessage, withSavedAttachment, withRestoredOriginal, invalidateCardCaches } from '../utils/attachmentCardActions';
 import { getFolderHierarchyPath, updateTitleWithFolderPath, stripFolderPrefixFromTitle } from '../utils/folderPath';
 const PdfViewerModal = React.lazy(() => import('./PdfViewerModal').then((m) => ({ default: m.PdfViewerModal })));
 const PdfEditorModal = React.lazy(() => import('./PdfEditorModal').then((m) => ({ default: m.PdfEditorModal })));
 const ImageEditorModal = React.lazy(() => import('./ImageEditorModal').then((m) => ({ default: m.ImageEditorModal })));
-import { loadPdfDocument, renderPdfPageToCanvas, extractPdfText, invalidatePdfCache } from '../utils/pdfViewer';
+import { loadPdfDocument, renderPdfPageToCanvas, invalidatePdfCache } from '../utils/pdfViewer';
 const HwpViewerModal = React.lazy(() => import('./HwpViewerModal').then((m) => ({ default: m.HwpViewerModal })));
 const HwpEditorModal = React.lazy(() => import('./HwpEditorModal').then((m) => ({ default: m.HwpEditorModal })));
-import { loadHwpDocument, renderHwpPageToSvg, extractHwpText, invalidateHwpCache } from '../utils/hwpViewer';
+import { loadHwpDocument, renderHwpPageToSvg, invalidateHwpCache } from '../utils/hwpViewer';
 const ExcelViewerModal = React.lazy(() => import('./ExcelViewerModal').then((m) => ({ default: m.ExcelViewerModal })));
 const ExcelEditorModal = React.lazy(() => import('./ExcelEditorModal').then((m) => ({ default: m.ExcelEditorModal })));
-import { parseExcelWorkbook, sheetRowsToMarkdownTable, invalidateExcelCache, generateExcelDataUrl, switchExcelInlineSheet, hydrateExcelInlineStyles } from '../utils/excelViewer';
+import { invalidateExcelCache, generateExcelDataUrl, switchExcelInlineSheet, hydrateExcelInlineStyles } from '../utils/excelViewer';
 const DocxViewerModal = React.lazy(() => import('./DocxViewerModal').then((m) => ({ default: m.DocxViewerModal })));
 const DocxEditorModal = React.lazy(() => import('./DocxEditorModal').then((m) => ({ default: m.DocxEditorModal })));
-import { renderDocxToContainer, extractDocxTextAndHtml, invalidateDocxCache } from '../utils/docxViewer';
+import { renderDocxToContainer, invalidateDocxCache } from '../utils/docxViewer';
 const PptxViewerModal = React.lazy(() => import('./PptxViewerModal').then((m) => ({ default: m.PptxViewerModal })));
 const PptxEditorModal = React.lazy(() => import('./PptxEditorModal').then((m) => ({ default: m.PptxEditorModal })));
-import { extractPptxTextAndMarkdown, invalidatePptxCache } from '../utils/pptxViewer';
+import { invalidatePptxCache } from '../utils/pptxViewer';
 const HexEditorModal = React.lazy(() => import('./HexEditorModal').then((m) => ({ default: m.HexEditorModal })));
 import { SlashCommandMenu, getSlashCommands, type SlashCommandItem } from './SlashCommandMenu';
 import { TemplateModal } from './TemplateModal';
@@ -2631,6 +2632,28 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       return;
     }
 
+    // 2-1. 첨부 카드 [📝 메모로 가져오기] (엑셀·워드·한글·PDF·PPT 공통, 창 분리와 같은 처리)
+    const cardAction = resolveCardAction(target);
+    if (cardAction && cardAction.action === 'import') {
+      e.preventDefault();
+      e.stopPropagation();
+      const att = localAttachmentsRef.current[cardAction.attId] || localAttachments[cardAction.attId];
+      if (att && att.data) {
+        buildImportBlock(cardAction.kind, att)
+          .then(({ block, message }) => {
+            const newContent = `${localContent}${block}`;
+            setLocalContent(newContent);
+            debouncedSyncToParent({ content: newContent });
+            alert(message);
+          })
+          .catch((err) => {
+            console.error('첨부 내용 가져오기 실패:', err);
+            alert(importErrorMessage(cardAction.kind, err));
+          });
+      }
+      return;
+    }
+
     // 3. PDF 인라인 이전/다음 페이지 버튼 클릭
     const prevPdfBtn = target.closest<HTMLButtonElement>('.pdf-btn-prev');
     if (prevPdfBtn) {
@@ -2764,62 +2787,6 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       return;
     }
 
-    // 7. HWP [📝 메모로 가져오기] 버튼 클릭 시 텍스트 추출 및 본문 반영
-    const importHwpBtn = target.closest<HTMLElement>('.hwp-btn-import');
-    if (importHwpBtn) {
-      e.preventDefault();
-      e.stopPropagation();
-      const attId = importHwpBtn.getAttribute('data-att-id');
-      if (attId && localAttachments[attId]) {
-        loadHwpDocument(localAttachments[attId].data, attId)
-          .then((doc) => {
-            const text = extractHwpText(doc);
-            if (!text.trim()) {
-              alert('추출할 수 있는 본문 텍스트가 없습니다.');
-              return;
-            }
-            const insertBlock = `\n\n### 📝 ${localAttachments[attId].name} 본문\n\n${text}\n\n`;
-            const newContent = `${localContent}${insertBlock}`;
-            setLocalContent(newContent);
-            debouncedSyncToParent({ content: newContent });
-            alert(`'${localAttachments[attId].name}' 문서의 본문 텍스트(${text.length}자)를 메모에 성공적으로 가져왔습니다!`);
-          })
-          .catch((err) => {
-            console.error('HWP 텍스트 추출 실패:', err);
-            alert('한글 문서 텍스트를 추출하지 못했습니다.');
-          });
-      }
-      return;
-    }
-
-    // 7-2. PDF [📝 메모로 가져오기] 버튼 클릭 시 텍스트 추출 및 본문 반영
-    const importPdfBtn = target.closest<HTMLElement>('.pdf-btn-import');
-    if (importPdfBtn) {
-      e.preventDefault();
-      e.stopPropagation();
-      const attId = importPdfBtn.getAttribute('data-att-id');
-      if (attId && localAttachments[attId]) {
-        loadPdfDocument(localAttachments[attId].data, attId)
-          .then(async (doc) => {
-            const text = await extractPdfText(doc);
-            if (!text.trim()) {
-              alert('추출할 수 있는 텍스트가 없습니다. (스캔 이미지로만 구성된 PDF는 텍스트 레이어가 포함되어 있지 않습니다.)');
-              return;
-            }
-            const insertBlock = `\n\n### 📄 ${localAttachments[attId].name} 본문\n\n${text}\n\n`;
-            const newContent = `${localContent}${insertBlock}`;
-            setLocalContent(newContent);
-            debouncedSyncToParent({ content: newContent });
-            alert(`'${localAttachments[attId].name}' 문서의 본문 텍스트(${text.length}자)를 메모에 성공적으로 가져왔습니다!`);
-          })
-          .catch((err) => {
-            console.error('PDF 텍스트 추출 실패:', err);
-            alert('PDF 문서 텍스트를 추출하지 못했습니다.');
-          });
-      }
-      return;
-    }
-
     // 7-3. 엑셀 [✏️ 직접 편집] 버튼 클릭 시 웹 스프레드시트 편집기 모달 열기
     const editExcelBtn = target.closest<HTMLElement>('.excel-btn-edit');
     if (editExcelBtn) {
@@ -2876,30 +2843,6 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           data: targetAtt.data,
           title: targetAtt.name || title,
         });
-      }
-      return;
-    }
-
-    // 7-5. 엑셀 [📝 표 가져오기] 클릭 시 마크다운 표로 본문에 가져오기
-    const importExcelBtn = target.closest<HTMLElement>('.excel-btn-import');
-    if (importExcelBtn) {
-      e.preventDefault();
-      e.stopPropagation();
-      const attId = importExcelBtn.getAttribute('data-att-id');
-      if (attId && localAttachments[attId]) {
-        const parsed = parseExcelWorkbook(localAttachments[attId].data, attId);
-        const firstSheet = parsed.sheetNames[0] || 'Sheet1';
-        const rows = parsed.sheets[firstSheet] || [];
-        const mdTable = sheetRowsToMarkdownTable(rows);
-        if (!mdTable.trim()) {
-          alert('가져올 수 있는 표 데이터가 없습니다.');
-          return;
-        }
-        const insertBlock = `\n\n### 📊 ${localAttachments[attId].name} (${firstSheet})\n\n${mdTable}\n\n`;
-        const newContent = `${localContent}${insertBlock}`;
-        setLocalContent(newContent);
-        debouncedSyncToParent({ content: newContent });
-        alert(`'${localAttachments[attId].name}' 표 데이터(${rows.length}행)를 마크다운 표로 메모에 성공적으로 가져왔습니다!`);
       }
       return;
     }
@@ -2964,34 +2907,6 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       return;
     }
 
-    // 7-9. 워드 [📝 메모로 가져오기] 클릭 시 마크다운으로 본문 반영
-    const importDocxBtn = target.closest<HTMLElement>('.docx-btn-import');
-    if (importDocxBtn) {
-      e.preventDefault();
-      e.stopPropagation();
-      const attId = importDocxBtn.getAttribute('data-att-id');
-      if (attId && localAttachments[attId]) {
-        extractDocxTextAndHtml(localAttachments[attId].data)
-          .then(({ markdown, text }) => {
-            const contentToImport = markdown || text;
-            if (!contentToImport.trim()) {
-              alert('추출할 수 있는 문서 내용이 없습니다.');
-              return;
-            }
-            const insertBlock = `\n\n### 📄 ${localAttachments[attId].name} 내용\n\n${contentToImport}\n\n`;
-            const newContent = `${localContent}${insertBlock}`;
-            setLocalContent(newContent);
-            debouncedSyncToParent({ content: newContent });
-            alert(`'${localAttachments[attId].name}' 문서 내용(${contentToImport.length}자)을 메모에 성공적으로 가져왔습니다!`);
-          })
-          .catch((err) => {
-            console.error('워드 본문 추출 실패:', err);
-            alert('워드 문서 내용을 추출하지 못했습니다.');
-          });
-      }
-      return;
-    }
-
     // 7-10. 파워포인트 [✏️ 직접 편집] 클릭 시 웹 슬라이드 에디터 열기
     const editPptxBtn = target.closest<HTMLElement>('.pptx-btn-edit');
     if (editPptxBtn) {
@@ -3022,34 +2937,6 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           data: localAttachments[attId].data,
           title,
         });
-      }
-      return;
-    }
-
-    // 7-12. 파워포인트 [📝 메모로 가져오기] 클릭 시 마크다운으로 본문 반영
-    const importPptxBtn = target.closest<HTMLElement>('.pptx-btn-import');
-    if (importPptxBtn) {
-      e.preventDefault();
-      e.stopPropagation();
-      const attId = importPptxBtn.getAttribute('data-att-id');
-      if (attId && localAttachments[attId]) {
-        extractPptxTextAndMarkdown(localAttachments[attId].data)
-          .then(({ markdown, text }) => {
-            const contentToImport = markdown || text;
-            if (!contentToImport.trim()) {
-              alert('추출할 수 있는 슬라이드 내용이 없습니다.');
-              return;
-            }
-            const insertBlock = `\n\n${contentToImport}\n\n`;
-            const newContent = `${localContent}${insertBlock}`;
-            setLocalContent(newContent);
-            debouncedSyncToParent({ content: newContent });
-            alert(`'${localAttachments[attId].name}' 발표 자료 내용을 메모에 성공적으로 가져왔습니다!`);
-          })
-          .catch((err) => {
-            console.error('파워포인트 본문 추출 실패:', err);
-            alert('파워포인트 슬라이드 내용을 추출하지 못했습니다.');
-          });
       }
       return;
     }
@@ -4399,6 +4286,18 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           title={activePdfEditorModal.title}
           attId={activePdfEditorModal.attId}
           initialPage={activePdfEditorModal.initialPage}
+          originalData={localAttachments[activePdfEditorModal.attId]?.originalData}
+          onRestoreOriginal={async () => {
+            const attId = activePdfEditorModal.attId;
+            const restored = attId ? withRestoredOriginal(localAttachmentsRef.current, attId) : null;
+            if (!restored) return;
+            invalidateCardCaches('pdf', attId);
+            setLocalAttachments(restored);
+            localAttachmentsRef.current = restored;
+            onUpdateNote({ attachments: restored });
+            setActivePdfEditorModal((prev) => prev ? { ...prev, data: restored[attId].data } : null);
+            renderInlinePdf.current(attId, restored[attId].data);
+          }}
           onSave={async (updatedDataUrl) => {
             const attId = activePdfEditorModal.attId;
             if (attId) {
@@ -4406,14 +4305,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               invalidatePdfCache(attId);
               invalidateAttachmentBlobUrl(attId);
 
-              // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장
-              const updatedAtts = {
-                ...localAttachmentsRef.current,
-                [attId]: {
-                  ...(localAttachmentsRef.current[attId] || {}),
-                  data: updatedDataUrl,
-                },
-              };
+              // 2. 첨부파일 목록 상태 업데이트 및 상위 메모 저장 (처음 저장 시 원본 PDF를 originalData로 보관)
+              const updatedAtts = withSavedAttachment(localAttachmentsRef.current, attId, updatedDataUrl);
               setLocalAttachments(updatedAtts);
               localAttachmentsRef.current = updatedAtts;
               onUpdateNote({ attachments: updatedAtts });

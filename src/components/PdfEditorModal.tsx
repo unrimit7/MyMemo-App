@@ -79,6 +79,8 @@ interface PdfEditorModalProps {
   attId?: string;
   initialPage?: number;
   onSave?: (updatedDataUrl: string) => Promise<void> | void;
+  originalData?: string; // 처음 저장하기 전 원본 (주석이 합성되기 전 PDF)
+  onRestoreOriginal?: () => Promise<void> | void;
 }
 
 // Data URL 또는 Base64 문자열을 안전하게 Uint8Array로 변환
@@ -118,6 +120,8 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
   attId,
   initialPage = 1,
   onSave,
+  originalData,
+  onRestoreOriginal,
 }) => {
   const [currentPdfData, setCurrentPdfData] = useState<string>(data);
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
@@ -1370,6 +1374,20 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
     }
   };
 
+  // 원본으로 되돌리기: 저장 때 합성된 주석을 모두 버리고 처음 PDF로 돌아간다
+  const handleRestoreOriginal = async () => {
+    if (!originalData || !onRestoreOriginal) return;
+    if (!window.confirm('저장한 주석·서명을 모두 버리고 처음 첨부한 원본 PDF로 되돌릴까요?')) return;
+    try {
+      invalidatePdfCache(attId);
+      await onRestoreOriginal();
+      setAnnotations({});
+      setCurrentPdfData(originalData);
+    } catch (err: any) {
+      setErrorMessage(`원본으로 되돌리지 못했습니다: ${err?.message || ''}`);
+    }
+  };
+
   // 수정된 PDF 바로 다운로드
   const handleDownload = async () => {
     try {
@@ -1583,6 +1601,17 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
             {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
             <span>저장 및 반영</span>
           </button>
+
+          {originalData && onRestoreOriginal && (
+            <button
+              type="button"
+              onClick={handleRestoreOriginal}
+              className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 rounded-lg text-xs font-semibold border border-amber-500/30 transition-all active:scale-95 cursor-pointer"
+              title="저장한 주석을 버리고 처음 원본 PDF로 되돌리기"
+            >
+              <span>원본으로 되돌리기</span>
+            </button>
+          )}
 
           <button
             type="button"
