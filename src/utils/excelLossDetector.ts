@@ -41,27 +41,27 @@ export async function detectExcelUnsupportedFeatures(
     const bytes = dataUrlToUint8Array(dataOrUrl);
     const zip = await JSZip.loadAsync(bytes);
 
+    const drawingXmlPaths: string[] = [];
     zip.forEach((relativePath) => {
       const lower = relativePath.toLowerCase();
 
       // 1. 차트 감지
-      if (lower.startsWith('xl/charts/') || lower.includes('chart')) {
+      if (lower.startsWith('xl/charts/chart') && lower.endsWith('.xml')) {
         result.hasCharts = true;
       }
       // 2. 피벗 테이블 감지
-      if (lower.startsWith('xl/pivottables/') || lower.startsWith('xl/pivotrecords/')) {
+      if (lower.startsWith('xl/pivottables/') || lower.startsWith('xl/pivotrecords/') || lower.startsWith('xl/pivotcache/')) {
         result.hasPivotTables = true;
       }
-      // 3. 이미지 및 미디어/그리기 객체 감지
-      if (
-        lower.startsWith('xl/media/') ||
-        lower.startsWith('xl/drawings/') ||
-        lower.includes('drawing')
-      ) {
+      // 3. 이미지 감지 (그림 파일이 실제로 들어 있을 때만)
+      if (lower.startsWith('xl/media/')) {
         result.hasImagesOrDrawings = true;
       }
-      // 4. VBA 매크로 감지
-      if (lower.includes('vbaproject.bin') || lower.endsWith('.bin')) {
+      if (/^xl\/drawings\/drawing\d+\.xml$/.test(lower)) {
+        drawingXmlPaths.push(relativePath);
+      }
+      // 4. VBA 매크로 감지 (프린터 설정 printerSettings*.bin 등 다른 .bin은 매크로가 아님)
+      if (lower.endsWith('vbaproject.bin')) {
         result.hasVbaMacro = true;
       }
       // 5. 스파크라인 감지
@@ -69,6 +69,27 @@ export async function detectExcelUnsupportedFeatures(
         result.hasSparklines = true;
       }
     });
+
+    // 3-1. 그리기 파일이 차트만 담고 있으면 '이미지/도형'으로 보지 않는다. 도형(sp)·그림(pic)·연결선(cxnSp)이 있을 때만.
+    if (!result.hasImagesOrDrawings) {
+      for (const dp of drawingXmlPaths) {
+        const xml = await zip.file(dp)!.async('string');
+        if (/<(?:\w+:)?(?:sp|pic|cxnSp)[\s>]/.test(xml)) {
+          result.hasImagesOrDrawings = true;
+          break;
+        }
+      }
+    }
+
+    // 스파크라인은 시트 XML 안의 확장 요소로 들어 있다
+    if (!result.hasSparklines) {
+      for (const name of Object.keys(zip.files)) {
+        if (/^xl\/worksheets\/sheet\d+\.xml$/i.test(name)) {
+          const xml = await zip.file(name)!.async('string');
+          if (xml.includes('sparklineGroup')) { result.hasSparklines = true; break; }
+        }
+      }
+    }
 
     if (result.hasCharts) {
       result.unsupportedList.push('차트 (그래프)');

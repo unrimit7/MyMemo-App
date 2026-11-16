@@ -790,3 +790,13 @@ describe('ExcelJS Roundtrip Automation Tests (Sample 1 ~ 5)', () => {
     expect(ops.length).toBe(1); // 열 연산만 상쇄되고 행 연산은 유지됨
   });
 });
+
+describe('excelLossDetector 오탐 방지 (STEP6)', () => {
+  test('차트만 있는 견적서: 차트는 감지하고, 프린터 설정 .bin을 VBA로, 차트용 drawing을 이미지로 보지 않는다', async () => {
+    const report = await detectExcelUnsupportedFeatures(readSampleDataUrl('real/실파일B_견적서_MS엑셀.xlsx'));
+    expect(report.hasCharts).toBe(true);
+    expect(report.hasVbaMacro).toBe(false);
+    expect(report.hasImagesOrDrawings).toBe(false);
+    expect(report.unsupportedList).toEqual(['차트 (그래프)']);
+  });
+});
