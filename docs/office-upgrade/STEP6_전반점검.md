@@ -76,7 +76,7 @@
 | 024886a | fix(excel-viewer): 큰 화면 숨긴 행·열, 원본 테두리·열 너비·행 높이 (K2, K4) |
 | 1bb8709 | fix(excel-viewer): 큰 화면 1,000행씩 더 보기 (멈춤 완화) |
 
-테스트: `npm.cmd test` 114개 통과(기준선 99개), `npm.cmd run build` 성공. 배포: df1c797까지 GitHub Actions 배포 성공 확인, 이후 커밋은 아래 push 뒤 확인.
+테스트: `npm.cmd test` 114개 통과(기준선 99개), `npm.cmd run build` 성공. 배포: a87d2b7까지 GitHub Actions 배포 성공 확인 (https://unrimit7.github.io/MyMemo-App/).
 
 ## 5. 사용자가 직접 열어 볼 파일
 
