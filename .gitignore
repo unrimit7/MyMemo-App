@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# STEP6 큰 시험 파일 (scripts/make_step6_samples.mjs로 다시 생성)
+docs/office-upgrade/samples/step6/step6_가상_큰엑셀.xlsx
