@@ -7,6 +7,7 @@ import { cleanLegacyAttachments, renderAttachmentsInHtml, invalidateAttachmentBl
 import { exportNoteToPdf, contentHasDocumentAttachments, type PdfAttachmentMode, type PdfToggleOpenState } from '../utils/exportPdf';
 import { PPTX_EDITING_ENABLED } from '../utils/featureFlags';
 import { resolveCardAction, buildImportBlock, importErrorMessage, withSavedAttachment, withRestoredOriginal, invalidateCardCaches } from '../utils/attachmentCardActions';
+import { hydratePptxInlineCards } from './pptxCardHydrator';
 import { getFolderHierarchyPath, updateTitleWithFolderPath, stripFolderPrefixFromTitle } from '../utils/folderPath';
 const PdfViewerModal = React.lazy(() => import('./PdfViewerModal').then((m) => ({ default: m.PdfViewerModal })));
 const PdfEditorModal = React.lazy(() => import('./PdfEditorModal').then((m) => ({ default: m.PdfEditorModal })));
@@ -1190,6 +1191,9 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
         });
       return att?.data;
     });
+
+    // PPT 카드: 고정 안내 그림 대신 실제 첫 슬라이드 (K8)
+    hydratePptxInlineCards(preview, (attId) => (localAttachmentsRef.current || {})[attId]?.data || note?.attachments?.[attId]?.data);
 
     // <details> 토글 목록이 펼쳐질 때 내부의 워드/한글/PDF 뷰어 자동 재렌더링
     const handleDetailsToggle = (e: Event) => {

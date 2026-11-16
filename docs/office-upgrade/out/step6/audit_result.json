@@ -142,7 +142,7 @@
     },
     "저장(다운로드) 링크": {
       "verdict": "OK",
-      "detail": "blob:http://localhost:5197/c26"
+      "detail": "blob:http://localhost:5197/2fc"
     },
     "팝아웃 카드 렌더": {
       "verdict": "OK",
@@ -196,7 +196,7 @@
     },
     "저장(다운로드) 링크": {
       "verdict": "OK",
-      "detail": "blob:http://localhost:5197/0b4"
+      "detail": "blob:http://localhost:5197/3d5"
     },
     "팝아웃 카드 렌더": {
       "verdict": "OK",
@@ -217,8 +217,8 @@
   },
   "pptx": {
     "카드 미리보기": {
-      "verdict": "WARN",
-      "detail": "실제 슬라이드가 아닌 고정 안내 그림(파일명만 표시)"
+      "verdict": "OK",
+      "detail": "첫 슬라이드 328x184, 요소 3, 글자 36, 전체 8장"
     },
     "크게 보기 열림": {
       "verdict": "OK",
@@ -246,7 +246,7 @@
     },
     "팝아웃 카드 렌더": {
       "verdict": "OK",
-      "detail": "{\"placeholder\":true}"
+      "detail": "{\"slide\":true}"
     },
     "팝아웃 크게 보기": {
       "verdict": "OK",
@@ -296,7 +296,7 @@
     },
     "저장(다운로드) 링크": {
       "verdict": "OK",
-      "detail": "blob:http://localhost:5197/df8"
+      "detail": "blob:http://localhost:5197/361"
     },
     "팝아웃 카드 렌더": {
       "verdict": "OK",

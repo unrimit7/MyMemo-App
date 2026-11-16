@@ -17,6 +17,7 @@ const DocxEditorModal = React.lazy(() => import('./DocxEditorModal').then((m) =>
 const HwpEditorModal = React.lazy(() => import('./HwpEditorModal').then((m) => ({ default: m.HwpEditorModal })));
 const PdfEditorModal = React.lazy(() => import('./PdfEditorModal').then((m) => ({ default: m.PdfEditorModal })));
 import { resolveCardAction, buildImportBlock, importErrorMessage, withSavedAttachment, withRestoredOriginal, invalidateCardCaches } from '../utils/attachmentCardActions';
+import { hydratePptxInlineCards } from './pptxCardHydrator';
 import { invalidateExcelCache, switchExcelInlineSheet, hydrateExcelInlineStyles } from '../utils/excelViewer';
 import {
   X,
@@ -311,6 +312,9 @@ export const FloatingNoteWindow: React.FC<FloatingNoteWindowProps> = ({
         });
       return att?.data;
     });
+
+    // PPT 카드: 실제 첫 슬라이드 (K8, 메인 편집기와 같은 함수)
+    hydratePptxInlineCards(preview, (attId) => atts[attId]?.data);
   };
 
   // 미리보기 화면 갱신 또는 모드 전환 시 인라인 문서 자동 렌더링

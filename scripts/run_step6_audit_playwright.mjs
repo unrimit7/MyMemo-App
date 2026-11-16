@@ -97,7 +97,7 @@ function judgeCard(kind, m) {
   if (kind === 'docx') return m.visible && m.textLen > 50 ? ['OK', `글자 ${m.textLen}, 표 ${m.tables}, 그림 ${m.imgs}`] : ['FAIL', JSON.stringify(m)];
   if (kind === 'hwp' || kind === 'hwpx') return m.visible && m.svg > 0 ? ['OK', `svg ${m.svg}, text ${m.textNodes}, ${m.page}`] : ['FAIL', JSON.stringify(m)];
   if (kind === 'pdf') return m.visible && m.darkPixels > 50 ? ['OK', `canvas ${m.cw}x${m.ch}, 글자 픽셀 ${m.darkPixels}, ${m.page}`] : ['FAIL', JSON.stringify(m)];
-  if (kind === 'pptx') return m.placeholder ? ['WARN', '실제 슬라이드가 아닌 고정 안내 그림(파일명만 표시)'] : ['OK', JSON.stringify(m)];
+  if (kind === 'pptx') return m.slide ? ['OK', `첫 슬라이드 ${m.w}x${m.h}, 요소 ${m.elements}, 글자 ${m.textLen}, 전체 ${m.count}장`] : ['FAIL', '실제 첫 슬라이드가 그려지지 않음 (안내 그림)'];
   return ['WARN', JSON.stringify(m)];
 }
 
@@ -135,7 +135,7 @@ async function auditMain(page, f) {
   for (let i = 0; i < 40; i++) {
     m = await cardMetricsById(page, f).catch(() => ({ exists: false }));
     const [v0] = judgeCard(kind, m);
-    if (v0 === 'OK' || (kind === 'pptx' && m.exists)) break;
+    if (v0 === 'OK') break;
     await page.waitForTimeout(500);
   }
   const [v, d] = judgeCard(kind, m);
@@ -220,7 +220,9 @@ async function cardMetricsById(page, f) {
       out.page = v.querySelector('[id^="pdf-page-indicator"]')?.textContent?.trim() || '';
     } else if (kind === 'pptx') {
       const c = v.querySelector('.pptx-container');
-      out.placeholder = (c?.textContent || '').includes('PRESENTATION SLIDE');
+      const sl = c?.querySelector('[data-testid="pptx-card-slide"]');
+      out.slide = !!sl;
+      if (sl) { const r = sl.parentElement.getBoundingClientRect(); out.w = Math.round(r.width); out.h = Math.round(r.height); out.elements = sl.children.length; out.textLen = (sl.innerText || '').trim().length; out.count = c.getAttribute('data-slide-count'); }
     }
     return out;
   }, { id: f.id, kind: f.kind });
@@ -251,7 +253,7 @@ async function auditPopout(page, f) {
     if (kind === 'excel') return { filled: Array.from(v.querySelectorAll('td')).filter((t) => t.textContent.trim()).length };
     if (kind === 'docx') { const x = v.querySelector('.docx-container'); return { visible: x && !x.classList.contains('hidden'), len: (x?.innerText || '').length }; }
     if (kind === 'pdf') { const x = v.querySelector('canvas'); return { visible: x && !x.classList.contains('hidden'), w: x?.width }; }
-    if (kind === 'pptx') return { placeholder: (v.textContent || '').includes('PRESENTATION SLIDE') };
+    if (kind === 'pptx') return { slide: !!v.querySelector('[data-testid="pptx-card-slide"]') };
     const x = v.querySelector('.hwp-svg-container'); return { visible: x && !x.classList.contains('hidden'), svg: x?.querySelectorAll('svg').length };
   }, { id: f.id, kind });
   rec(kind, '팝아웃 카드 렌더', JSON.stringify(m).includes('true') || (m.filled > 5) || m.svg > 0 ? 'OK' : 'FAIL', JSON.stringify(m));
