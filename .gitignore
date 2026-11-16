@@ -25,3 +25,10 @@ dist-ssr
 
 # STEP6 큰 시험 파일 (scripts/make_step6_samples.mjs로 다시 생성)
 docs/office-upgrade/samples/step6/step6_가상_큰엑셀.xlsx
+
+# STEP7 큰 시험 문서 (scripts/make_step7_samples.mjs로 다시 생성)
+docs/office-upgrade/samples/step7/*.docx
+docs/office-upgrade/samples/step7/*.pdf
+docs/office-upgrade/samples/step7/*.hwpx
+# STEP7 큰 문서 저장 결과 (용량이 커서 저장소에 넣지 않음, 점검 스크립트로 다시 생성)
+docs/office-upgrade/out/step7/step7_큰*

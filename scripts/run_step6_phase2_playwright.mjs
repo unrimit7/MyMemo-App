@@ -545,6 +545,115 @@ async function phaseOffline(page) {
   await page.context().setOffline(false);
 }
 
+// 화면이 응답하는지: 일정 시간 동안 page.evaluate 왕복 지연의 최댓값(ms)
+async function worstLag(page, ms, step = 1000) {
+  let worst = 0;
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    const t = Date.now();
+    await page.evaluate(() => 1).catch(() => {});
+    worst = Math.max(worst, Date.now() - t);
+    await page.waitForTimeout(step);
+  }
+  return worst;
+}
+
+async function phaseBigDoc(page) {
+  const S7 = (n) => path.join(root, 'docs', 'office-upgrade', 'samples', 'step7', n);
+  const items = [
+    ['docx', 'att-bd', S7('step7_가상_큰워드_60쪽_그림30.docx'), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx-inline-viewer', '.docx-btn-fullscreen', '.docx-btn-edit'],
+    ['pdf', 'att-bp', S7('step7_가상_큰PDF_60쪽_그림30.pdf'), 'application/pdf', '.pdf-inline-viewer', '.pdf-btn-fullscreen', '.pdf-btn-edit'],
+    ['hwpx', 'att-bh', S7('step7_가상_큰한글_본문50회반복_그림30.hwpx'), 'application/haansofthwpx', '.hwp-inline-viewer', '.hwp-btn-fullscreen', '.hwp-btn-edit'],
+  ];
+  // BIGDOC=docx,pdf,hwpx 로 일부만 (5분 제한 안에 끝나도록 형식별로 나눠 실행)
+  const only = process.env.BIGDOC ? process.env.BIGDOC.split(',') : null;
+  for (const [kind, id, file, mime, viewer, fullSel, editSel] of items.filter((x) => !only || only.includes(x[0]))) {
+    if (!fs.existsSync(file)) { rec(kind, '큰 문서', 'WARN', '시험 파일 없음: node scripts/make_step7_samples.mjs'); continue; }
+    log(`\n[${kind}] 큰 문서 ${path.basename(file)} (${(fs.statSync(file).size / 1e6).toFixed(1)}MB)`);
+    const orig = dataUrl(file, mime);
+    const t0 = Date.now();
+    await seed(page, { [id]: { id, name: path.basename(file), type: mime, data: orig } });
+    const shown = await waitFor(() => page.evaluate(({ viewer, id }) => {
+      const v = document.querySelector(`.markdown-preview ${viewer}[data-att-id="${id}"]`);
+      if (!v) return false;
+      const c = v.querySelector('.docx-container, .hwp-svg-container, canvas.pdf-canvas');
+      return !!c && !c.classList.contains('hidden');
+    }, { viewer, id }), 90000, 500);
+    const pageInfo = await page.evaluate(({ viewer, id }) => document.querySelector(`.markdown-preview ${viewer}[data-att-id="${id}"] [id*=page-indicator]`)?.textContent?.trim() || '', { viewer, id });
+    rec(kind, '큰 문서 카드 표시', shown ? 'OK' : 'FAIL', `${((Date.now() - t0) / 1000).toFixed(1)}초 ${pageInfo ? '(쪽 ' + pageInfo + ')' : ''}`);
+    const lag1 = await worstLag(page, 10000);
+    rec(kind, '카드 표시 후 10초 최대 응답 지연', lag1 < 3000 ? 'OK' : 'FAIL', `${lag1}ms`);
+
+    // 크게 보기
+    let before = (await closeButtons(page)).length;
+    const t1 = Date.now();
+    await page.locator(`.markdown-preview ${viewer}[data-att-id="${id}"] ${fullSel}`).first().click();
+    const opened = await waitFor(async () => (await closeButtons(page)).length > before, 60000, 500);
+    const lag2 = await worstLag(page, 8000);
+    rec(kind, '큰 화면 열기', opened && lag2 < 3000 ? 'OK' : 'FAIL', `열림 ${((Date.now() - t1) / 1000 - 8).toFixed(1)}초 전후, 이후 8초 최대 지연 ${lag2}ms`);
+    await page.screenshot({ path: path.join(outDir, `big_${kind}_viewer.png`) }).catch(() => {});
+    { const b = (await closeButtons(page)).pop(); if (b) await page.mouse.click(b.x, b.y); }
+    await waitFor(async () => (await closeButtons(page)).length <= before, 15000);
+    await page.waitForTimeout(800);
+
+    // 편집 → 저장
+    before = (await closeButtons(page)).length;
+    const t2 = Date.now();
+    await page.locator(`.markdown-preview ${viewer}[data-att-id="${id}"] ${editSel}`).first().click();
+    const eo = await waitFor(async () => (await closeButtons(page)).length > before, 60000, 500);
+    await page.waitForTimeout(kind === 'docx' ? 14000 : 9000);
+    const lag3 = await worstLag(page, 6000);
+    rec(kind, '편집기 열기', eo && lag3 < 3000 ? 'OK' : 'FAIL', `열림=${eo}, 기다린 뒤 6초 최대 지연 ${lag3}ms (시작부터 ${((Date.now() - t2) / 1000).toFixed(0)}초)`);
+    await page.screenshot({ path: path.join(outDir, `big_${kind}_editor.png`) }).catch(() => {});
+    if (kind === 'pdf') {
+      const cv = await page.evaluate(() => {
+        const cs = Array.from(document.querySelectorAll('canvas')).filter((c) => !c.closest('.markdown-preview')).map((c) => { const r = c.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width }; }).filter((r) => r.w > 200);
+        return cs[cs.length - 1];
+      });
+      if (cv) { const y0 = Math.min(cv.y + 150, 600); await page.mouse.move(cv.x + 100, y0); await page.mouse.down(); for (let i = 1; i <= 10; i++) await page.mouse.move(cv.x + 100 + i * 15, y0 + (i % 2) * 15, { steps: 2 }); await page.mouse.up(); }
+    } else {
+      if (kind === 'docx') {
+        const box = await page.evaluate(() => {
+          const rs = Array.from(document.querySelectorAll('span, p, div')).filter((e) => !e.closest('.markdown-preview') && e.children.length === 0 && (e.textContent || '').includes('문단 1-1'))
+            .map((e) => e.getBoundingClientRect()).filter((q) => q.width > 50 && q.height > 5 && q.y > 0 && q.y < innerHeight).sort((a, b) => a.x - b.x);
+          const r = rs[0]; return r ? { x: r.x + 40, y: r.y + r.height / 2 } : null;
+        });
+        // 글자가 여러 조각으로 나뉘어 찾지 못하면, 첫 문단이 있는 자리(화면 기준)를 누른다
+        const at = box || { x: 600, y: 205 };
+        log('  큰 워드 클릭 위치:', JSON.stringify(at));
+        await page.mouse.click(at.x, at.y);
+      } else {
+        const fr = page.locator('iframe').last(); const bb = await fr.boundingBox();
+        if (bb) await page.mouse.click(bb.x + bb.width / 2, bb.y + 200);
+      }
+      await page.waitForTimeout(500);
+      await page.keyboard.press('End');
+      await page.keyboard.type('STEP7', { delay: 50 });
+    }
+    await page.waitForTimeout(1000);
+    const t3 = Date.now();
+    await clickText(page, '저장 및 반영');
+    await page.waitForTimeout(1500);
+    // 한글: 변경 추적 문서 저장 확인 창
+    await clickText(page, '그래도 저장');
+    const saved = await waitFor(async () => { const a = await readAtt(page, id); return a && a.data !== orig; }, 60000, 1000);
+    const saveSec = ((Date.now() - t3) / 1000).toFixed(1);
+    const lag4 = await worstLag(page, 5000);
+    rec(kind, '편집 후 저장', saved && lag4 < 3000 ? 'OK' : 'FAIL', `저장 ${saveSec}초, 이후 5초 최대 지연 ${lag4}ms`);
+    if (saved) {
+      const a = await readAtt(page, id);
+      const out = b64(a.data);
+      const ext = kind === 'hwpx' ? 'hwpx' : kind;
+      fs.writeFileSync(path.join(root, 'docs', 'office-upgrade', 'out', 'step7', `step7_큰${kind === 'docx' ? '워드' : kind === 'pdf' ? 'PDF' : '한글'}_수정저장결과.${ext}`), out);
+      rec(kind, '저장본 크기', 'OK', `원본 ${(b64(orig).length / 1e6).toFixed(1)}MB → 저장 ${(out.length / 1e6).toFixed(1)}MB`);
+    }
+    { const b = (await closeButtons(page)).pop(); if (b) await page.mouse.click(b.x, b.y); await page.waitForTimeout(800); if (await hasText(page, '저장하지 않고 닫')) await discardAndClose(page); }
+    await page.waitForTimeout(3000);
+    const lag5 = await worstLag(page, 6000);
+    rec(kind, '저장 후 카드 다시 그리기 중 최대 지연', lag5 < 3000 ? 'OK' : 'FAIL', `${lag5}ms`);
+  }
+}
+
 async function phaseBig(page) {
   log('\n[엑셀] 큰 파일 (약 10MB, 14시트 × 15,000행)');
   const file = S('step6', 'step6_가상_큰엑셀.xlsx');
@@ -595,6 +704,7 @@ async function run() {
         if (ph === 'k2') await phaseK2(page);
         if (ph === 'export') await phaseExport(page);
         if (ph === 'big') await phaseBig(page);
+        if (ph === 'bigdoc') await phaseBigDoc(page);
         if (ph === 'doc') await phaseDoc(page);
         if (ph === 'offline') await phaseOffline(page);
       } catch (e) { rec(ph, '예외', 'FAIL', String(e).slice(0, 200)); await page.screenshot({ path: path.join(outDir, 'dbg_exception_' + ph + '.png') }).catch(() => {}); }
