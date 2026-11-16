@@ -1672,6 +1672,36 @@ export async function validateExcelIntegrity(
  * in-place로 패치하므로 ExcelJS가 지원하는 조건부 서식, 데이터 유효성 검사, 셀 메모, 인쇄 설정, 틀 고정이 100% 보존됩니다.
  * structuralOperations: 행/열 삽입·삭제 명령 목록.
  */
+/**
+ * 셀 안에서 글자 일부를 고치면 Univer는 값(v) 없이 서식 있는 글(p.body.dataStream)만 남길 때가 있다.
+ * 저장할 때 v만 보면 그 칸을 빈칸으로 보고 지워 버리므로(입력한 글과 원래 값이 모두 사라짐),
+ * v가 비어 있고 p에 글이 있으면 그 글을 v로 채운다. (서식 일부는 단순 글자로 저장될 수 있음)
+ */
+export function withPlainTextFromRichCells(
+  cellData: Record<number, Record<number, ICellData>>,
+): Record<number, Record<number, ICellData>> {
+  const out: Record<number, Record<number, ICellData>> = {};
+  for (const rKey of Object.keys(cellData)) {
+    const r = Number(rKey);
+    const row = cellData[r];
+    if (!row) continue;
+    const newRow: Record<number, ICellData> = {};
+    for (const cKey of Object.keys(row)) {
+      const c = Number(cKey);
+      const cell = row[c];
+      const stream = (cell as any)?.p?.body?.dataStream;
+      if (cell && (cell.v === undefined || cell.v === null || cell.v === '') && !cell.f && typeof stream === 'string') {
+        const text = stream.replace(/\r\n$/, '').replace(/\r/g, '\n');
+        newRow[c] = text ? { ...cell, v: text } : cell;
+      } else {
+        newRow[c] = cell;
+      }
+    }
+    out[r] = newRow;
+  }
+  return out;
+}
+
 export async function univerSnapshotToDataUrl(
   snapshot: IWorkbookData,
   format: 'xlsx' | 'csv' = 'xlsx',
@@ -1823,7 +1853,7 @@ export async function univerSnapshotToDataUrl(
         });
       }
 
-      const cellData = uSheet.cellData || {};
+      const cellData = withPlainTextFromRichCells(uSheet.cellData || {});
 
       // 0-2. 원본 셀 값 비우기: 원본 워크시트 셀 중 Univer 스냅샷에 없거나 비어있는 셀의 값을 null로 초기화
       ws.eachRow({ includeEmpty: false }, (row: any, rowNumber: number) => {
@@ -2146,7 +2176,7 @@ function univerSnapshotToDataUrlWithSheetJS(
       let maxC = 0;
       let hasData = false;
 
-      const cellData = sheet.cellData || {};
+      const cellData = withPlainTextFromRichCells(sheet.cellData || {});
       const rowKeys = Object.keys(cellData);
 
       for (let i = 0; i < rowKeys.length; i++) {
