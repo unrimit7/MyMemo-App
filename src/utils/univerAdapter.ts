@@ -433,8 +433,8 @@ export async function dataUrlToUniverWorkbook(
       const sheetName = worksheet.name || `Sheet${sheetIndex}`;
 
       const cellData: Record<number, Record<number, ICellData>> = {};
-      const rowData: Record<number, { h?: number }> = {};
-      const columnData: Record<number, { w?: number }> = {};
+      const rowData: Record<number, { h?: number; hd?: number }> = {};
+      const columnData: Record<number, { w?: number; hd?: number }> = {};
       const mergeData: IRange[] = [];
 
       let maxRow = Math.max(30, worksheet.rowCount);
@@ -447,6 +447,10 @@ export async function dataUrlToUniverWorkbook(
           const pxWidth = Math.round(col.width * 8 + 5);
           columnData[cIdx] = { w: Math.max(10, pxWidth) };
         }
+        // 숨긴 열은 편집기에서도 숨긴다 (K2)
+        if (col && col.hidden) {
+          columnData[cIdx] = { ...(columnData[cIdx] || {}), hd: 1 };
+        }
       });
 
       // 2. 행 및 셀 데이터, 스타일 복원
@@ -455,6 +459,10 @@ export async function dataUrlToUniverWorkbook(
         if (row.height) {
           // 엑셀 pt 단위를 픽셀로 변환 (pt * 1.33)
           rowData[rIdx] = { h: Math.round(row.height * 1.33) };
+        }
+        // 숨긴 행은 편집기에서도 숨긴다 (K2)
+        if (row.hidden) {
+          rowData[rIdx] = { ...(rowData[rIdx] || {}), hd: 1 };
         }
 
         row.eachCell({ includeEmpty: true }, (cell, colNumber) => {

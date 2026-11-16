@@ -60,6 +60,9 @@ export interface ParsedWorkbook {
   colWidths?: Record<string, (number | undefined)[]>;
   /** 행 높이(px, 원본에 지정된 행만) */
   rowHeights?: Record<string, (number | undefined)[]>;
+  /** 숨긴 행·열 (0부터 시작하는 표 위치). 미리보기에서 엑셀처럼 보이지 않게 한다 */
+  hiddenRows?: Record<string, number[]>;
+  hiddenCols?: Record<string, number[]>;
 }
 
 /** 엑셀 테두리 종류 → 미리보기 CSS (격자선 1px보다 굵게 해 겹치는 선에서 항상 보이게) */
@@ -922,17 +925,26 @@ export function parseExcelWorkbook(dataOrUrl: string, cacheKey?: string): Parsed
 
   try {
     const bytes = dataUrlToUint8Array(dataOrUrl);
-    const workbook = XLSX.read(bytes, { type: 'array', cellDates: true });
+    // cellStyles: 숨긴 행·열(!rows/!cols hidden)을 읽기 위해 필요
+    const workbook = XLSX.read(bytes, { type: 'array', cellDates: true, cellStyles: true });
 
     const sheets: Record<string, (string | number)[][]> = {};
     const cellStyles: Record<string, CellVisualInfo[][]> = {};
     const merges: Record<string, CellMergeRange[]> = {};
+    const hiddenRows: Record<string, number[]> = {};
+    const hiddenCols: Record<string, number[]> = {};
     const sheetNames = workbook.SheetNames || [];
 
     sheetNames.forEach((name) => {
       const sheet = workbook.Sheets[name];
       if (sheet && sheet['!ref']) {
         const range = XLSX.utils.decode_range(sheet['!ref']);
+        hiddenRows[name] = (sheet['!rows'] || [])
+          .map((ri: any, R: number) => (ri && ri.hidden && R >= range.s.r ? R - range.s.r : -1))
+          .filter((i: number) => i >= 0);
+        hiddenCols[name] = (sheet['!cols'] || [])
+          .map((ci: any, C: number) => (ci && ci.hidden && C >= range.s.c ? C - range.s.c : -1))
+          .filter((i: number) => i >= 0);
         const rows: (string | number)[][] = [];
         const sheetStylesList: CellVisualInfo[][] = [];
 
@@ -1003,6 +1015,8 @@ export function parseExcelWorkbook(dataOrUrl: string, cacheKey?: string): Parsed
       cellStyles,
       merges,
       hasDetailedStyles: false,
+      hiddenRows,
+      hiddenCols,
     };
 
     if (dataSignature) {
@@ -1141,6 +1155,8 @@ export async function parseExcelWorkbookWithStyles(dataOrUrl: string, cacheKey?:
     const cellStyles: Record<string, CellVisualInfo[][]> = {};
     const colWidths: Record<string, (number | undefined)[]> = {};
     const rowHeights: Record<string, (number | undefined)[]> = {};
+    const hiddenRows: Record<string, number[]> = {};
+    const hiddenCols: Record<string, number[]> = {};
 
     wb.worksheets.forEach((ws: any) => {
       const sName = ws.name || 'Sheet1';
@@ -1164,6 +1180,12 @@ export async function parseExcelWorkbookWithStyles(dataOrUrl: string, cacheKey?:
         rh.push(typeof h === 'number' && h > 0 ? Math.round(h * 1.33) : undefined);
       }
       rowHeights[sName] = rh;
+      const hc: number[] = [];
+      for (let c = 1; c <= colCount; c++) if (ws.getColumn(c)?.hidden) hc.push(c - 1);
+      hiddenCols[sName] = hc;
+      const hr: number[] = [];
+      for (let r = 1; r <= rowCount; r++) if (ws.getRow(r)?.hidden) hr.push(r - 1);
+      hiddenRows[sName] = hr;
 
       // 셀 참조 맵 (수식 평가용)
       const cellValMap = new Map<string, any>();
@@ -1352,6 +1374,8 @@ export async function parseExcelWorkbookWithStyles(dataOrUrl: string, cacheKey?:
       hasDetailedStyles: true,
       colWidths,
       rowHeights,
+      hiddenRows,
+      hiddenCols,
     };
 
     if (dataSignature) {
@@ -1383,6 +1407,14 @@ export function renderExcelTableHtml(
   const sheetMerges = parsed.merges?.[sheetName] || [];
   const sheetColWidths = parsed.colWidths?.[sheetName] || [];
   const sheetRowHeights = parsed.rowHeights?.[sheetName] || [];
+  const hiddenRowSet = new Set(parsed.hiddenRows?.[sheetName] || []);
+  const hiddenColSet = new Set(parsed.hiddenCols?.[sheetName] || []);
+  // 병합이 숨긴 행·열을 걸치면 보이는 칸 수만큼만 합친다
+  const visibleSpan = (start: number, span: number, hidden: Set<number>) => {
+    let n = 0;
+    for (let i = start; i < start + span; i++) if (!hidden.has(i)) n++;
+    return n;
+  };
 
   // 보이는 내용(값·테두리·배경색)이 있는 범위까지만 표시 (서식만 있는 빈 칸은 제외)
   let lastRow = -1;
@@ -1409,6 +1441,7 @@ export function renderExcelTableHtml(
 
   const colHeaders = Array.from({ length: colCount })
     .map((_, cIdx) => {
+      if (hiddenColSet.has(cIdx)) return '';
       const w = sheetColWidths[cIdx];
       const widthCss = w ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px;` : 'min-width: 85px;';
       return `<th class="excel-th" style="padding: 6px 12px; font-family: monospace; font-size: 11px; font-weight: 600; color: #334155 !important; background-color: #f1f5f9 !important; border-right: 1px solid #cbd5e1 !important; border-bottom: 1px solid #cbd5e1 !important; ${widthCss} text-align: center !important; user-select: none;">${getColumnLabel(cIdx)}</th>`;
@@ -1426,17 +1459,20 @@ export function renderExcelTableHtml(
 
   const tableBodyHtml = previewRows
     .map((row, rIdx) => {
+      if (hiddenRowSet.has(rIdx)) return '';
       const cellsHtml: string[] = [];
       const rowStyle = sheetStyles ? sheetStyles[rIdx] : undefined;
 
       for (let cIdx = 0; cIdx < colCount; cIdx++) {
         const mergeInfo = mergeMap.get(`${rIdx},${cIdx}`);
-        if (mergeInfo?.isCovered) {
+        if (mergeInfo?.isCovered || hiddenColSet.has(cIdx)) {
           continue;
         }
 
-        const colSpanAttr = mergeInfo && mergeInfo.colSpan > 1 ? ` colspan="${mergeInfo.colSpan}"` : '';
-        const rowSpanAttr = mergeInfo && mergeInfo.rowSpan > 1 ? ` rowspan="${mergeInfo.rowSpan}"` : '';
+        const colSpan = mergeInfo ? visibleSpan(cIdx, mergeInfo.colSpan, hiddenColSet) : 1;
+        const rowSpan = mergeInfo ? visibleSpan(rIdx, Math.min(mergeInfo.rowSpan, previewRows.length - rIdx), hiddenRowSet) : 1;
+        const colSpanAttr = colSpan > 1 ? ` colspan="${colSpan}"` : '';
+        const rowSpanAttr = rowSpan > 1 ? ` rowspan="${rowSpan}"` : '';
         const isMerged = mergeInfo && (mergeInfo.colSpan > 1 || mergeInfo.rowSpan > 1);
 
         const cellVisual = rowStyle ? rowStyle[cIdx] : undefined;
