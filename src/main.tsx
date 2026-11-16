@@ -124,13 +124,10 @@ import App from './App.tsx';
 const updateSW = registerSW({
   immediate: true,
   onNeedRefresh() {
-    window.dispatchEvent(
-      new CustomEvent('mymemo_pwa_update_available', {
-        detail: {
-          update: () => updateSW(true),
-        },
-      })
-    );
+    const detail = { update: () => updateSW(true) };
+    // App이 아직 이벤트를 듣기 전이면 알림이 사라지므로 window에도 남겨 둔다 (K9)
+    (window as any).__mymemoPendingPwaUpdate = detail;
+    window.dispatchEvent(new CustomEvent('mymemo_pwa_update_available', { detail }));
   },
   onOfflineReady() {
     console.log('[PWA] 오프라인 캐시가 준비되었습니다.');

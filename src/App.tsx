@@ -126,6 +126,9 @@ export function App() {
       }
     };
     window.addEventListener('mymemo_pwa_update_available', handlePwaUpdate);
+    // 화면이 뜨기 전에 새 버전 알림이 먼저 와서 놓친 경우 (K9): main.tsx가 남겨 둔 알림을 이어 받는다
+    const pending = (window as any).__mymemoPendingPwaUpdate;
+    if (pending?.update) setPwaUpdateAvailable(() => pending.update);
     return () => window.removeEventListener('mymemo_pwa_update_available', handlePwaUpdate);
   }, []);
 
