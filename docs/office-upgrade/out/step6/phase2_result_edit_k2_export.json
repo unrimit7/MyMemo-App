@@ -1,0 +1,112 @@
+{
+  "excel": {
+    "편집기 준비": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "저장 전 고급 요소 경고 내용": {
+      "verdict": "OK",
+      "detail": "[\"차트 (그래프)\"]"
+    },
+    "Ctrl+S 저장": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "처음 저장 시 원본 보관": {
+      "verdict": "OK",
+      "detail": "originalData=있음"
+    },
+    "저장본 요소 비교 (값·수식·표시형식·테두리·병합)": {
+      "verdict": "OK",
+      "detail": "보이는 칸 차이 1개(견적서!A1), 병합 범위 내부(보이지 않는) 칸 서식 차이 11개"
+    },
+    "저장본 차트 보존": {
+      "verdict": "WARN",
+      "detail": "차트 파일 없음"
+    },
+    "저장 후 닫기 → 확인 창 없음": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "카드 미리보기에 즉시 반영": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "고치고 닫기 → 확인 창": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "원본으로 되돌리기": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "K2 카드: 숨긴 열/행 표시 안 함": {
+      "verdict": "OK",
+      "detail": "{\"hiddenColShown\":false,\"hiddenRowShown\":false}"
+    },
+    "K2 편집기: 숨긴 행·열 유지": {
+      "verdict": "OK",
+      "detail": "{\"row3\":1,\"row4\":1,\"col2\":1}"
+    },
+    "K2 저장 후에도 숨김 유지": {
+      "verdict": "OK",
+      "detail": "{\"row4\":true,\"row5\":true,\"colC\":true}"
+    },
+    "K2 저장 후 카드: 숨긴 내용 안 보임 + 수정 반영": {
+      "verdict": "OK",
+      "detail": "숨김값 보임=false, 수정 반영=true"
+    }
+  },
+  "pdf": {
+    "주석 저장": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "처음 저장 시 원본 보관": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "편집기에 원본으로 되돌리기 버튼": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "저장 후 닫기 → 확인 창 없음": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "카드 미리보기에 즉시 반영": {
+      "verdict": "OK",
+      "detail": "어두운 픽셀 495→655"
+    },
+    "원본으로 되돌리기": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "되돌린 뒤 카드 반영": {
+      "verdict": "OK",
+      "detail": "어두운 픽셀 495 (원본 495)"
+    },
+    "고치고 닫기 → 확인 창": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "저장하지 않고 닫은 뒤 첨부 그대로": {
+      "verdict": "OK",
+      "detail": ""
+    }
+  },
+  "export": {
+    "PDF 내보내기: 화면에서 펼친 것만": {
+      "verdict": "OK",
+      "detail": "{\"len\":4425,\"excelTable\":4,\"imgs\":4,\"svg\":3,\"canvases\":0,\"hasPpt\":true}"
+    },
+    "PDF 내보내기: 모두 펼쳐서 포함": {
+      "verdict": "OK",
+      "detail": "{\"len\":4425,\"excelTable\":4,\"imgs\":4,\"svg\":3,\"canvases\":0,\"hasPpt\":true}"
+    },
+    "PDF 내보내기: 첨부 내용 빼기": {
+      "verdict": "OK",
+      "detail": "{\"len\":228,\"excelTable\":0,\"imgs\":0,\"svg\":0,\"canvases\":0,\"hasPpt\":true}"
+    }
+  }
+}

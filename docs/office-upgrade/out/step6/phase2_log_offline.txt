@@ -1,0 +1,17 @@
+(node:26116) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[05:17:40] 
+[오프라인] 빌드본 + 서비스 워커, 네트워크 끊고 열기·편집기 열기
+[05:18:50]   ✅ [offline] 서비스 워커 활성: 
+[05:18:51]   ✅ [offline] 오프라인 새로고침 후 앱 열림: 
+[05:18:55]   ✅ [offline] x 카드 표시: 
+[05:19:01]   ✅ [offline] x 편집기(PPT는 큰 화면) 열기: 열림=true, 오류문구=false
+[05:19:03]   ✅ [offline] d 카드 표시: 
+[05:19:09]   ✅ [offline] d 편집기(PPT는 큰 화면) 열기: 열림=true, 오류문구=false
+[05:19:11]   ✅ [offline] hx 카드 표시: 
+[05:19:11]   [pageerror] TypeError: Failed to register a ServiceWorker for scope ('http://localhost:5198/rhwp/') with script ('http://localhost:5198/rhwp/sw.js'): An unknown e
+[05:19:17]   ✅ [offline] hx 편집기(PPT는 큰 화면) 열기: 열림=true, 오류문구=false
+[05:19:19]   ✅ [offline] p 카드 표시: 
+[05:19:25]   ✅ [offline] p 편집기(PPT는 큰 화면) 열기: 열림=true, 오류문구=false
+[05:19:26]   ✅ [offline] pdf 카드 표시: 
+[05:19:33]   ✅ [offline] pdf 편집기(PPT는 큰 화면) 열기: 열림=true, 오류문구=false

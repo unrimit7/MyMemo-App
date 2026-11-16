@@ -1,0 +1,92 @@
+{
+  "docx": {
+    "편집 후 저장": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "처음 저장 시 원본 보관": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "저장 후 닫기 → 확인 창 없음": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "카드 미리보기에 즉시 반영": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "원본으로 되돌리기": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "고치고 닫기 → 확인 창": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "저장하지 않고 닫은 뒤 첨부 그대로": {
+      "verdict": "OK",
+      "detail": ""
+    }
+  },
+  "hwpx": {
+    "편집 후 저장": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "처음 저장 시 원본 보관": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "저장 후 닫기 → 확인 창 없음": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "카드 미리보기에 즉시 반영": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "원본으로 되돌리기": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "고치고 닫기 → 확인 창": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "저장하지 않고 닫은 뒤 첨부 그대로": {
+      "verdict": "OK",
+      "detail": ""
+    }
+  },
+  "hwp": {
+    "편집 후 저장": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "처음 저장 시 원본 보관": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "저장 후 닫기 → 확인 창 없음": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "카드 미리보기에 즉시 반영": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "원본으로 되돌리기": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "고치고 닫기 → 확인 창": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "저장하지 않고 닫은 뒤 첨부 그대로": {
+      "verdict": "OK",
+      "detail": ""
+    }
+  }
+}

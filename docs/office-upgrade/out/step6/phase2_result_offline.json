@@ -1,0 +1,52 @@
+{
+  "offline": {
+    "서비스 워커 활성": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "오프라인 새로고침 후 앱 열림": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "x 카드 표시": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "x 편집기(PPT는 큰 화면) 열기": {
+      "verdict": "OK",
+      "detail": "열림=true, 오류문구=false"
+    },
+    "d 카드 표시": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "d 편집기(PPT는 큰 화면) 열기": {
+      "verdict": "OK",
+      "detail": "열림=true, 오류문구=false"
+    },
+    "hx 카드 표시": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "hx 편집기(PPT는 큰 화면) 열기": {
+      "verdict": "OK",
+      "detail": "열림=true, 오류문구=false"
+    },
+    "p 카드 표시": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "p 편집기(PPT는 큰 화면) 열기": {
+      "verdict": "OK",
+      "detail": "열림=true, 오류문구=false"
+    },
+    "pdf 카드 표시": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "pdf 편집기(PPT는 큰 화면) 열기": {
+      "verdict": "OK",
+      "detail": "열림=true, 오류문구=false"
+    }
+  }
+}
