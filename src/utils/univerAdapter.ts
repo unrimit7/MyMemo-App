@@ -29,6 +29,50 @@ function argbToHex(argb?: string): string | undefined {
   return undefined;
 }
 
+// 테두리 종류: Univer BorderStyleTypes(숫자) ↔ ExcelJS/OOXML 이름 (순서가 같다)
+const BORDER_STYLE_NAMES = [
+  '', 'thin', 'hair', 'dotted', 'dashed', 'dashDot', 'dashDotDot', 'double',
+  'medium', 'mediumDashed', 'mediumDashDot', 'mediumDashDotDot', 'slantDashDot', 'thick',
+] as const;
+const BORDER_SIDES: Array<['t' | 'b' | 'l' | 'r', 'top' | 'bottom' | 'left' | 'right']> = [
+  ['t', 'top'], ['b', 'bottom'], ['l', 'left'], ['r', 'right'],
+];
+
+/** ExcelJS cell.border → Univer bd (없으면 undefined) */
+function excelBorderToUniver(border: any): any | undefined {
+  if (!border) return undefined;
+  const bd: any = {};
+  for (const [u, e] of BORDER_SIDES) {
+    const side = border[e];
+    if (!side || !side.style) continue;
+    const s = BORDER_STYLE_NAMES.indexOf(side.style);
+    if (s <= 0) continue;
+    bd[u] = { s, cl: { rgb: argbToHex(side.color?.argb) || '#000000' } };
+  }
+  return Object.keys(bd).length > 0 ? bd : undefined;
+}
+
+/** Univer bd → ExcelJS border 비교용 정규화 문자열 (변경 여부 판단) */
+function borderSignature(bd: any): string {
+  if (!bd) return '';
+  return BORDER_SIDES.map(([u]) => {
+    const v = bd[u];
+    if (!v || !v.s) return '-';
+    return `${v.s}:${(v.cl?.rgb || '#000000').toUpperCase()}`;
+  }).join('|');
+}
+
+/** Univer bd → ExcelJS border 객체 */
+function univerBorderToExcel(bd: any): any {
+  const out: any = {};
+  for (const [u, e] of BORDER_SIDES) {
+    const v = bd?.[u];
+    if (!v || !v.s || !BORDER_STYLE_NAMES[v.s]) continue;
+    out[e] = { style: BORDER_STYLE_NAMES[v.s], color: { argb: hexToArgb(v.cl?.rgb) || 'FF000000' } };
+  }
+  return out;
+}
+
 // CSS Hex(#RRGGBB) 문자열을 ExcelJS용 ARGB(FFRRGGBB)로 변환
 function hexToArgb(hex?: string): string | undefined {
   if (!hex || typeof hex !== 'string') return undefined;
@@ -47,6 +91,100 @@ function hexToArgb(hex?: string): string | undefined {
  * ExcelJS가 오류 없이 파싱할 수 있도록 x:, ep: 접두어 제거, mc:AlternateContent Fallback 추출,
  * ref 단일 셀 범위(F4:F4 -> F4), boolean 태그(<b val="1"/> -> <b/>)를 표준 OpenXML 형식으로 변환합니다.
  */
+/**
+ * 마지막 데이터 행 뒤에 셀 없이 속성만 있는 <row .../> 가 대량(1,000개 이상)으로 붙어 있으면 제거한다.
+ * 모두 숨김 행이었고 1행~마지막 데이터 행이 빠짐없이 기록돼 있으면 sheetFormatPr zeroHeight="1"로 바꿔
+ * '나머지 행 숨김' 모양을 유지한다(행 하나당 기록 대신 시트 기본값 하나). 대상이 아니면 원문 그대로 반환.
+ * 예: 한셀에서 5행 이하를 숨기면 1,048,572개의 <row hidden="1"/>가 기록돼(49MB XML) 편집기가 멈춘다.
+ */
+export function compactTrailingEmptyRows(xml: string, minRows = 1000): string {
+  const sheetDataEnd = xml.lastIndexOf('</sheetData>');
+  if (sheetDataEnd < 0) return xml;
+  const lastRowClose = xml.lastIndexOf('</row>', sheetDataEnd);
+  const sheetDataStart = xml.indexOf('<sheetData');
+  if (sheetDataStart < 0) return xml;
+  const tailStart = lastRowClose >= 0 ? lastRowClose + '</row>'.length : xml.indexOf('>', sheetDataStart) + 1;
+  const tail = xml.slice(tailStart, sheetDataEnd);
+  if (tail.length < minRows * 10) return xml;
+
+  let count = 0;
+  let hidden = 0;
+  const rowRe = /<row\b[^>]*\/>/g;
+  let m: RegExpExecArray | null;
+  while ((m = rowRe.exec(tail)) !== null) {
+    count++;
+    if (/\shidden="(?:1|true)"/.test(m[0])) hidden++;
+  }
+  if (count < minRows) return xml;
+  // 꼬리가 빈 행(self-closing row)과 공백만으로 돼 있어야 한다
+  if (tail.replace(rowRe, '').trim() !== '') return xml;
+
+  const head = xml.slice(0, tailStart);
+  let result = head + xml.slice(sheetDataEnd);
+
+  if (hidden === count) {
+    // 데이터 영역의 행(1..마지막)이 모두 명시돼 있을 때만 zeroHeight 사용 (빠진 행이 같이 숨겨지지 않도록)
+    const rowNums: number[] = [];
+    const rnRe = /<row\b[^>]*\sr="(\d+)"/g;
+    const dataPart = head.slice(sheetDataStart);
+    while ((m = rnRe.exec(dataPart)) !== null) rowNums.push(parseInt(m[1], 10));
+    const contiguous = rowNums.length > 0 && rowNums.every((n, i) => n === i + 1);
+    if (contiguous) {
+      if (/<sheetFormatPr\b/.test(result)) {
+        result = result.replace(/<sheetFormatPr\b([^>]*?)(\/?)>/, (_s, attrs: string, slash: string) => {
+          const cleaned = attrs.replace(/\szeroHeight="[^"]*"/, '');
+          return `<sheetFormatPr${cleaned} zeroHeight="1"${slash}>`;
+        });
+      } else {
+        // sheetFormatPr은 sheetViews 뒤, cols/sheetData 앞에 위치해야 한다
+        const anchor = result.search(/<cols\b|<sheetData\b/);
+        if (anchor > 0) {
+          result = result.slice(0, anchor) + '<sheetFormatPr defaultRowHeight="15" zeroHeight="1"/>' + result.slice(anchor);
+        }
+      }
+    }
+  }
+  return result;
+}
+
+/** 저장 후 ExcelJS가 버리는 sheetFormatPr zeroHeight(나머지 행 숨김)를 원본 기준으로 되살린다. */
+async function restoreZeroHeight(savedBytes: Uint8Array, origBytes: Uint8Array): Promise<Uint8Array> {
+  try {
+    const orig = await JSZip.loadAsync(origBytes);
+    const targets: string[] = [];
+    for (const name of Object.keys(orig.files)) {
+      if (!/^xl\/worksheets\/sheet\d+\.xml$/.test(name)) continue;
+      const x = await orig.file(name)!.async('string');
+      if (/<sheetFormatPr\b[^>]*\szeroHeight="(?:1|true)"/.test(x)) targets.push(name);
+    }
+    if (targets.length === 0) return savedBytes;
+    const saved = await JSZip.loadAsync(savedBytes);
+    let changed = false;
+    for (const name of targets) {
+      const f = saved.file(name);
+      if (!f) continue;
+      let x = await f.async('string');
+      if (/zeroHeight="1"/.test(x)) continue;
+      // 저장본에서도 1행~마지막 행이 모두 기록돼 있을 때만 (빈 행이 숨겨지는 것 방지)
+      const nums = [...x.matchAll(/<row\b[^>]*\sr="(\d+)"/g)].map((mm) => parseInt(mm[1], 10));
+      if (!(nums.length > 0 && nums.every((n, i) => n === i + 1))) continue;
+      if (/<sheetFormatPr\b/.test(x)) {
+        x = x.replace(/<sheetFormatPr\b([^>]*?)(\/?)>/, (_s, attrs: string, slash: string) => `<sheetFormatPr${attrs} zeroHeight="1"${slash}>`);
+      } else {
+        const anchor = x.search(/<cols\b|<sheetData\b/);
+        if (anchor < 0) continue;
+        x = x.slice(0, anchor) + '<sheetFormatPr defaultRowHeight="15" zeroHeight="1"/>' + x.slice(anchor);
+      }
+      saved.file(name, x);
+      changed = true;
+    }
+    return changed ? await saved.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }) : savedBytes;
+  } catch (e) {
+    console.warn('zeroHeight 복원 실패 (무시 가능):', e);
+    return savedBytes;
+  }
+}
+
 export async function normalizeHancellXlsx(bytesOrDataUrl: Uint8Array | string): Promise<Uint8Array> {
   const bytes = typeof bytesOrDataUrl === 'string' ? dataUrlToUint8Array(bytesOrDataUrl) : bytesOrDataUrl;
 
@@ -131,6 +269,15 @@ export async function normalizeHancellXlsx(bytesOrDataUrl: Uint8Array | string):
         if (content.includes('ref=')) {
           content = content.replace(/ref="([A-Za-z]+[0-9]+):\1"/g, 'ref="$1"');
           mod = true;
+        }
+
+        // 데이터 뒤에 붙은 대량의 빈 행 압축 (한셀에서 '나머지 행 숨기기' 시 1,048,576개 행이 기록되어 멈춤)
+        if (/^xl\/worksheets\/sheet\d+\.xml$/.test(filename)) {
+          const compacted = compactTrailingEmptyRows(content);
+          if (compacted !== content) {
+            content = compacted;
+            mod = true;
+          }
         }
       }
 
@@ -325,6 +472,13 @@ export async function dataUrlToUniverWorkbook(
           // 숫자 서식 (Number Format)
           if (cell.numFmt && cell.numFmt !== 'General') {
             styleObj.n = { pattern: cell.numFmt };
+            hasStyle = true;
+          }
+
+          // 테두리 (Border) - 편집기에 표시하고, 저장 시 변경 여부를 비교하기 위해 불러옴
+          const bdObj = excelBorderToUniver(cell.border);
+          if (bdObj) {
+            (styleObj as any).bd = bdObj;
             hasStyle = true;
           }
 
@@ -1423,6 +1577,7 @@ export async function univerSnapshotToDataUrl(
     let isLoadedFromOriginal = false;
     let origRawBytes: Uint8Array | null = null;
     let origDefaultFont: DefaultFontInfo | null = null;
+    let origNormalizedBytes: Uint8Array | null = null;
     const modifiedRowsBySheet = new Map<string, Set<number>>();
 
     if (originalDataOrUrl) {
@@ -1430,6 +1585,7 @@ export async function univerSnapshotToDataUrl(
         origRawBytes = dataUrlToUint8Array(originalDataOrUrl);
         origDefaultFont = await extractOriginalDocDefaults(origRawBytes);
         const origBytes = await normalizeHancellXlsx(origRawBytes);
+        origNormalizedBytes = origBytes;
         await wb.xlsx.load(origBytes as any);
         isLoadedFromOriginal = true;
       } catch (loadErr) {
@@ -1590,6 +1746,11 @@ export async function univerSnapshotToDataUrl(
               if (Math.abs(colInfo.w - initPx) > 2) {
                 col.width = Math.max(1, Math.round(((colInfo.w - 5) / 8) * 100) / 100);
               }
+            } else if (isLoadedFromOriginal && col.width === undefined) {
+              // 원본에 너비가 없던 열(기본 너비): 편집기 기본값(88px)과 다르면 사용자가 바꾼 것
+              if (Math.abs(colInfo.w - 88) > 2) {
+                col.width = Math.max(1, Math.round(((colInfo.w - 5) / 8) * 100) / 100);
+              }
             } else if (!isLoadedFromOriginal) {
               col.width = Math.max(1, Math.round(((colInfo.w - 5) / 8) * 100) / 100);
             }
@@ -1614,6 +1775,12 @@ export async function univerSnapshotToDataUrl(
           if (isLoadedFromOriginal && origH !== undefined) {
             const initPxH = Math.round(origH * 1.33);
             if (Math.abs(uSheet.rowData[r].h - initPxH) > 2) {
+              row.height = Math.round((uSheet.rowData[r].h / 1.33) * 100) / 100;
+              modifiedRows.add(rowNum);
+            }
+          } else if (isLoadedFromOriginal && origH === undefined) {
+            // 원본에 높이가 없던 행(기본 높이): 편집기 기본값(24px)과 다르면 사용자가 바꾼 것
+            if (Math.abs(uSheet.rowData[r].h - 24) > 2) {
               row.height = Math.round((uSheet.rowData[r].h / 1.33) * 100) / 100;
               modifiedRows.add(rowNum);
             }
@@ -1763,6 +1930,24 @@ export async function univerSnapshotToDataUrl(
               }
             }
           }
+
+          // 테두리: 편집기의 상하좌우 테두리가 원본과 다를 때만 덮어씁 (대각선 등 나머지는 유지)
+          {
+            const styleForBd = cell.s
+              ? (typeof cell.s === 'string' ? styles[cell.s] : (cell.s as IStyleData))
+              : undefined;
+            const newBd = (styleForBd as any)?.bd;
+            const curBdSig = borderSignature(excelBorderToUniver(excelCell.border));
+            const newBdSig = borderSignature(newBd);
+            if (curBdSig !== newBdSig) {
+              const keep: any = { ...(excelCell.border || {}) };
+              delete keep.top;
+              delete keep.bottom;
+              delete keep.left;
+              delete keep.right;
+              excelCell.border = { ...keep, ...univerBorderToExcel(newBd) };
+            }
+          }
         }
       }
 
@@ -1790,7 +1975,10 @@ export async function univerSnapshotToDataUrl(
     });
 
     const rawBuffer = await wb.xlsx.writeBuffer();
-    const uint8 = await cleanAndNormalizeWorkbookBuffer(rawBuffer, origDefaultFont, modifiedRowsBySheet);
+    let uint8 = await cleanAndNormalizeWorkbookBuffer(rawBuffer, origDefaultFont, modifiedRowsBySheet);
+    if (origNormalizedBytes) {
+      uint8 = await restoreZeroHeight(uint8, origNormalizedBytes);
+    }
 
     // 원본 데이터가 존재하면 저장 직후 무결성 검증 (날짜 GMT+ 문자열화, 수식 누락, cellXfs 급감, 병합 누락 차단)
     if (origRawBytes) {

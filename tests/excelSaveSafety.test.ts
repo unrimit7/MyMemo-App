@@ -8,6 +8,7 @@ import {
   univerSnapshotToDataUrl,
   validateExcelIntegrity,
   extractXlsxIntegrityMetrics,
+  compactTrailingEmptyRows,
 } from '../src/utils/univerAdapter';
 
 const sampleFile = path.resolve(__dirname, '../docs/office-upgrade/samples/real/sample_다중시트_예시.xlsx');
@@ -154,6 +155,28 @@ describe('Excel 저장 안전성 및 무결성 검증 테스트 (무음 손실 �
     await expect(validateExcelIntegrity(damaged, damaged)).resolves.toBeUndefined();
     const m = await extractXlsxIntegrityMetrics(damaged);
     expect(m.gmtStringCount).toBe(1);
+  });
+
+  it('8. 데이터 뒤 대량의 숨긴 빈 행(한셀 나머지 행 숨기기)을 제거하고 zeroHeight로 숨김 유지', () => {
+    const rows = ['<row r="1" ht="16"><c r="A1"><v>1</v></c></row>', '<row r="2"><c r="A2"><v>2</v></c></row>'];
+    let tail = '';
+    for (let r = 3; r <= 5000; r++) tail += `<row r="${r}" hidden="1" customHeight="1"/>`;
+    const xml = `<worksheet><sheetViews/><sheetFormatPr defaultRowHeight="16"/><cols/><sheetData>${rows.join('')}${tail}</sheetData></worksheet>`;
+    const out = compactTrailingEmptyRows(xml);
+    expect(out.length).toBeLessThan(500);
+    expect(out).toContain('<sheetFormatPr defaultRowHeight="16" zeroHeight="1"/>');
+    expect(out).toContain('<c r="A2"><v>2</v></c></row></sheetData>');
+  });
+
+  it('9. 숨기지 않은 빈 행이거나 수가 적으면 zeroHeight를 넣지 않거나 원문 그대로', () => {
+    const head = '<worksheet><sheetFormatPr defaultRowHeight="15"/><sheetData><row r="1"><c r="A1"><v>1</v></c></row>';
+    let visibleTail = '';
+    for (let r = 2; r <= 3000; r++) visibleTail += `<row r="${r}" ht="20" customHeight="1"/>`;
+    const out1 = compactTrailingEmptyRows(`${head}${visibleTail}</sheetData></worksheet>`);
+    expect(out1).not.toContain('zeroHeight');
+    expect(out1).toContain('</row></sheetData>');
+    const small = `${head}<row r="2" hidden="1"/></sheetData></worksheet>`;
+    expect(compactTrailingEmptyRows(small)).toBe(small);
   });
 
   it('7. 셀에 "한국 표준시"나 "GMT+0900"을 일반 문장으로 쓴 경우는 손상으로 판정하지 않아야 한다', async () => {
