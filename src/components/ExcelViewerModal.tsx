@@ -13,6 +13,9 @@ import {
 import { parseExcelWorkbook, parseExcelWorkbookWithStyles, sheetRowsToMarkdownTable, buildMergeMap, getColumnLabel, borderCss, type ParsedWorkbook } from '../utils/excelViewer';
 import { useFloatingWindow } from './useFloatingWindow';
 
+/** 큰 화면 뷰어가 한 번에 그리는 행 수 (큰 파일에서 멈춤 방지) */
+const VIEW_ROW_STEP = 1000;
+
 interface ExcelViewerModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -37,6 +40,8 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [zoom, setZoom] = useState<number>(1.0);
   const [copied, setCopied] = useState<boolean>(false);
+  // 큰 시트에서 한 번에 수만 행을 그리면 화면이 멈춘다. 처음에는 일부만 그리고 '더 보기'로 늘린다.
+  const [rowLimit, setRowLimit] = useState<number>(VIEW_ROW_STEP);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const floating = useFloatingWindow({ id: 'excel-viewer', defaultWidth: 920, defaultHeight: 800 });
@@ -108,6 +113,11 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
   }, [activeRows, activeMerges]);
 
   // 검색 필터링된 행 목록 및 매칭 셀 좌표 계산
+  // 시트·검색어가 바뀌면 다시 처음 분량만
+  useEffect(() => {
+    setRowLimit(VIEW_ROW_STEP);
+  }, [activeSheetName, searchQuery, data]);
+
   const { filteredRows, matchCount } = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) {
@@ -361,7 +371,7 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
 
                 {/* 행 및 셀 데이터 */}
                 <tbody className="divide-y divide-[#e2e8f0] font-sans">
-                  {filteredRows.map(({ row, originalIndex }) => (
+                  {filteredRows.slice(0, rowLimit).map(({ row, originalIndex }) => (
                     <tr
                       key={originalIndex}
                       className="hover:bg-[#ecfdf5] transition-colors group border-b border-[#e2e8f0]"
@@ -454,6 +464,20 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
                   ))}
                 </tbody>
               </table>
+              {filteredRows.length > rowLimit && (
+                <div className="flex items-center justify-between gap-2 px-3 py-2 bg-amber-50 border-t border-amber-200 text-xs text-amber-900">
+                  <span>
+                    화면이 멈추지 않도록 {rowLimit.toLocaleString()}행까지만 표시했습니다. (전체 {filteredRows.length.toLocaleString()}행)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setRowLimit((n) => n + VIEW_ROW_STEP)}
+                    className="px-2.5 py-1 rounded-md bg-amber-600 hover:bg-amber-500 text-white font-semibold shrink-0"
+                  >
+                    {VIEW_ROW_STEP.toLocaleString()}행 더 보기
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>

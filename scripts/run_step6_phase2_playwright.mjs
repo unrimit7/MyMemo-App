@@ -531,10 +531,28 @@ async function phaseBig(page) {
   const t1 = Date.now();
   await page.evaluate(() => 1);
   rec('excel', '큰 파일 표시 뒤 화면 응답', Date.now() - t1 < 2000 ? 'OK' : 'FAIL', `${Date.now() - t1}ms`);
+  // 서식 읽기(ExcelJS)가 뒤에서 도는 동안에도 화면이 응답하는지 30초 동안 측정
+  let worst = 0;
+  for (let i = 0; i < 15; i++) { const t = Date.now(); await page.evaluate(() => 1); worst = Math.max(worst, Date.now() - t); await page.waitForTimeout(2000); }
+  rec('excel', '큰 파일 표시 후 30초 동안 최대 응답 지연', worst < 3000 ? 'OK' : 'FAIL', worst + 'ms');
   const t2 = Date.now();
   await page.locator('.markdown-preview .excel-btn-fullscreen').first().click();
   const opened = await waitFor(async () => (await closeButtons(page)).length > 0, 60000, 500);
   rec('excel', '큰 파일 크게 보기', opened ? 'OK' : 'FAIL', `${((Date.now() - t2) / 1000).toFixed(1)}초`);
+  await page.waitForTimeout(3000);
+  { const t = Date.now(); await page.evaluate(() => 1); rec('excel', '큰 파일 크게 보기 3초 뒤 응답', Date.now() - t < 3000 ? 'OK' : 'FAIL', (Date.now() - t) + 'ms'); }
+  const bigOpenCount = (await closeButtons(page)).length;
+  { const cb = (await closeButtons(page)).pop(); if (cb) await page.mouse.click(cb.x, cb.y); }
+  const closedBig = await waitFor(async () => (await closeButtons(page)).length < bigOpenCount, 20000);
+  rec('excel', '큰 파일 크게 보기 닫기', closedBig ? 'OK' : 'FAIL');
+  // 편집기: 60초 안에 준비되고, 준비 뒤 화면이 응답하는지
+  const t3 = Date.now();
+  await page.locator('.markdown-preview .excel-btn-edit').first().click();
+  const ready = await waitFor(() => page.evaluate(() => typeof window.__excelIsReady === 'function' && window.__excelIsReady()).catch(() => false), 90000, 1000);
+  const t4 = Date.now();
+  await page.evaluate(() => 1).catch(() => {});
+  rec('excel', '큰 파일 편집기 열기', ready ? 'OK' : 'FAIL', `준비 ${((t4 - t3) / 1000).toFixed(1)}초, 이후 응답 ${Date.now() - t4}ms`);
+  await page.screenshot({ path: path.join(outDir, 'editor_excel_big.png') }).catch(() => {});
 }
 
 async function run() {
