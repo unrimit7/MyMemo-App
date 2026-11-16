@@ -45,6 +45,8 @@ export interface CellVisualInfo {
     left?: boolean;
     right?: boolean;
     borderColor?: string;
+    /** 변별 실제 테두리 종류와 색 (미리보기에 원본처럼 그리기 위함) */
+    sides?: Partial<Record<'top' | 'bottom' | 'left' | 'right', { style: string; color?: string }>>;
   };
 }
 
@@ -54,6 +56,46 @@ export interface ParsedWorkbook {
   cellStyles?: Record<string, CellVisualInfo[][]>;
   merges?: Record<string, CellMergeRange[]>;
   hasDetailedStyles?: boolean;
+  /** 열 너비(px, 원본에 지정된 열만) */
+  colWidths?: Record<string, (number | undefined)[]>;
+  /** 행 높이(px, 원본에 지정된 행만) */
+  rowHeights?: Record<string, (number | undefined)[]>;
+}
+
+/** 엑셀 테두리 종류 → 미리보기 CSS (격자선 1px보다 굵게 해 겹치는 선에서 항상 보이게) */
+function borderCss(style: string, color?: string): string {
+  const c = color || '#000000';
+  switch (style) {
+    case 'thick':
+      return `3px solid ${c}`;
+    case 'medium':
+      return `2px solid ${c}`;
+    case 'double':
+      return `3px double ${c}`;
+    case 'mediumDashed':
+    case 'mediumDashDot':
+    case 'mediumDashDotDot':
+    case 'slantDashDot':
+      return `2px dashed ${c}`;
+    case 'dashed':
+    case 'dashDot':
+    case 'dashDotDot':
+      return `1.5px dashed ${c}`;
+    case 'dotted':
+    case 'hair':
+      return `1.5px dotted ${c}`;
+    default:
+      return `1.5px solid ${c}`;
+  }
+}
+
+/** 보이는 내용(값, 테두리, 배경색)이 있는 셀인지 */
+function isVisibleCell(text: unknown, visual?: CellVisualInfo): boolean {
+  if (text !== undefined && text !== null && String(text).trim() !== '') return true;
+  if (!visual) return false;
+  if (visual.bgColor) return true;
+  if (visual.border && (visual.border.top || visual.border.bottom || visual.border.left || visual.border.right)) return true;
+  return false;
 }
 
 /**
@@ -1097,6 +1139,8 @@ export async function parseExcelWorkbookWithStyles(dataOrUrl: string, cacheKey?:
     const sheets: Record<string, (string | number)[][]> = {};
     const merges: Record<string, CellMergeRange[]> = {};
     const cellStyles: Record<string, CellVisualInfo[][]> = {};
+    const colWidths: Record<string, (number | undefined)[]> = {};
+    const rowHeights: Record<string, (number | undefined)[]> = {};
 
     wb.worksheets.forEach((ws: any) => {
       const sName = ws.name || 'Sheet1';
@@ -1106,6 +1150,20 @@ export async function parseExcelWorkbookWithStyles(dataOrUrl: string, cacheKey?:
       const sheetStyles: CellVisualInfo[][] = [];
       const rowCount = ws.rowCount || 0;
       const colCount = ws.columnCount || 0;
+
+      // 열 너비(엑셀 문자 단위 → px)와 행 높이(pt → px)
+      const cw: (number | undefined)[] = [];
+      for (let c = 1; c <= colCount; c++) {
+        const w = ws.getColumn(c)?.width;
+        cw.push(typeof w === 'number' && w > 0 ? Math.round(w * 7 + 5) : undefined);
+      }
+      colWidths[sName] = cw;
+      const rh: (number | undefined)[] = [];
+      for (let r = 1; r <= rowCount; r++) {
+        const h = ws.getRow(r)?.height;
+        rh.push(typeof h === 'number' && h > 0 ? Math.round(h * 1.33) : undefined);
+      }
+      rowHeights[sName] = rh;
 
       // 셀 참조 맵 (수식 평가용)
       const cellValMap = new Map<string, any>();
@@ -1232,8 +1290,13 @@ export async function parseExcelWorkbookWithStyles(dataOrUrl: string, cacheKey?:
             }
           }
 
-          const hasBorder = !!(border.top || border.bottom || border.left || border.right);
+          const hasBorder = !!(border.top?.style || border.bottom?.style || border.left?.style || border.right?.style);
           const borderColor = parseArgbColor(border.top?.color || border.bottom?.color || border.left?.color || border.right?.color);
+          const sides: NonNullable<CellVisualInfo['border']>['sides'] = {};
+          for (const side of ['top', 'bottom', 'left', 'right'] as const) {
+            const sd = (border as any)[side];
+            if (sd?.style) sides[side] = { style: sd.style, color: parseArgbColor(sd.color) };
+          }
 
           rowStyles.push({
             value: val,
@@ -1248,11 +1311,12 @@ export async function parseExcelWorkbookWithStyles(dataOrUrl: string, cacheKey?:
             italic: !!font.italic,
             align,
             border: hasBorder ? {
-              top: !!border.top,
-              bottom: !!border.bottom,
-              left: !!border.left,
-              right: !!border.right,
+              top: !!border.top?.style,
+              bottom: !!border.bottom?.style,
+              left: !!border.left?.style,
+              right: !!border.right?.style,
               borderColor,
+              sides,
             } : undefined,
           });
         }
@@ -1286,6 +1350,8 @@ export async function parseExcelWorkbookWithStyles(dataOrUrl: string, cacheKey?:
       cellStyles,
       merges,
       hasDetailedStyles: true,
+      colWidths,
+      rowHeights,
     };
 
     if (dataSignature) {
@@ -1312,25 +1378,40 @@ export function renderExcelTableHtml(
   colCount: number;
   totalRows: number;
 } {
-  const rows = parsed.sheets[sheetName] || [];
+  const allRows = parsed.sheets[sheetName] || [];
   const sheetStyles = parsed.cellStyles?.[sheetName];
   const sheetMerges = parsed.merges?.[sheetName] || [];
-  const totalRows = rows.length;
+  const sheetColWidths = parsed.colWidths?.[sheetName] || [];
+  const sheetRowHeights = parsed.rowHeights?.[sheetName] || [];
 
-  let maxCols = 0;
-  rows.forEach((r) => {
-    maxCols = Math.max(maxCols, r.length);
+  // 보이는 내용(값·테두리·배경색)이 있는 범위까지만 표시 (서식만 있는 빈 칸은 제외)
+  let lastRow = -1;
+  let lastCol = -1;
+  allRows.forEach((r, rIdx) => {
+    const rs = sheetStyles?.[rIdx];
+    const len = Math.max(r.length, rs?.length || 0);
+    for (let c = 0; c < len; c++) {
+      if (isVisibleCell(r[c], rs?.[c])) {
+        if (rIdx > lastRow) lastRow = rIdx;
+        if (c > lastCol) lastCol = c;
+      }
+    }
   });
   sheetMerges.forEach((m) => {
-    maxCols = Math.max(maxCols, m.e.c + 1);
+    lastRow = Math.max(lastRow, m.e.r);
+    lastCol = Math.max(lastCol, m.e.c);
   });
-  const colCount = Math.max(maxCols, 1);
+  const rows = allRows.slice(0, Math.max(lastRow + 1, 1));
+  const totalRows = lastRow >= 0 ? lastRow + 1 : 0;
+  const colCount = Math.max(lastCol + 1, 1);
   const previewRows = rows.slice(0, maxRows);
   const mergeMap = buildMergeMap(sheetMerges);
 
   const colHeaders = Array.from({ length: colCount })
     .map((_, cIdx) => {
-      return `<th class="excel-th" style="padding: 6px 12px; font-family: monospace; font-size: 11px; font-weight: 600; color: #334155 !important; background-color: #f1f5f9 !important; border-right: 1px solid #cbd5e1 !important; border-bottom: 1px solid #cbd5e1 !important; min-width: 85px; text-align: center !important; user-select: none;">${getColumnLabel(cIdx)}</th>`;
+      const w = sheetColWidths[cIdx];
+      const widthCss = w ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px;` : 'min-width: 85px;';
+      return `<th class="excel-th" style="padding: 6px 12px; font-family: monospace; font-size: 11px; font-weight: 600; color: #334155 !important; background-color: #f1f5f9 !important; border-right: 1px solid #cbd5e1 !important; border-bottom: 1px solid #cbd5e1 !important; ${widthCss} text-align: center !important; user-select: none;">${getColumnLabel(cIdx)}</th>`;
     })
     .join('');
 
@@ -1387,15 +1468,32 @@ export function renderExcelTableHtml(
           cellInnerHtml = textVal;
         }
 
-        const styleAttr = `style="background-color: ${effectiveBg} !important; color: ${effectiveColor} !important; font-weight: ${isBold ? '700' : '400'} !important; text-align: ${textAlign} !important; border-right: 1px solid ${borderColor} !important; border-bottom: 1px solid ${borderColor} !important; padding: 6px 12px; font-size: 12px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; word-break: break-word; white-space: pre-wrap; max-width: 320px;"`;
+        // 테두리: 원본에 지정된 변은 실제 종류·색으로, 나머지는 연한 격자선
+        const sides = cellVisual?.border?.sides;
+        let borderCssText: string;
+        if (sides) {
+          const grid = '1px solid #e2e8f0';
+          borderCssText =
+            `border-top: ${sides.top ? borderCss(sides.top.style, sides.top.color) : grid} !important; ` +
+            `border-bottom: ${sides.bottom ? borderCss(sides.bottom.style, sides.bottom.color) : grid} !important; ` +
+            `border-left: ${sides.left ? borderCss(sides.left.style, sides.left.color) : grid} !important; ` +
+            `border-right: ${sides.right ? borderCss(sides.right.style, sides.right.color) : grid} !important;`;
+        } else {
+          borderCssText = `border-right: 1px solid ${borderColor} !important; border-bottom: 1px solid ${borderColor} !important;`;
+        }
+        const colW = sheetColWidths[cIdx];
+        const widthCss = colW && !(mergeInfo && mergeInfo.colSpan > 1) ? `width: ${colW}px; max-width: ${colW}px;` : 'max-width: 320px;';
+
+        const styleAttr = `style="background-color: ${effectiveBg} !important; color: ${effectiveColor} !important; font-weight: ${isBold ? '700' : '400'} !important; text-align: ${textAlign} !important; ${borderCssText} padding: 4px 8px; font-size: 12px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.4; word-break: break-word; white-space: pre-wrap; ${widthCss}"`;
 
         cellsHtml.push(
           `<td${colSpanAttr}${rowSpanAttr} class="excel-td" ${styleAttr}>${cellInnerHtml}</td>`
         );
       }
 
+      const rowH = sheetRowHeights[rIdx];
       return `
-        <tr class="excel-tr" style="background-color: #ffffff;">
+        <tr class="excel-tr" style="background-color: #ffffff;${rowH ? ` height: ${rowH}px;` : ''}">
           <td class="excel-td-num" style="padding: 6px 8px; text-align: center !important; font-size: 10px; font-family: monospace; font-weight: 600; color: #64748b !important; background-color: #f8fafc !important; border-right: 1px solid #cbd5e1 !important; border-bottom: 1px solid #e2e8f0 !important; position: sticky; left: 0; z-index: 10; user-select: none;">${rIdx + 1}</td>
           ${cellsHtml.join('')}
         </tr>

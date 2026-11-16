@@ -147,6 +147,110 @@ export function compactTrailingEmptyRows(xml: string, minRows = 1000): string {
   return result;
 }
 
+function colLettersToIndex(letters: string): number {
+  let n = 0;
+  for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n; // 1-based
+}
+function colIndexToLetters(n: number): string {
+  let s = '';
+  while (n > 0) {
+    const m = (n - 1) % 26;
+    s = String.fromCharCode(65 + m) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+/**
+ * 저장 후 정리: 보이는 내용(값·수식·테두리·배경색·병합)이 있는 범위 밖의 빈 셀(글꼴 등 보이지 않는
+ * 서식만 있는 셀)을 지우고 사용 범위(dimension)를 내용 범위로 줄인다. 보이는 모양은 바뀌지 않는다.
+ * 예: 한셀이 1행 A~X에 글꼴만 넣어 둔 빈 칸 → 저장 후 A~F만 남음.
+ */
+export async function trimInvisibleTrailingCells(bytes: Uint8Array): Promise<Uint8Array> {
+  try {
+    const zip = await JSZip.loadAsync(bytes);
+    const stylesFile = zip.file('xl/styles.xml');
+    if (!stylesFile) return bytes;
+    const stylesXml = await stylesFile.async('string');
+
+    const blockOf = (tag: string) => (stylesXml.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`)) || [])[1] || '';
+    // <border/> (빈 테두리) 또는 <border ...>...</border> 하나씩. 안쪽의 <left/> 등에서 끊기지 않게 한다
+    const borders = blockOf('borders').match(/<border\b[^>]*\/>|<border\b[^>]*>[\s\S]*?<\/border>/g) || [];
+    const fills = blockOf('fills').match(/<fill\b[^>]*\/>|<fill\b[^>]*>[\s\S]*?<\/fill>/g) || [];
+    const xfs = blockOf('cellXfs').match(/<xf\b[^>]*?(?:\/>|>[\s\S]*?<\/xf>)/g) || [];
+    const visibleBorder = borders.map((b) => /<(?:left|right|top|bottom|diagonal)\b[^>]*\sstyle="(?!none)[^"]+"/.test(b));
+    const visibleFill = fills.map((f) => {
+      const pt = (f.match(/patternType="([^"]+)"/) || [])[1];
+      return /<gradientFill/.test(f) || (!!pt && pt !== 'none' && pt !== 'gray125');
+    });
+    const visibleStyle = xfs.map((x) => {
+      const b = parseInt((x.match(/\sborderId="(\d+)"/) || [])[1] || '0', 10);
+      const f = parseInt((x.match(/\sfillId="(\d+)"/) || [])[1] || '0', 10);
+      return !!visibleBorder[b] || !!visibleFill[f];
+    });
+
+    let changed = false;
+    for (const name of Object.keys(zip.files)) {
+      if (!/^xl\/worksheets\/sheet\d+\.xml$/.test(name)) continue;
+      let xml = await zip.file(name)!.async('string');
+      const cellRe = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+
+      let lastRow = 0;
+      let lastCol = 0;
+      let m: RegExpExecArray | null;
+      while ((m = cellRe.exec(xml)) !== null) {
+        const attrs = m[1];
+        const inner = m[2] || '';
+        const ref = (attrs.match(/\sr="([A-Z]+)(\d+)"/) || []);
+        if (!ref[1]) continue;
+        const s = parseInt((attrs.match(/\ss="(\d+)"/) || [])[1] || '0', 10);
+        const hasValue = /<(?:v|f|is)\b/.test(inner);
+        if (hasValue || visibleStyle[s]) {
+          lastCol = Math.max(lastCol, colLettersToIndex(ref[1]));
+          lastRow = Math.max(lastRow, parseInt(ref[2], 10));
+        }
+      }
+      for (const mc of xml.matchAll(/<mergeCell\b[^>]*ref="([A-Z]+)(\d+):([A-Z]+)(\d+)"/g)) {
+        lastCol = Math.max(lastCol, colLettersToIndex(mc[3]));
+        lastRow = Math.max(lastRow, parseInt(mc[4], 10));
+      }
+      if (lastCol === 0 || lastRow === 0) continue;
+
+      // 내용 범위 밖의 빈 셀 제거 (값이 없는 셀만)
+      let removed = 0;
+      xml = xml.replace(cellRe, (whole: string, attrs: string, inner?: string) => {
+        const ref = attrs.match(/\sr="([A-Z]+)(\d+)"/);
+        if (!ref) return whole;
+        if (inner && /<(?:v|f|is)\b/.test(inner)) return whole;
+        const col = colLettersToIndex(ref[1]);
+        const row = parseInt(ref[2], 10);
+        if (col > lastCol || row > lastRow) {
+          removed++;
+          return '';
+        }
+        return whole;
+      });
+      if (removed === 0) continue;
+
+      // 셀이 모두 사라진 내용 범위 밖의 행(높이·숨김 지정이 없는 것)은 제거, spans 힌트는 삭제
+      xml = xml.replace(/<row\b([^>]*?)(?:\/>|>(\s*)<\/row>)/g, (whole: string, attrs: string) => {
+        const r = parseInt((attrs.match(/\sr="(\d+)"/) || [])[1] || '0', 10);
+        if (r > lastRow && !/customHeight="1"|hidden="1"/.test(attrs)) return '';
+        return whole;
+      });
+      xml = xml.replace(/(<row\b[^>]*?)\sspans="[^"]*"/g, '$1');
+      xml = xml.replace(/<dimension\b[^>]*ref="[^"]*"/, (d) => d.replace(/ref="[^"]*"/, `ref="A1:${colIndexToLetters(lastCol)}${lastRow}"`));
+      zip.file(name, xml);
+      changed = true;
+    }
+    return changed ? await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }) : bytes;
+  } catch (e) {
+    console.warn('빈 셀 정리 실패 (무시 가능):', e);
+    return bytes;
+  }
+}
+
 /** 저장 후 ExcelJS가 버리는 sheetFormatPr zeroHeight(나머지 행 숨김)를 원본 기준으로 되살린다. */
 async function restoreZeroHeight(savedBytes: Uint8Array, origBytes: Uint8Array): Promise<Uint8Array> {
   try {
@@ -1985,6 +2089,8 @@ export async function univerSnapshotToDataUrl(
 
     const rawBuffer = await wb.xlsx.writeBuffer();
     let uint8 = await cleanAndNormalizeWorkbookBuffer(rawBuffer, origDefaultFont, modifiedRowsBySheet);
+    // 내용 범위 밖의 보이지 않는 빈 셀 정리 (zeroHeight 복원보다 먼저: 행 연속성 판단에 영향)
+    uint8 = await trimInvisibleTrailingCells(uint8);
     if (origNormalizedBytes) {
       uint8 = await restoreZeroHeight(uint8, origNormalizedBytes);
     }

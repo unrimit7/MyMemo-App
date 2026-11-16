@@ -9,6 +9,7 @@ import {
   validateExcelIntegrity,
   extractXlsxIntegrityMetrics,
   compactTrailingEmptyRows,
+  trimInvisibleTrailingCells,
 } from '../src/utils/univerAdapter';
 
 const sampleFile = path.resolve(__dirname, '../docs/office-upgrade/samples/real/sample_다중시트_예시.xlsx');
@@ -210,6 +211,28 @@ describe('Excel 저장 안전성 및 무결성 검증 테스트 (무음 손실 �
     }
     expect(Math.round(ows.getRow(1).height || 0)).toBe(45);
     expect(Math.round(ows.getColumn(3).width || 0)).toBe(24);
+  });
+
+  it('11. 내용 범위 밖의 보이지 않는 빈 셀(글꼴만)은 지우고, 테두리·배경색 있는 빈 셀은 남긴다', async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('S');
+    ws.getCell('A1').value = '항목';
+    ws.getCell('B2').value = 5;
+    ws.getCell('D3').border = { top: { style: 'thin' } } as any; // 빈 칸이지만 테두리 → 내용 범위
+    for (const a of ['E1', 'X1', 'A9']) ws.getCell(a).font = { name: '맑은 고딕', size: 11 }; // 글꼴만 → 제거 대상
+    const before = new Uint8Array(await wb.xlsx.writeBuffer());
+    const after = await trimInvisibleTrailingCells(before);
+    const xml = await (await JSZip.loadAsync(after)).file('xl/worksheets/sheet1.xml')!.async('string');
+    expect(xml).toContain('<dimension ref="A1:D3"');
+    expect(xml).not.toContain('r="X1"');
+    expect(xml).not.toContain('r="E1"');
+    expect(xml).not.toContain('r="A9"');
+    expect(xml).toContain('r="D3"');
+    const check = new ExcelJS.Workbook();
+    await check.xlsx.load(after as any);
+    expect(check.worksheets[0].getCell('A1').value).toBe('항목');
+    expect(check.worksheets[0].getCell('B2').value).toBe(5);
+    expect(check.worksheets[0].getCell('D3').border?.top?.style).toBe('thin');
   });
 
   it('7. 셀에 "한국 표준시"나 "GMT+0900"을 일반 문장으로 쓴 경우는 손상으로 판정하지 않아야 한다', async () => {
