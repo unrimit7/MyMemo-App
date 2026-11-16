@@ -842,9 +842,14 @@ class FormulaParser {
     }
 
     if (token.type === 'TODAY' || token.type === 'NOW') {
+      const isNow = token.type === 'NOW';
       this.consume();
       const now = new Date();
-      return excelSerialFromDate(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+      const day = excelSerialFromDate(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+      if (!isNow) return day;
+      // NOW()는 날짜 + 하루 중 지난 비율(시각)까지 (K3)
+      const secs = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+      return day + secs / 86400;
     }
 
     if (token.type === 'FUNC') {

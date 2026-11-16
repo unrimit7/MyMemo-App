@@ -91,6 +91,15 @@ describe('excelViewer evaluateFormula 화이트리스트 안전 수식 계산기
       expect(res.result).toBe(Math.max(0, diff));
     });
 
+    it('=NOW()-TODAY() -> 오늘 지난 시간 비율 (0 이상 1 미만, 시각 포함)', () => {
+      const before = new Date();
+      const res = evaluateFormula('=NOW()-TODAY()', resolveCell);
+      expect(res.success).toBe(true);
+      const frac = (before.getHours() * 3600 + before.getMinutes() * 60 + before.getSeconds()) / 86400;
+      expect(res.result).toBeGreaterThanOrEqual(frac - 2 / 86400);
+      expect(res.result).toBeLessThan(1);
+    });
+
     it('=DATE(2026, 11, 27) - DATE(2026, 11, 20) -> 정확한 일수 차이 7 계산', () => {
       const res = evaluateFormula('=DATE(2026, 11, 27) - DATE(2026, 11, 20)', resolveCell);
       expect(res.success).toBe(true);
