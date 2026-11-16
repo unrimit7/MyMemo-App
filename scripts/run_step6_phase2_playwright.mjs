@@ -284,7 +284,22 @@ async function phaseK2(page) {
     const t = document.querySelector('.markdown-preview .excel-inline-viewer')?.textContent || '';
     return { hiddenColShown: t.includes('숨김값1'), hiddenRowShown: t.includes('가상인물3') };
   });
-  rec('excel', 'K2 카드: 숨긴 열/행 표시 안 함', !card.hiddenColShown && !card.hiddenRowShown ? 'OK' : 'WARN', JSON.stringify(card));
+  rec('excel', 'K2 카드: 숨긴 열/행 표시 안 함', !card.hiddenColShown && !card.hiddenRowShown ? 'OK' : 'FAIL', JSON.stringify(card));
+  // 큰 화면 뷰어: 숨긴 행·열 안 보임, 원본 테두리(1행 아래 굵은 선) 반영 (K2, K4)
+  await page.locator('.markdown-preview .excel-btn-fullscreen').first().click();
+  await waitFor(async () => (await closeButtons(page)).length > 0, 10000);
+  await page.waitForTimeout(2000);
+  const big = await page.evaluate(() => {
+    const tables = Array.from(document.querySelectorAll('table')).filter((t) => !t.closest('.markdown-preview'));
+    const t = tables[tables.length - 1];
+    const txt = t?.innerText || '';
+    const medium = Array.from(t?.querySelectorAll('td') || []).filter((td) => parseFloat(getComputedStyle(td).borderBottomWidth) >= 2).length;
+    return { hiddenColShown: txt.includes('숨김값'), hiddenRowShown: txt.includes('가상인물3'), mediumBorders: medium };
+  });
+  rec('excel', 'K2·K4 큰 화면: 숨긴 행·열 안 보임 + 원본 테두리', !big.hiddenColShown && !big.hiddenRowShown && big.mediumBorders >= 3 ? 'OK' : 'FAIL', JSON.stringify(big));
+  await page.screenshot({ path: path.join(outDir, 'viewer_excel_hidden_k2.png') });
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(800);
   await page.locator('.markdown-preview .excel-btn-edit').first().click();
   await waitFor(() => page.evaluate(() => window.__excelIsReady && window.__excelIsReady()), 30000);
   await page.waitForTimeout(1500);

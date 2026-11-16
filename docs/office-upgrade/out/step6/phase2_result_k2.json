@@ -1,0 +1,24 @@
+{
+  "excel": {
+    "K2 카드: 숨긴 열/행 표시 안 함": {
+      "verdict": "OK",
+      "detail": "{\"hiddenColShown\":false,\"hiddenRowShown\":false}"
+    },
+    "K2·K4 큰 화면: 숨긴 행·열 안 보임 + 원본 테두리": {
+      "verdict": "OK",
+      "detail": "{\"hiddenColShown\":false,\"hiddenRowShown\":false,\"mediumBorders\":3}"
+    },
+    "K2 편집기: 숨긴 행·열 유지": {
+      "verdict": "OK",
+      "detail": "{\"row3\":1,\"row4\":1,\"col2\":1}"
+    },
+    "K2 저장 후에도 숨김 유지": {
+      "verdict": "OK",
+      "detail": "{\"row4\":true,\"row5\":true,\"colC\":true}"
+    },
+    "K2 저장 후 카드: 숨긴 내용 안 보임 + 수정 반영": {
+      "verdict": "OK",
+      "detail": "숨김값 보임=false, 수정 반영=true"
+    }
+  }
+}

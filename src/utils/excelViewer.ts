@@ -66,7 +66,7 @@ export interface ParsedWorkbook {
 }
 
 /** 엑셀 테두리 종류 → 미리보기 CSS (격자선 1px보다 굵게 해 겹치는 선에서 항상 보이게) */
-function borderCss(style: string, color?: string): string {
+export function borderCss(style: string, color?: string): string {
   const c = color || '#000000';
   switch (style) {
     case 'thick':

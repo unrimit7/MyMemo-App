@@ -10,7 +10,7 @@ import {
   ZoomIn, 
   ZoomOut 
 } from 'lucide-react';
-import { parseExcelWorkbook, parseExcelWorkbookWithStyles, sheetRowsToMarkdownTable, buildMergeMap, getColumnLabel, type ParsedWorkbook } from '../utils/excelViewer';
+import { parseExcelWorkbook, parseExcelWorkbookWithStyles, sheetRowsToMarkdownTable, buildMergeMap, getColumnLabel, borderCss, type ParsedWorkbook } from '../utils/excelViewer';
 import { useFloatingWindow } from './useFloatingWindow';
 
 interface ExcelViewerModalProps {
@@ -79,6 +79,17 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
     return workbook.merges[activeSheetName] || [];
   }, [workbook, activeSheetName]);
 
+  // 숨긴 행·열 (엑셀처럼 큰 화면에서도 보이지 않게, 검색에서도 제외)
+  const hiddenRowSet = useMemo(() => new Set(workbook?.hiddenRows?.[activeSheetName] || []), [workbook, activeSheetName]);
+  const hiddenColSet = useMemo(() => new Set(workbook?.hiddenCols?.[activeSheetName] || []), [workbook, activeSheetName]);
+  const sheetColWidths = workbook?.colWidths?.[activeSheetName] || [];
+  const sheetRowHeights = workbook?.rowHeights?.[activeSheetName] || [];
+  const visibleSpan = (start: number, span: number, hidden: Set<number>) => {
+    let n = 0;
+    for (let i = start; i < start + span; i++) if (!hidden.has(i)) n++;
+    return n;
+  };
+
   // 병합 셀 맵
   const mergeMap = useMemo(() => {
     return buildMergeMap(activeMerges);
@@ -101,7 +112,7 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
     const q = searchQuery.trim().toLowerCase();
     if (!q) {
       return {
-        filteredRows: activeRows.map((row, idx) => ({ row, originalIndex: idx })),
+        filteredRows: activeRows.map((row, idx) => ({ row, originalIndex: idx })).filter(({ originalIndex }) => !hiddenRowSet.has(originalIndex)),
         matchCount: 0,
       };
     }
@@ -110,8 +121,10 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
     const filtered: { row: (string | number)[]; originalIndex: number }[] = [];
 
     activeRows.forEach((row, originalIndex) => {
+      if (hiddenRowSet.has(originalIndex)) return;
       let rowMatches = false;
-      row.forEach((cell) => {
+      row.forEach((cell, cIdx) => {
+        if (hiddenColSet.has(cIdx)) return;
         if (cell !== undefined && cell !== null && String(cell).toLowerCase().includes(q)) {
           rowMatches = true;
           count++;
@@ -123,7 +136,7 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
     });
 
     return { filteredRows: filtered, matchCount: count };
-  }, [activeRows, searchQuery]);
+  }, [activeRows, searchQuery, hiddenRowSet, hiddenColSet]);
 
   // 마크다운 표 복사 핸들러
   const handleCopyMarkdown = () => {
@@ -334,10 +347,11 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
                     <th className="w-12 min-w-[48px] px-2 py-2 text-center text-[11px] font-bold text-[#64748b] bg-[#e2e8f0] border-r border-[#cbd5e1] sticky left-0 z-30 select-none">
                       #
                     </th>
-                    {Array.from({ length: colCount }).map((_, cIdx) => (
+                    {Array.from({ length: colCount }).map((_, cIdx) => hiddenColSet.has(cIdx) ? null : (
                       <th
                         key={cIdx}
                         className="px-3 py-2 text-[11px] font-mono font-semibold text-[#334155] border-r border-[#cbd5e1] bg-[#f1f5f9] min-w-[90px] text-center select-none"
+                        style={sheetColWidths[cIdx] ? { width: sheetColWidths[cIdx], minWidth: sheetColWidths[cIdx] } : undefined}
                       >
                         {getColumnLabel(cIdx)}
                       </th>
@@ -351,6 +365,7 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
                     <tr
                       key={originalIndex}
                       className="hover:bg-[#ecfdf5] transition-colors group border-b border-[#e2e8f0]"
+                      style={sheetRowHeights[originalIndex] ? { height: sheetRowHeights[originalIndex] } : undefined}
                     >
                       {/* 행 번호 (1, 2, 3...) */}
                       <td className="px-2 py-1.5 text-center text-[11px] font-mono font-semibold text-[#64748b] bg-[#f8fafc] border-r border-[#cbd5e1] sticky left-0 z-10 select-none group-hover:text-emerald-700">
@@ -363,9 +378,11 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
                         const mergeInfo = !isSearching ? mergeMap.get(`${originalIndex},${cIdx}`) : undefined;
 
                         // 병합으로 가려진 셀은 렌더링 생략
-                        if (mergeInfo?.isCovered) {
+                        if (mergeInfo?.isCovered || hiddenColSet.has(cIdx)) {
                           return null;
                         }
+                        const colSpan = mergeInfo ? visibleSpan(cIdx, mergeInfo.colSpan, hiddenColSet) : 1;
+                        const rowSpan = mergeInfo ? visibleSpan(originalIndex, mergeInfo.rowSpan, hiddenRowSet) : 1;
 
                         const cellVal = row[cIdx];
                         const cellStr = cellVal !== undefined && cellVal !== null ? String(cellVal) : '';
@@ -388,19 +405,29 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
                         const isBold = isMatch || (cellVisual?.bold !== undefined ? cellVisual.bold : isMerged);
                         const align = cellVisual?.align || (typeof cellVal === 'number' ? 'right' : 'left');
                         const borderColor = cellVisual?.border?.borderColor || '#e2e8f0';
+                        // 원본에 지정된 테두리는 실제 종류·색으로, 나머지는 연한 격자선 (메모 카드와 같은 규칙)
+                        const sides = cellVisual?.border?.sides;
+                        const grid = '1px solid #e2e8f0';
+                        const borderStyle = sides
+                          ? {
+                              borderTop: sides.top ? borderCss(sides.top.style, sides.top.color) : grid,
+                              borderBottom: sides.bottom ? borderCss(sides.bottom.style, sides.bottom.color) : grid,
+                              borderLeft: sides.left ? borderCss(sides.left.style, sides.left.color) : grid,
+                              borderRight: sides.right ? borderCss(sides.right.style, sides.right.color) : grid,
+                            }
+                          : { borderRight: `1px solid ${borderColor}`, borderBottom: `1px solid ${borderColor}` };
 
                         return (
                           <td
                             key={cIdx}
-                            colSpan={mergeInfo && mergeInfo.colSpan > 1 ? mergeInfo.colSpan : undefined}
-                            rowSpan={mergeInfo && mergeInfo.rowSpan > 1 ? mergeInfo.rowSpan : undefined}
+                            colSpan={colSpan > 1 ? colSpan : undefined}
+                            rowSpan={rowSpan > 1 ? rowSpan : undefined}
                             style={{
                               backgroundColor: effectiveBg,
                               color: effectiveColor,
                               fontWeight: isBold ? 700 : 400,
                               textAlign: align,
-                              borderRight: `1px solid ${borderColor}`,
-                              borderBottom: `1px solid ${borderColor}`,
+                              ...borderStyle,
                             }}
                             className="px-3 py-1.5 text-xs break-words whitespace-pre-wrap max-w-sm leading-relaxed"
                           >
