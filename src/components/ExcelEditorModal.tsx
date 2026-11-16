@@ -19,6 +19,7 @@ import '@univerjs/preset-sheets-core/lib/index.css';
 import { dataUrlToUniverWorkbook, univerSnapshotToDataUrl, type StructuralOperation } from '../utils/univerAdapter';
 import { invalidateExcelCache } from '../utils/excelViewer';
 import { detectExcelUnsupportedFeatures, type UnsupportedFeatureReport } from '../utils/excelLossDetector';
+import { chartRestoreBlockReason } from '../utils/excelChartRestore';
 import { useFloatingWindow } from './useFloatingWindow';
 import {
   saveOfficeDraft,
@@ -78,7 +79,10 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
   const [showRestoreConfirm, setShowRestoreConfirm] = useState<boolean>(false);
   const [showLossWarningModal, setShowLossWarningModal] = useState<boolean>(false);
   const [lossReport, setLossReport] = useState<UnsupportedFeatureReport | null>(null);
-  const [hasConfirmedLoss, setHasConfirmedLoss] = useState<boolean>(false);
+  // 이번 저장에서 실제로 사라질 요소 (차트는 원본에서 다시 넣을 수 있으면 빠짐)와 차트를 못 넣는 이유
+  const [pendingLossList, setPendingLossList] = useState<string[]>([]);
+  const [chartBlockReason, setChartBlockReason] = useState<string | null>(null);
+  const confirmedLossRef = useRef<Set<string>>(new Set());
 
   // 5단계 임시본 복구 모달 및 파일 핸들러 충돌 모달 상태
   const draftKey = `excel_${attId || ''}_${title}`;
@@ -669,9 +673,32 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
 
   // 저장 버튼 클릭 (미보존 요소 감지 시 경고 다이얼로그 띄움, 1회 승인 시 세션 유지)
   const handleSave = async (): Promise<boolean> => {
-    if (lossReport && lossReport.unsupportedList.length > 0 && !hasConfirmedLoss) {
-      setShowLossWarningModal(true);
-      return false;
+    if (lossReport && lossReport.unsupportedList.length > 0) {
+      let list = [...lossReport.unsupportedList];
+      let reason: string | null = null;
+      // 차트: ExcelJS 저장은 원본의 차트를 다시 넣어 보존한다. 행·열 삽입/삭제, 시트 이름 변경 등으로 안전하지 않을 때만 경고
+      if (lossReport.hasCharts && engine === 'exceljs' && format === 'xlsx') {
+        try {
+          const wb = univerAPIRef.current?.getActiveWorkbook?.();
+          const names: string[] = wb ? wb.getSheets().map((sh: any) => sh.getSheetName()) : [];
+          const src = currentDataRef.current;
+          const bin = atob(src.slice(src.indexOf(',') + 1));
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          reason = await chartRestoreBlockReason(bytes, names, structuralOpsRef.current.length);
+        } catch (e) {
+          reason = '차트를 다시 넣을 수 있는지 확인하지 못했습니다.';
+          console.warn('차트 보존 가능 여부 확인 실패:', e);
+        }
+        if (!reason) list = list.filter((item) => !item.startsWith('차트'));
+      }
+      const notConfirmed = list.filter((item) => !confirmedLossRef.current.has(item + (reason || '')));
+      if (notConfirmed.length > 0) {
+        setPendingLossList(list);
+        setChartBlockReason(reason);
+        setShowLossWarningModal(true);
+        return false;
+      }
     }
     return await executeSave();
   };
@@ -1119,13 +1146,18 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
                   현재 열려 있는 엑셀 문서에 웹 편집기(ExcelJS)에서 완벽히 보존되지 않는 다음 요소가 포함되어 있습니다:
                 </p>
                 <div className="bg-slate-950 border border-slate-800 rounded-lg p-2.5 mt-2 space-y-1">
-                  {lossReport.unsupportedList.map((item, idx) => (
+                  {pendingLossList.map((item, idx) => (
                     <div key={idx} className="flex items-center gap-1.5 text-xs text-amber-300 font-medium">
                       <span>•</span>
                       <span>{item}</span>
                     </div>
                   ))}
                 </div>
+                {chartBlockReason && pendingLossList.some((item) => item.startsWith('차트')) && (
+                  <p className="text-[11px] text-amber-200 mt-2 leading-relaxed">
+                    차트를 원본에서 다시 넣지 못하는 이유: {chartBlockReason}
+                  </p>
+                )}
                 <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
                   * 셀 데이터, 수식, 병합, 폰트, 배경색, 열 너비는 정상 보존되나, 위 고급 요소는 저장 시 누락될 수 있습니다. (첫 저장 시 원본 파일은 자동으로 백업 보관됩니다)
                 </p>
@@ -1145,7 +1177,7 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
                 id="office-confirm-loss-save-btn"
                 onClick={async () => {
                   setShowLossWarningModal(false);
-                  setHasConfirmedLoss(true);
+                  pendingLossList.forEach((item) => confirmedLossRef.current.add(item + (chartBlockReason || '')));
                   await executeSave();
                 }}
                 className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"

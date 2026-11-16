@@ -1,0 +1,86 @@
+{
+  "excel": {
+    "편집기 준비": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "저장 전 고급 요소 경고 (차트 보존 가능 → 경고 없음)": {
+      "verdict": "OK",
+      "detail": "[]"
+    },
+    "Ctrl+S 저장": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "처음 저장 시 원본 보관": {
+      "verdict": "OK",
+      "detail": "originalData=있음"
+    },
+    "저장본 요소 비교 (값·수식·표시형식·테두리·병합)": {
+      "verdict": "OK",
+      "detail": "보이는 칸 차이 1개(견적서!A1), 병합 범위 내부(보이지 않는) 칸 서식 차이 11개"
+    },
+    "저장본 차트 보존": {
+      "verdict": "OK",
+      "detail": "xl/drawings/, xl/drawings/drawing1.xml, xl/drawings/_rels/, xl/drawings/_rels/drawing1.xml.rels, xl/charts/, xl/charts/chart1.xml"
+    },
+    "저장 후 닫기 → 확인 창 없음": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "카드 미리보기에 즉시 반영": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "고치고 닫기 → 확인 창": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "원본으로 되돌리기": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "행 삽입 후 저장 → 차트 경고와 이유 표시": {
+      "verdict": "OK",
+      "detail": "고급 서식 보존 주의 안내 현재 열려 있는 엑셀 문서에 웹 편집기(ExcelJS)에서 완벽히 보존되지 않는 다음 요소가 포함되어 있습니다: • 차트 (그래프) 차트를 원본에서 다시 넣지 못하는 이유: 행·열을 삽입하"
+    }
+  },
+  "pdf": {
+    "주석 저장": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "처음 저장 시 원본 보관": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "편집기에 원본으로 되돌리기 버튼": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "저장 후 닫기 → 확인 창 없음": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "카드 미리보기에 즉시 반영": {
+      "verdict": "OK",
+      "detail": "어두운 픽셀 495→601"
+    },
+    "원본으로 되돌리기": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "되돌린 뒤 카드 반영": {
+      "verdict": "OK",
+      "detail": "어두운 픽셀 495 (원본 495)"
+    },
+    "고치고 닫기 → 확인 창": {
+      "verdict": "OK",
+      "detail": ""
+    },
+    "저장하지 않고 닫은 뒤 첨부 그대로": {
+      "verdict": "OK",
+      "detail": ""
+    }
+  }
+}

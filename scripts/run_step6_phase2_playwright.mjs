@@ -133,7 +133,8 @@ async function phaseEdit(page) {
   await page.keyboard.press('Control+s');
   await page.waitForTimeout(1500);
   const warn = await page.evaluate(() => { const box = Array.from(document.querySelectorAll('div')).filter((d) => d.getBoundingClientRect().width > 0 && (d.innerText || '').startsWith('고급 서식 보존')).pop(); return box ? ['차트 (그래프)', '피벗 테이블', '삽입된 이미지 / 도형', 'VBA 매크로 코드', '스파크라인 (미니 차트)'].filter((t) => box.innerText.includes(t)) : []; });
-  rec('excel', '저장 전 고급 요소 경고 내용', warn.length && !warn.some((t) => /매크로|이미지/.test(t)) ? 'OK' : 'WARN', JSON.stringify(warn));
+  // STEP7: 차트는 원본에서 다시 넣어 보존하므로 행·열 구조를 바꾸지 않은 저장에서는 경고가 없어야 한다
+  rec('excel', '저장 전 고급 요소 경고 (차트 보존 가능 → 경고 없음)', warn.length === 0 ? 'OK' : 'FAIL', JSON.stringify(warn));
   await clickText(page, '그래도 저장');
   await page.waitForTimeout(1500);
   const saved = await waitFor(async () => { const a = await readAtt(page, 'att-x'); return a && a.data !== orig; }, 20000);
@@ -150,7 +151,7 @@ async function phaseEdit(page) {
     rec('excel', '저장본 요소 비교 (값·수식·표시형식·테두리·병합)', diff.length === 1 && (b[diff[0]] || '').includes('STEP6수정') ? 'OK' : 'FAIL', `보이는 칸 차이 ${diff.length}개(${diff.join(', ')}), 병합 범위 내부(보이지 않는) 칸 서식 차이 ${inner}개`);
     const JSZip = (await import('jszip')).default;
     const names = Object.keys((await JSZip.loadAsync(buf)).files);
-    rec('excel', '저장본 차트 보존', names.some((n) => n.startsWith('xl/charts/')) ? 'OK' : 'WARN', names.filter((n) => /chart|drawing/.test(n)).join(', ') || '차트 파일 없음');
+    rec('excel', '저장본 차트 보존', names.some((n) => n.startsWith('xl/charts/')) ? 'OK' : 'FAIL', names.filter((n) => /chart|drawing/.test(n)).join(', ') || '차트 파일 없음');
   }
   // 닫기 (저장했으므로 확인 창 없어야 함)
   await waitFor(async () => (await closeButtons(page)).length > 0, 5000);
@@ -183,6 +184,30 @@ async function phaseEdit(page) {
   await clickText(page, '원본으로 되돌리기');
   const restored = await waitFor(async () => (await readAtt(page, 'att-x'))?.data === orig, 15000);
   rec('excel', '원본으로 되돌리기', restored ? 'OK' : 'FAIL');
+  btn = (await closeButtons(page)).pop();
+  if (btn) { await page.mouse.click(btn.x, btn.y); await page.waitForTimeout(500); await discardAndClose(page); }
+  await page.waitForTimeout(800);
+
+  // STEP7: 행을 삽입한 뒤 저장하면 차트를 안전하게 넣을 수 없으므로 경고(이유 포함)가 떠야 한다
+  await page.locator('.markdown-preview .excel-inline-viewer .excel-btn-edit').first().click();
+  await waitFor(() => page.evaluate(() => window.__excelIsReady && window.__excelIsReady()), 30000);
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => {
+    const wb = window.__excelUniverAPI.getActiveWorkbook();
+    const sh = wb.getSheets().find((x) => x.getSheetName() === '월별매출');
+    wb.setActiveSheet(sh);
+    sh.insertRowAfter(3);
+  });
+  await page.waitForTimeout(800);
+  await page.keyboard.press('Control+s');
+  await page.waitForTimeout(1500);
+  const warnIns = await page.evaluate(() => {
+    const box = Array.from(document.querySelectorAll('div')).filter((d) => d.getBoundingClientRect().width > 0 && (d.innerText || '').startsWith('고급 서식 보존')).pop();
+    return box ? box.innerText : '';
+  });
+  rec('excel', '행 삽입 후 저장 → 차트 경고와 이유 표시', /차트/.test(warnIns) && /삽입하거나 삭제/.test(warnIns) ? 'OK' : 'FAIL', warnIns.replace(/\s+/g, ' ').slice(0, 120));
+  await clickText(page, '취소 (저장 안 함)');
+  await page.waitForTimeout(500);
   btn = (await closeButtons(page)).pop();
   if (btn) { await page.mouse.click(btn.x, btn.y); await page.waitForTimeout(500); await discardAndClose(page); }
   await page.waitForTimeout(800);

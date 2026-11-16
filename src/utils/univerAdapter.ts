@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
+import { restoreChartsFromOriginal } from './excelChartRestore';
 import type { IWorkbookData, IWorksheetData, ICellData, IRange, IStyleData } from '@univerjs/core';
 import { LocaleType, HorizontalAlign, VerticalAlign, WrapStrategy } from '@univerjs/core';
 
@@ -2131,6 +2132,14 @@ export async function univerSnapshotToDataUrl(
     uint8 = await trimInvisibleTrailingCells(uint8);
     if (origNormalizedBytes) {
       uint8 = await restoreZeroHeight(uint8, origNormalizedBytes);
+    }
+    // ExcelJS가 버리는 원본 차트·그리기를 다시 넣는다. 안전하지 않으면(행·열 삽입/삭제, 시트 이름 변경 등) 넣지 않는다.
+    if (origRawBytes) {
+      const chart = await restoreChartsFromOriginal(uint8, origRawBytes, {
+        structuralOpCount: (structuralOperations || []).length,
+      });
+      uint8 = chart.bytes;
+      if (chart.blockedReason) console.warn('원본 차트를 다시 넣지 않았습니다:', chart.blockedReason);
     }
 
     // 원본 데이터가 존재하면 저장 직후 무결성 검증 (날짜 GMT+ 문자열화, 수식 누락, cellXfs 급감, 병합 누락 차단)
