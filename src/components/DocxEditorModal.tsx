@@ -920,7 +920,7 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
           {engine === 'superdoc' ? (
             <div
               ref={containerRef}
-              className="w-full h-full superdoc-editor-container bg-white text-slate-900 overflow-hidden"
+              className="w-full h-full superdoc-editor-container bg-white text-slate-900 overflow-auto"
               style={{ minHeight: '100%', width: '100%' }}
             />
           ) : (
