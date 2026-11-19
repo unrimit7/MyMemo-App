@@ -222,6 +222,28 @@ export function decodeBytesToString(
   }
 }
 
+/**
+ * 바이트 배열을 분석하여 UTF-8 또는 EUC-KR(CP949/ANSI) 인코딩을 자동 감지하고 디코딩합니다.
+ * 1. UTF-8 (fatal: true 엄격 모드) 디코딩을 우선 시도합니다.
+ * 2. 잘못된 UTF-8 바이트 시퀀스가 발생하면 윈도우 한글(EUC-KR / CP949)로 안전하게 자동 변환합니다.
+ */
+export function decodeBytesSmart(bytes: Uint8Array): { text: string; encoding: 'utf-8' | 'euc-kr' } {
+  try {
+    const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+    const text = utf8Decoder.decode(bytes);
+    return { text, encoding: 'utf-8' };
+  } catch {
+    try {
+      const euckrDecoder = new TextDecoder('euc-kr');
+      const text = euckrDecoder.decode(bytes);
+      return { text, encoding: 'euc-kr' };
+    } catch {
+      const fallbackDecoder = new TextDecoder('utf-8', { fatal: false });
+      return { text: fallbackDecoder.decode(bytes), encoding: 'utf-8' };
+    }
+  }
+}
+
 // 텍스트 문자열을 지정한 인코딩의 Uint8Array 바이트로 인코딩
 export function encodeStringToBytes(
   text: string,

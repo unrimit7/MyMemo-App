@@ -27,6 +27,7 @@ import {
   searchStringBytes,
   inspectByteValues,
   decodeBytesToString,
+  decodeBytesSmart,
   encodeStringToBytes,
   type InspectorData,
 } from '../utils/hexViewer';
@@ -149,7 +150,9 @@ export const HexEditorModal: React.FC<HexEditorModalProps> = ({
       const bytes = dataUrlToUint8Array(data);
       setBuffer(new Uint8Array(bytes));
       setOriginalBuffer(new Uint8Array(bytes));
-      setTextContent(decodeBytesToString(bytes, encoding));
+      const { text: smartText, encoding: detectedEnc } = decodeBytesSmart(bytes);
+      setEncoding(detectedEnc);
+      setTextContent(smartText);
       setModifiedSet(new Set());
       setSelectedOffset(0);
       setHexNibble(0);

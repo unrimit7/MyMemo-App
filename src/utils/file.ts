@@ -1,5 +1,6 @@
 import { compressImageToDataUrl } from './image';
 import type { AttachmentItem } from '../types';
+import { decodeBytesSmart } from './hexViewer';
 
 export interface ProcessedDroppedFile {
   title: string;
@@ -16,32 +17,32 @@ export async function processFileForNote(file: File): Promise<ProcessedDroppedFi
   const safeBaseTitle = safeName.replace(/\.[^/.]+$/, '');
   const mimeType = file.type;
 
-  // 1. 텍스트 또는 마크다운 파일
+  // 1. 텍스트 또는 마크다운 파일 (ANSI/EUC-KR 및 UTF-8 자동 판별 디코딩)
+  const lowerName = fileName.toLowerCase();
   if (
     (mimeType.startsWith('text/') && mimeType !== 'text/csv') ||
-    fileName.endsWith('.txt') ||
-    fileName.endsWith('.md') ||
-    fileName.endsWith('.json')
+    lowerName.endsWith('.txt') ||
+    lowerName.endsWith('.md') ||
+    lowerName.endsWith('.json') ||
+    lowerName.endsWith('.log') ||
+    lowerName.endsWith('.ini')
   ) {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = (e.target?.result as string) || '';
-        resolve({
-          title: baseTitle,
-          content: text,
-          type: 'text',
-        });
+    try {
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      const { text } = decodeBytesSmart(bytes);
+      return {
+        title: baseTitle,
+        content: text,
+        type: 'text',
       };
-      reader.onerror = () => {
-        resolve({
-          title: baseTitle,
-          content: '(파일을 읽지 못했습니다)',
-          type: 'text',
-        });
+    } catch {
+      return {
+        title: baseTitle,
+        content: '(파일을 읽지 못했습니다)',
+        type: 'text',
       };
-      reader.readAsText(file);
-    });
+    }
   }
 
   // 2. 이미지 파일
@@ -252,7 +253,6 @@ export async function processFileForNote(file: File): Promise<ProcessedDroppedFi
   }
 
   // 8. 바이너리(BIN, DAT, EXE, DLL, HEX, ISO 등) 파일
-  const lowerName = fileName.toLowerCase();
   if (
     lowerName.endsWith('.bin') ||
     lowerName.endsWith('.dat') ||
