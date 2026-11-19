@@ -54,6 +54,42 @@ if (typeof window !== 'undefined' && 'GlobalWorkerOptions' in pdfjsLib) {
 // PDF 문서 캐시 (중복 파싱 방지)
 const pdfDocCache = new Map<string, PDFDocumentProxy>();
 
+// pdf.js는 PDF 내장 글꼴(한글 등)을 getDocument 시점의 ownerDocument(document.fonts)에 등록한다.
+// 새 창(팝업)의 캔버스는 팝업 document의 글꼴만 볼 수 있으므로, 메인 창 document로 로드한 문서로
+// 팝업 캔버스에 그리면 글꼴을 못 찾아 글자가 □로 깨진다. 그래서 문서를 document별로 따로 로드/캐시한다.
+interface PdfDocSource {
+  dataOrUrl: string;
+  cacheKey?: string;
+  ownerDocument: Document;
+}
+const pdfDocSources = new WeakMap<PDFDocumentProxy, PdfDocSource>();
+const documentIds = new WeakMap<Document, number>();
+let nextDocumentId = 1;
+
+function getDocumentId(doc: Document): number {
+  let id = documentIds.get(doc);
+  if (id === undefined) {
+    id = nextDocumentId++;
+    documentIds.set(doc, id);
+  }
+  return id;
+}
+
+/** 닫힌 팝업 창 document에 묶인 PDF 문서를 정리 */
+function purgeClosedDocumentCaches(): void {
+  for (const [key, doc] of Array.from(pdfDocCache.entries())) {
+    const owner = pdfDocSources.get(doc)?.ownerDocument;
+    if (owner && owner !== document && (!owner.defaultView || owner.defaultView.closed)) {
+      try {
+        (doc as any)?.destroy?.();
+      } catch {
+        // ignore
+      }
+      pdfDocCache.delete(key);
+    }
+  }
+}
+
 /**
  * 특정 첨부파일 ID 또는 전체 PDF 캐시를 무효화(삭제)합니다.
  */
@@ -101,13 +137,21 @@ function getAssetBaseUrl(): string {
   return href;
 }
 
-export async function loadPdfDocument(dataOrUrl: string, cacheKey?: string): Promise<PDFDocumentProxy> {
+export async function loadPdfDocument(
+  dataOrUrl: string,
+  cacheKey?: string,
+  ownerDocument?: Document
+): Promise<PDFDocumentProxy> {
+  const owner = ownerDocument ?? (typeof document !== 'undefined' ? document : undefined);
+  // 메인 창 document는 기존 캐시 키 그대로, 팝업 document는 별도 접미사(`_d<id>`)로 분리
+  const docSuffix = owner && owner !== document ? `_d${getDocumentId(owner)}` : '';
   // 데이터 내용의 길이와 서명을 포함시켜 내용이 수정되면 자동으로 새 캐시 키가 생성되도록 보장
   const dataSignature = `${dataOrUrl.length}_${dataOrUrl.slice(-32)}`;
-  const key = cacheKey ? `${cacheKey}_${dataSignature}` : `${dataSignature}_${dataOrUrl.slice(0, 40)}`;
+  const key = (cacheKey ? `${cacheKey}_${dataSignature}` : `${dataSignature}_${dataOrUrl.slice(0, 40)}`) + docSuffix;
   if (pdfDocCache.has(key)) {
     return pdfDocCache.get(key)!;
   }
+  if (docSuffix) purgeClosedDocumentCaches();
 
   const baseUrl = getAssetBaseUrl();
   const cMapUrl = `${baseUrl}cmaps/`;
@@ -123,6 +167,7 @@ export async function loadPdfDocument(dataOrUrl: string, cacheKey?: string): Pro
     wasmUrl,
     iccUrl,
     enableXfa: true,
+    ...(owner ? { ownerDocument: owner } : {}),
   };
 
   let loadingTask;
@@ -147,6 +192,7 @@ export async function loadPdfDocument(dataOrUrl: string, cacheKey?: string): Pro
 
   const doc = await loadingTask.promise;
   pdfDocCache.set(key, doc);
+  if (owner) pdfDocSources.set(doc, { dataOrUrl, cacheKey, ownerDocument: owner });
   return doc;
 }
 
@@ -166,6 +212,13 @@ export async function renderPdfPageToCanvas(
       // ignore
     }
     activeRenderTasks.delete(canvas);
+  }
+
+  // 캔버스가 다른 창(새 창/팝업)에 있으면 그 창의 document로 로드한 문서로 바꿔서 그린다 (한글 글꼴 깨짐 방지)
+  const canvasDoc = canvas.ownerDocument;
+  const source = pdfDocSources.get(pdfDoc);
+  if (canvasDoc && source && source.ownerDocument !== canvasDoc) {
+    pdfDoc = await loadPdfDocument(source.dataOrUrl, source.cacheKey, canvasDoc);
   }
 
   const page = await pdfDoc.getPage(pageNumber);
