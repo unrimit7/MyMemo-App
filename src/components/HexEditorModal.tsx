@@ -74,12 +74,13 @@ export const UltraEditTextIcon: React.FC<{ size?: number; className?: string }> 
   </svg>
 );
 
-interface HexEditorModalProps {
+export interface HexEditorModalProps {
   isOpen: boolean;
   onClose: () => void;
   data: string;
   title: string;
   attId?: string;
+  initialMode?: 'hex' | 'text';
   onSave?: (updatedDataUrl: string) => Promise<void> | void;
 }
 
@@ -92,11 +93,30 @@ export const HexEditorModal: React.FC<HexEditorModalProps> = ({
   onClose,
   data,
   title,
+  initialMode,
   onSave,
 }) => {
   // 1. 보기 모드: 'hex' (울트라에디트 16진수 모드) | 'text' (일반 텍스트/코드 편집 모드)
+  // 파일 확장자에 따라 기본 모드 자동 결정 (.txt, .log, .ini 등은 text 모드 기본)
+  const defaultMode = useMemo<'hex' | 'text'>(() => {
+    if (initialMode) return initialMode;
+    const lower = (title || '').toLowerCase();
+    if (
+      lower.endsWith('.txt') ||
+      lower.endsWith('.log') ||
+      lower.endsWith('.ini') ||
+      lower.endsWith('.json') ||
+      lower.endsWith('.xml') ||
+      lower.endsWith('.csv') ||
+      lower.endsWith('.md')
+    ) {
+      return 'text';
+    }
+    return 'hex';
+  }, [initialMode, title]);
+
   const floating = useFloatingWindow({ id: 'hex-editor', defaultWidth: 960, defaultHeight: 820 });
-  const [viewMode, setViewMode] = useState<'hex' | 'text'>('hex');
+  const [viewMode, setViewMode] = useState<'hex' | 'text'>(defaultMode);
   const [textContent, setTextContent] = useState<string>('');
   const [encoding, setEncoding] = useState<'utf-8' | 'euc-kr' | 'latin1'>('utf-8');
   const [wordWrap, setWordWrap] = useState<boolean>(true);
@@ -153,6 +173,7 @@ export const HexEditorModal: React.FC<HexEditorModalProps> = ({
       const { text: smartText, encoding: detectedEnc } = decodeBytesSmart(bytes);
       setEncoding(detectedEnc);
       setTextContent(smartText);
+      setViewMode(defaultMode);
       setModifiedSet(new Set());
       setSelectedOffset(0);
       setHexNibble(0);
@@ -808,7 +829,7 @@ export const HexEditorModal: React.FC<HexEditorModalProps> = ({
         >
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-              <Binary size={18} />
+              {viewMode === 'text' ? <FileText size={18} /> : <Binary size={18} />}
             </span>
             <div className="truncate">
               <div className="flex items-center gap-2">

@@ -9,6 +9,23 @@ export interface ProcessedDroppedFile {
   type: 'text' | 'image' | 'pdf' | 'other';
 }
 
+export async function fileToDataUrl(file: File): Promise<string> {
+  if (typeof FileReader !== 'undefined') {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target?.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+  const buffer = await file.arrayBuffer();
+  const base64 = typeof Buffer !== 'undefined'
+    ? Buffer.from(buffer).toString('base64')
+    : btoa(String.fromCharCode(...new Uint8Array(buffer)));
+  const mime = file.type || 'application/octet-stream';
+  return `data:${mime};base64,${base64}`;
+}
+
 // 드롭된 파일을 분석하여 마크다운 메모용 제목과 본문으로 변환 (거대한 Base64를 본문에서 숨기고 단일 줄 태그로 삽입)
 export async function processFileForNote(file: File): Promise<ProcessedDroppedFile> {
   const fileName = file.name;
@@ -17,16 +34,9 @@ export async function processFileForNote(file: File): Promise<ProcessedDroppedFi
   const safeBaseTitle = safeName.replace(/\.[^/.]+$/, '');
   const mimeType = file.type;
 
-  // 1. 텍스트 또는 마크다운 파일 (ANSI/EUC-KR 및 UTF-8 자동 판별 디코딩)
+  // 1. 마크다운(.md) 파일: 마크다운 메모 본문으로 직접 불러오기 (ANSI/EUC-KR 및 UTF-8 자동 판별 디코딩)
   const lowerName = fileName.toLowerCase();
-  if (
-    (mimeType.startsWith('text/') && mimeType !== 'text/csv') ||
-    lowerName.endsWith('.txt') ||
-    lowerName.endsWith('.md') ||
-    lowerName.endsWith('.json') ||
-    lowerName.endsWith('.log') ||
-    lowerName.endsWith('.ini')
-  ) {
+  if (lowerName.endsWith('.md')) {
     try {
       const buffer = await file.arrayBuffer();
       const bytes = new Uint8Array(buffer);
@@ -40,6 +50,39 @@ export async function processFileForNote(file: File): Promise<ProcessedDroppedFi
       return {
         title: baseTitle,
         content: '(파일을 읽지 못했습니다)',
+        type: 'text',
+      };
+    }
+  }
+
+  // 1-2. 텍스트(.txt, .log, .ini, .json) 파일: bin과 동일하게 첨부 카드 및 텍스트/헥스 모달 편집기로 관리
+  if (
+    lowerName.endsWith('.txt') ||
+    lowerName.endsWith('.log') ||
+    lowerName.endsWith('.ini') ||
+    lowerName.endsWith('.json') ||
+    (mimeType.startsWith('text/') && mimeType !== 'text/csv')
+  ) {
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      const attId = `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      return {
+        title: `[텍스트] ${safeBaseTitle}`,
+        content: `# 📄 ${safeName}\n\n[📄 텍스트: ${safeName}](attachment:${attId})\n\n`,
+        attachments: {
+          [attId]: {
+            id: attId,
+            name: fileName,
+            type: mimeType || 'text/plain',
+            data: dataUrl,
+          },
+        },
+        type: 'text',
+      };
+    } catch {
+      return {
+        title: `[텍스트] ${safeBaseTitle}`,
+        content: `텍스트 파일: ${fileName}`,
         type: 'text',
       };
     }

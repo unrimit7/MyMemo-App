@@ -1,7 +1,7 @@
 import type { AttachmentItem } from '../types';
 import { parseExcelWorkbook, renderExcelTableHtml, INLINE_PREVIEW_ROWS } from './excelViewer';
 import { PPTX_EDITING_ENABLED } from './featureFlags';
-import { dataUrlToUint8Array, formatHexOffset, formatByteToHex, byteToAsciiChar } from './hexViewer';
+import { dataUrlToUint8Array, formatHexOffset, formatByteToHex, byteToAsciiChar, decodeBytesSmart } from './hexViewer';
 
 // Blob URL 캐시 (대용량 Base64 문자열 반복 파싱 부하 및 메모리 낭비 방지)
 interface BlobCacheEntry {
@@ -132,10 +132,24 @@ export function createAttachmentCardHtml(
     att.name.toLowerCase().endsWith('.o') ||
     att.name.toLowerCase().endsWith('.obj');
 
+  const isText =
+    !isExcel &&
+    !isDocx &&
+    !isPptx &&
+    !isHwp &&
+    !isPdf &&
+    !isBinary &&
+    (att.name.toLowerCase().endsWith('.txt') ||
+      att.name.toLowerCase().endsWith('.log') ||
+      att.name.toLowerCase().endsWith('.ini') ||
+      att.name.toLowerCase().endsWith('.json') ||
+      att.name.toLowerCase().endsWith('.xml') ||
+      (att.type?.startsWith('text/') && !att.name.toLowerCase().endsWith('.md')));
+
   // 사용자가 마크다운 [대괄호] 안에 수정한 표시 이름이 있으면 우선 사용
   const cleanLabel = (labelText || '')
     .replace(/^[\s📄📎🖼️📝📊💾🖥️]*/, '')
-    .replace(/^(?:PDF\s*문서:\s*|한글\s*문서:\s*|한글:\s*|엑셀\s*문서:\s*|엑셀:\s*|워드\s*문서:\s*|워드:\s*|DOCX:\s*|파워포인트\s*문서:\s*|파워포인트:\s*|PPTX:\s*|PPT:\s*|바이너리\s*문서:\s*|바이너리:\s*|HEX:\s*|파일:\s*)/i, '')
+    .replace(/^(?:PDF\s*문서:\s*|한글\s*문서:\s*|한글:\s*|엑셀\s*문서:\s*|엑셀:\s*|워드\s*문서:\s*|워드:\s*|DOCX:\s*|파워포인트\s*문서:\s*|파워포인트:\s*|PPTX:\s*|PPT:\s*|바이너리\s*문서:\s*|바이너리:\s*|HEX:\s*|텍스트\s*문서:\s*|텍스트:\s*|TXT:\s*|파일:\s*)/i, '')
     .trim();
   const displayName = cleanLabel || att.name;
   const downloadName = isPdf && !displayName.toLowerCase().endsWith('.pdf')
@@ -469,6 +483,70 @@ export function createAttachmentCardHtml(
     return `<img src="${att.data}" alt="${cleanLabel || att.name}" class="rounded-xl max-w-full my-3 border border-slate-800 shadow-md cursor-pointer hover:opacity-95 transition-opacity" />`;
   }
 
+  // 텍스트 문서 (.txt, .log, .ini 등): 상위 5행 인라인 미리보기 + 텍스트/헥스 모달 편집기 지원
+  if (isText) {
+    let previewLinesHtml = '';
+    let detectedEncoding = 'UTF-8';
+    try {
+      const bytes = dataUrlToUint8Array(att.data);
+      const { text, encoding: enc } = decodeBytesSmart(bytes);
+      detectedEncoding = enc.toUpperCase();
+      const rawLines = text.split(/\r?\n/).slice(0, 5);
+      previewLinesHtml = rawLines.map((line, idx) => {
+        const safeLine = line
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;') || '&nbsp;';
+        return `
+          <div class="flex items-start text-slate-300 font-mono text-xs leading-5">
+            <span class="text-indigo-400 w-8 shrink-0 select-none text-right pr-2.5 font-semibold opacity-75">${idx + 1}</span>
+            <span class="truncate text-slate-200">${safeLine}</span>
+          </div>
+        `;
+      }).join('');
+    } catch {
+      previewLinesHtml = '<div class="text-slate-500 text-xs py-2">텍스트 미리보기 준비 중...</div>';
+    }
+
+    return `
+<div class="my-5 rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-2xl text-inline-viewer" data-att-id="${att.id}" data-file-name="${displayName}">
+  <!-- 상단 헤더 -->
+  <div class="px-3.5 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
+    <div class="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-100 min-w-0 font-mono">
+      <span class="text-base md:text-lg">📄</span>
+      <span class="truncate" title="${displayName}">${displayName}</span>
+      <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-bold uppercase shrink-0">
+        TEXT / ${detectedEncoding}
+      </span>
+    </div>
+
+    <div class="flex items-center gap-1.5 shrink-0">
+      <button type="button" class="hex-btn-edit px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white rounded-lg text-xs font-semibold border border-indigo-500/40 flex items-center gap-1 active:scale-95 transition-all cursor-pointer" data-att-id="${att.id}" data-file-name="${displayName}" title="울트라에디트 스타일 텍스트/16진수 모달 편집기 열기">
+        <span>📝 텍스트 편집기 열기</span>
+      </button>
+      ${toggleBtnHtml}
+      <a href="${att.data}" download="${displayName}" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-slate-700 flex items-center gap-1 active:scale-95 transition-all no-underline" title="기기에 파일로 다운로드">
+        <span>⬇️ 저장</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- 텍스트 내용 미리보기 (클릭 시 모달 열림) -->
+  <div class="w-full bg-slate-950 p-3 overflow-x-auto select-none cursor-pointer hover:bg-slate-925 transition-colors hex-btn-edit" data-att-id="${att.id}" data-file-name="${displayName}" title="클릭하면 텍스트/헥스 편집기가 열립니다.">
+    <div class="space-y-0.5 min-w-[300px]">
+      ${previewLinesHtml}
+    </div>
+  </div>
+
+  <!-- 하단 안내 바 -->
+  <div class="px-3.5 py-1.5 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
+    <span>상위 미리보기 (5행)</span>
+    <span class="text-slate-500 hidden sm:inline">전문 확인 및 편집, 16진수 헥스 전환은 [📝 텍스트 편집기 열기]를 클릭하세요.</span>
+  </div>
+</div>
+    `.trim();
+  }
+
   if (isBinary) {
     let previewLinesHtml = '';
     try {
@@ -694,6 +772,31 @@ export function cleanLegacyAttachments(
         mimeType === 'application/msword'
       ) {
         return `\n\n[📄 워드: ${safeName}](attachment:${existingId})\n\n`;
+      }
+      if (
+        name.toLowerCase().endsWith('.pptx') ||
+        name.toLowerCase().endsWith('.ppt') ||
+        mimeType.includes('presentation') ||
+        mimeType.includes('powerpoint')
+      ) {
+        return `\n\n[📊 파워포인트: ${safeName}](attachment:${existingId})\n\n`;
+      }
+      if (
+        name.toLowerCase().endsWith('.txt') ||
+        name.toLowerCase().endsWith('.log') ||
+        name.toLowerCase().endsWith('.ini') ||
+        (mimeType.startsWith('text/') && !name.toLowerCase().endsWith('.md'))
+      ) {
+        return `\n\n[📄 텍스트: ${safeName}](attachment:${existingId})\n\n`;
+      }
+      if (
+        name.toLowerCase().endsWith('.bin') ||
+        name.toLowerCase().endsWith('.dat') ||
+        name.toLowerCase().endsWith('.exe') ||
+        name.toLowerCase().endsWith('.dll') ||
+        name.toLowerCase().endsWith('.hex')
+      ) {
+        return `\n\n[💾 바이너리: ${safeName}](attachment:${existingId})\n\n`;
       }
       return `\n\n[📎 파일: ${safeName}](attachment:${existingId})\n\n`;
     }

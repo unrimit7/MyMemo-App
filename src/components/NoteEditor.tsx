@@ -246,6 +246,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     attId?: string;
     data: string;
     title: string;
+    initialMode?: 'hex' | 'text';
   } | null>(null);
   const pdfPagesRef = useRef<Map<string, number>>(new Map());
   const hwpPagesRef = useRef<Map<string, number>>(new Map());
@@ -4823,6 +4824,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           data={activeHexModal.data}
           title={activeHexModal.title}
           attId={activeHexModal.attId}
+          initialMode={activeHexModal.initialMode}
           onSave={async (updatedDataUrl) => {
             const attId = activeHexModal.attId;
             if (attId) {
