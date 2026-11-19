@@ -44,7 +44,8 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
   const [rowLimit, setRowLimit] = useState<number>(VIEW_ROW_STEP);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const floating = useFloatingWindow({ id: 'excel-viewer', defaultWidth: 920, defaultHeight: 800 });
+  const floating = useFloatingWindow({ id: 'excel-viewer', defaultWidth: 1400, defaultHeight: 900, wideModal: true });
+  const { toggleFullscreen } = floating;
 
   // 워크북 로드 (동기 즉시 표시 + 비동기 원본 서식/스타일 보강)
   useEffect(() => {
@@ -188,11 +189,16 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
         e.preventDefault();
         e.stopPropagation();
         onClose();
+      } else if (e.altKey && e.key === 'Enter') {
+        // Alt+Enter: 화면 전체로 크게 보기 켜기/끄기
+        e.preventDefault();
+        e.stopPropagation();
+        toggleFullscreen();
       }
     };
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, toggleFullscreen]);
 
   if (!isOpen) return null;
 
@@ -322,7 +328,9 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
               <Download size={15} />
             </button>
 
-            {floating.toggleFloatingButton}
+            {floating.toggleFullscreenButton}
+
+            {!floating.isFullscreen && floating.toggleFloatingButton}
 
             <button
               type="button"

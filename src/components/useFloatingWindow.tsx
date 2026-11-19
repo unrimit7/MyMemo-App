@@ -7,6 +7,8 @@ export interface UseFloatingWindowOptions {
   defaultHeight?: number;
   minWidth?: number;
   minHeight?: number;
+  /** true면 기본 모달을 화면 가로·세로 거의 전체로 연다 (엑셀처럼 넓은 표용) */
+  wideModal?: boolean;
 }
 
 export function useFloatingWindow(options: UseFloatingWindowOptions = {}) {
@@ -16,6 +18,7 @@ export function useFloatingWindow(options: UseFloatingWindowOptions = {}) {
     defaultHeight = 780,
     minWidth = 380,
     minHeight = 320,
+    wideModal = false,
   } = options;
 
   const storageKey = `mymemo_floating_${id}`;
@@ -181,13 +184,23 @@ export function useFloatingWindow(options: UseFloatingWindowOptions = {}) {
     isFullscreen,
     setIsFullscreen,
     toggleFullscreen,
-    modalWrapperClass: isFloating
-      ? 'fixed inset-0 z-50 pointer-events-none select-none overflow-hidden'
-      : isFullscreen
+    // 전체 화면이 켜져 있으면 창 분리 상태보다 우선한다
+    modalWrapperClass: isFullscreen
       ? 'fixed inset-0 z-50 bg-slate-950 flex flex-col p-0 select-none animate-fadeIn'
+      : isFloating
+      ? 'fixed inset-0 z-50 pointer-events-none select-none overflow-hidden'
+      : wideModal
+      ? 'fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center p-2 select-none animate-fadeIn'
       : 'fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center p-2 md:p-4 select-none animate-fadeIn',
     windowContainerProps: {
-      style: isFloating
+      style: isFullscreen
+        ? {
+            width: '100vw',
+            height: '100vh',
+            maxWidth: '100vw',
+            maxHeight: '100vh',
+          }
+        : isFloating
         ? {
             position: 'fixed' as const,
             left: `${position.x}px`,
@@ -198,18 +211,13 @@ export function useFloatingWindow(options: UseFloatingWindowOptions = {}) {
             maxHeight: '100vh',
             zIndex: 55,
           }
-        : isFullscreen
-        ? {
-            width: '100vw',
-            height: '100vh',
-            maxWidth: '100vw',
-            maxHeight: '100vh',
-          }
         : undefined,
-      className: isFloating
-        ? 'pointer-events-auto bg-slate-900 border border-slate-700/80 rounded-2xl shadow-[0_25px_60px_-15px_rgba(0,0,0,0.8)] flex flex-col overflow-hidden ring-1 ring-white/10 relative'
-        : isFullscreen
+      className: isFullscreen
         ? 'w-full h-full bg-slate-900 flex flex-col overflow-hidden relative rounded-none border-none'
+        : isFloating
+        ? 'pointer-events-auto bg-slate-900 border border-slate-700/80 rounded-2xl shadow-[0_25px_60px_-15px_rgba(0,0,0,0.8)] flex flex-col overflow-hidden ring-1 ring-white/10 relative'
+        : wideModal
+        ? 'w-full h-full bg-slate-900 border border-slate-800 rounded-xl shadow-2xl flex flex-col overflow-hidden relative'
         : 'w-full max-w-6xl h-[95vh] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden relative',
     },
     toggleFullscreenButton: (
@@ -217,7 +225,7 @@ export function useFloatingWindow(options: UseFloatingWindowOptions = {}) {
         type="button"
         onClick={toggleFullscreen}
         className="p-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition-colors"
-        title={isFullscreen ? '창 크기 복원 (Alt+Enter)' : '전체 화면 편집 (Alt+Enter)'}
+        title={isFullscreen ? '창 크기 복원 (Alt+Enter)' : '화면 전체로 보기 (Alt+Enter)'}
       >
         {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
       </button>
@@ -232,7 +240,7 @@ export function useFloatingWindow(options: UseFloatingWindowOptions = {}) {
         {isFloating ? <Maximize2 size={15} /> : <Minimize2 size={15} />}
       </button>
     ),
-    resizeHandle: isFloating ? (
+    resizeHandle: isFloating && !isFullscreen ? (
       <div
         onPointerDown={handleResizePointerDown}
         className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize z-30 flex items-center justify-center text-slate-500 hover:text-indigo-400 pointer-events-auto select-none"

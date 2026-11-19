@@ -330,7 +330,7 @@ export function createAttachmentCardHtml(
   ${sheetTabsHtml}
 
   <!-- 인라인 표 그리드 뷰어 (앱 다크 테마로부터 완전 격리된 엑셀 기본 흰 바탕/검정 글자 룩앤필) -->
-  <div class="w-full bg-[#f8fafc] p-2 md:p-3 overflow-x-auto max-h-[460px]" style="background-color: #f8fafc !important;">
+  <div class="excel-inline-grid w-full bg-[#f8fafc] p-2 md:p-3 overflow-auto" style="background-color: #f8fafc !important; max-height: max(460px, calc(100vh - 340px));">
     <div class="inline-block min-w-full align-middle border border-[#cbd5e1] rounded-lg overflow-hidden bg-white shadow-sm" style="background-color: #ffffff !important; border: 1px solid #cbd5e1 !important;">
       <table class="min-w-full border-collapse text-left font-sans" id="excel-table-${att.id}" style="background-color: #ffffff !important; color: #000000 !important; width: 100% !important; border-collapse: collapse !important;">
         ${tableHeaderHtml}
