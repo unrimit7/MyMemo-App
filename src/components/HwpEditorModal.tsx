@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { createEditor, type RhwpEditor } from '@rhwp/editor';
 import { useFloatingWindow } from './useFloatingWindow';
+import { PageThumbnailSidebar, SvgStringThumb } from './PageThumbnailSidebar';
 import { postProcessHwpx, postProcessHwp, hasHwpTrackChanges } from '../utils/hwpxAdapter';
 import {
   saveOfficeDraft,
@@ -100,6 +101,11 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
 
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<RhwpEditor | null>(null);
+
+  // 왼쪽 쪽 썸네일 사이드바 상태 (편집 내용이 바뀌면 thumbVersion을 올려 다시 그림)
+  const [thumbPageCount, setThumbPageCount] = useState<number>(0);
+  const [thumbCurrent, setThumbCurrent] = useState<number>(0);
+  const [thumbVersion, setThumbVersion] = useState<number>(0);
   const floating = useFloatingWindow({ id: 'hwp-editor', defaultWidth: 920, defaultHeight: 820 });
 
   const isHwpx = title.toLowerCase().endsWith('.hwpx');
@@ -253,6 +259,95 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, [isOpen, hasChanges]);
+
+  // rhwp 스튜디오(같은 출처 iframe)의 스크롤 영역. 쪽 이동과 현재 쪽 추적에 쓴다
+  const getStudioScroller = (): HTMLElement | null => {
+    try {
+      const iframe = editorRef.current?.element || containerRef.current?.querySelector('iframe');
+      return iframe?.contentDocument?.getElementById('scroll-container') ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  // 썸네일 클릭 → 해당 쪽으로 스크롤 (rhwp는 쪽 이동 API를 밖으로 내주지 않아 스크롤 위치로 이동)
+  const goToHwpPage = (i: number) => {
+    const sc = getStudioScroller();
+    if (!sc || thumbPageCount <= 0) return;
+    const pageSpan = sc.scrollHeight / thumbPageCount;
+    sc.scrollTop = Math.max(0, Math.round(pageSpan * i));
+    setThumbCurrent(i);
+  };
+
+  // 쪽 수·변경 감지(썸네일 갱신) + 스크롤 위치로 현재 쪽 추적
+  useEffect(() => {
+    if (!isOpen || isLoading) return;
+    let alive = true;
+    let lastSeq: number | null = null;
+    let pendingSeq: number | null = null;
+    let boundScroller: HTMLElement | null = null;
+    let pageCountNow = 0;
+
+    const onScroll = () => {
+      const sc = boundScroller;
+      if (!sc || pageCountNow <= 0) return;
+      const pageSpan = sc.scrollHeight / pageCountNow;
+      const idx = Math.floor((sc.scrollTop + sc.clientHeight * 0.3) / pageSpan);
+      setThumbCurrent(Math.max(0, Math.min(pageCountNow - 1, idx)));
+    };
+
+    const tick = async () => {
+      const ed = editorRef.current;
+      if (!ed || !alive) return;
+      try {
+        const st = await ed.getDocumentState();
+        if (!alive) return;
+        if (st.pageCount !== pageCountNow) {
+          pageCountNow = st.pageCount;
+          setThumbPageCount(st.pageCount);
+        }
+        if (lastSeq === null) {
+          lastSeq = st.changeSeq;
+        } else if (st.changeSeq !== lastSeq) {
+          // 입력 중에는 매번 다시 그리지 않고, 한 박자 멈췄을 때 갱신
+          if (pendingSeq === st.changeSeq) {
+            lastSeq = st.changeSeq;
+            pendingSeq = null;
+            setThumbVersion((v) => v + 1);
+          } else {
+            pendingSeq = st.changeSeq;
+          }
+        }
+      } catch {
+        // document-state 미지원 환경: 쪽 수만이라도 가져온다
+        try {
+          const n = await ed.pageCount();
+          if (alive && n !== pageCountNow) {
+            pageCountNow = n;
+            setThumbPageCount(n);
+          }
+        } catch {
+          // ignore
+        }
+      }
+      const sc = getStudioScroller();
+      if (sc && sc !== boundScroller) {
+        boundScroller?.removeEventListener('scroll', onScroll);
+        boundScroller = sc;
+        sc.addEventListener('scroll', onScroll, { passive: true });
+        onScroll();
+      }
+    };
+
+    tick();
+    const timer = setInterval(tick, 1500);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      boundScroller?.removeEventListener('scroll', onScroll);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, isLoading]);
 
   // rhwp 에디터 내부의 dirty(미저장 수정 상태)를 실시간 감지하여 상단 배지 및 닫기 방지 연동
   useEffect(() => {
@@ -823,8 +918,25 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
         </div>
       )}
 
+      {/* 본문: 왼쪽 쪽 썸네일 + 에디터 임베드 영역 */}
+      <div className="flex-1 flex min-h-0">
+      {!isLoading && thumbPageCount > 0 && (
+        <PageThumbnailSidebar
+          storageKey="hwp-editor"
+          count={thumbPageCount}
+          current={thumbCurrent}
+          onSelect={goToHwpPage}
+          version={thumbVersion}
+          renderThumb={(i) => (
+            <SvgStringThumb
+              getSvg={() => editorRef.current ? editorRef.current.getPageSvg(i, { profile: 'print' }) : ''}
+            />
+          )}
+          footnote="편집 내용은 입력을 멈추면 잠시 뒤 썸네일에 반영됩니다."
+        />
+      )}
       {/* 에디터 임베드 영역 */}
-      <div className="flex-1 relative w-full h-full bg-slate-900 overflow-hidden">
+      <div className="flex-1 min-w-0 relative w-full h-full bg-slate-900 overflow-hidden">
         {isLoading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950/80 backdrop-blur-xs text-slate-300 text-sm z-20">
             <div className="w-9 h-9 border-3 border-indigo-500 border-t-transparent rounded-full animate-spin" />
@@ -837,6 +949,7 @@ export const HwpEditorModal: React.FC<HwpEditorModalProps> = ({
 
         {/* rhwp 에디터가 마운트될 DOM 컨테이너 */}
         <div ref={containerRef} className="w-full h-full" />
+      </div>
       </div>
 
       {/* 저장되지 않은 변경사항 확인 모달 */}

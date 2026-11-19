@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { parseExcelWorkbook, parseExcelWorkbookWithStyles, sheetRowsToMarkdownTable, buildMergeMap, getColumnLabel, borderCss, type ParsedWorkbook } from '../utils/excelViewer';
 import { useFloatingWindow } from './useFloatingWindow';
+import { PageThumbnailSidebar, SheetGridThumb } from './PageThumbnailSidebar';
 
 /** 큰 화면 뷰어가 한 번에 그리는 행 수 (큰 파일에서 멈춤 방지) */
 const VIEW_ROW_STEP = 1000;
@@ -343,10 +344,30 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
           </div>
         </div>
 
+        {/* 본문: 왼쪽 시트 썸네일 + 오른쪽 표 */}
+        <div className="flex-1 flex min-h-0">
+        {workbook && workbook.sheetNames.length > 0 && (
+          <PageThumbnailSidebar
+            storageKey="excel-viewer"
+            unit="시트"
+            count={workbook.sheetNames.length}
+            current={Math.max(0, workbook.sheetNames.indexOf(activeSheetName))}
+            onSelect={(i) => setActiveSheetName(workbook.sheetNames[i])}
+            getLabel={(i) => workbook.sheetNames[i]}
+            placeholderAspect={4 / 3}
+            version={workbook.cellStyles ? 'styled' : 'quick'}
+            renderThumb={(i) => {
+              const rows = workbook.sheets[workbook.sheetNames[i]] || [];
+              const hidden = new Set(workbook.hiddenRows?.[workbook.sheetNames[i]] || []);
+              return <SheetGridThumb rows={rows.filter((_, r) => !hidden.has(r)).slice(0, 14)} />;
+            }}
+            footnote="엑셀은 쪽 대신 시트 단위로 보여줍니다."
+          />
+        )}
         {/* 메인 스프레드시트 표 영역 (편집기와 일치하는 엑셀 화이트 테마) */}
         <div
           ref={containerRef}
-          className="flex-1 overflow-auto bg-[#f8fafc] p-3 select-text"
+          className="flex-1 min-w-0 overflow-auto bg-[#f8fafc] p-3 select-text"
           style={{ fontSize: `${Math.round(13 * zoom)}px` }}
         >
           {filteredRows.length === 0 ? (
@@ -488,6 +509,7 @@ export const ExcelViewerModal: React.FC<ExcelViewerModalProps> = ({
               )}
             </div>
           )}
+        </div>
         </div>
 
         {/* 하단 시트 탭 바 */}

@@ -4,6 +4,7 @@ import { loadPdfDocument, renderPdfPageToCanvas } from '../utils/pdfViewer';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { useFloatingWindow } from './useFloatingWindow';
 import { useWheelPageNavigation } from '../hooks/useWheelPageNavigation';
+import { PageThumbnailSidebar, PdfPageThumb } from './PageThumbnailSidebar';
 
 interface PdfViewerModalProps {
   isOpen: boolean;
@@ -431,12 +432,26 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
         </div>
       </div>
 
+      {/* 본문: 왼쪽 쪽 썸네일 + 오른쪽 캔버스 뷰어 */}
+      <div className="flex-1 flex min-h-0">
+      {pdfDoc && !isLoading && !renderError && totalPages > 0 && (
+        <PageThumbnailSidebar
+          storageKey="pdf-viewer"
+          count={totalPages}
+          current={currentPage - 1}
+          onSelect={(i) => {
+            pendingScrollRef.current = 'top';
+            setCurrentPage(i + 1);
+          }}
+          renderThumb={(i) => <PdfPageThumb pdfDoc={pdfDoc} pageNumber={i + 1} />}
+        />
+      )}
       {/* 캔버스 뷰어 본체 (화면 너비에 갇히지 않고 줌 배율대로 자유 확대 & 마우스 드래그 및 터치 스크롤 지원) */}
       <div 
         ref={containerRef}
         onMouseDown={handleMouseDown}
         onClick={handleDoubleTap}
-        className={`flex-1 overflow-auto bg-slate-950 p-2 sm:p-4 touch-pan-x touch-pan-y relative ${
+        className={`flex-1 min-w-0 overflow-auto bg-slate-950 p-2 sm:p-4 touch-pan-x touch-pan-y relative ${
           isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'
         }`}
       >
@@ -476,6 +491,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
             />
           </div>
         </div>
+      </div>
       </div>
 
       {floating.resizeHandle}

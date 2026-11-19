@@ -948,6 +948,7 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
                 return (
                   <div
                     key={idx}
+                    ref={isActive ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
                     onClick={() => setActiveSlideIndex(idx)}
                     className={`p-2.5 rounded-xl border transition-all cursor-pointer flex flex-col gap-1.5 ${
                       isActive
@@ -994,8 +995,39 @@ export const PptxEditorModal: React.FC<PptxEditorModalProps> = ({
                       </div>
                     </div>
 
-                    <div className="font-semibold text-xs text-slate-200 truncate">
-                      {s.title || `(제목 없음)`}
+                    {/* 미니 슬라이드 썸네일 (오른쪽 미리보기와 같은 모양, 편집 내용 즉시 반영) */}
+                    <div
+                      className="w-full bg-white rounded border border-slate-700 overflow-hidden flex flex-col"
+                      style={{ aspectRatio: `${presentationAspect.aspectRatio || 16 / 9}` }}
+                    >
+                      <div className="h-[3px] bg-gradient-to-r from-orange-500 via-amber-500 to-indigo-600 shrink-0" />
+                      <div className="flex-1 min-h-0 px-1.5 py-1 flex flex-col gap-[2px] overflow-hidden text-slate-800">
+                        <div className="text-[7px] font-extrabold leading-tight truncate border-b border-orange-500/30 pb-[1px]">
+                          {s.title || '(제목 없음)'}
+                        </div>
+                        {s.bodyText
+                          .split('\n')
+                          .map((l) => l.trim().replace(/^([-*•\u2022\u25E6\u25AA\u25CF]+\s*)+/, ''))
+                          .filter((l) => l.length > 0)
+                          .slice(0, 4)
+                          .map((line, li) => (
+                            <div key={li} className="text-[5.5px] leading-[7px] truncate">
+                              <span className="text-orange-500">•</span> {line}
+                            </div>
+                          ))}
+                        {s.tables.length > 0 && (
+                          <div className="grid grid-cols-3 gap-px bg-slate-300 border border-slate-300 mt-[1px]">
+                            {Array.from({ length: 6 }, (_, k) => (
+                              <div key={k} className={`h-[4px] ${k < 3 ? 'bg-slate-100' : 'bg-white'}`} />
+                            ))}
+                          </div>
+                        )}
+                        {s.images.length > 0 && (
+                          <div className="flex-1 min-h-0 flex items-end justify-center">
+                            <img src={s.images[0].dataUrl} alt="" draggable={false} className="max-h-full max-w-[60%] object-contain" />
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     {s.images.length > 0 && (

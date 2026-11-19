@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { renderDocxToContainer, extractDocxTextAndHtml } from '../utils/docxViewer';
 import { useFloatingWindow } from './useFloatingWindow';
+import { PageThumbnailSidebar, DomCloneThumb, splitDomPages, type DomPageSlice } from './PageThumbnailSidebar';
 
 interface DocxViewerModalProps {
   isOpen: boolean;
@@ -38,6 +39,10 @@ export const DocxViewerModal: React.FC<DocxViewerModalProps> = ({
   const [copied, setCopied] = useState<boolean>(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // 렌더링된 쪽(구역) 요소들: 왼쪽 썸네일 사이드바용
+  const [pageEls, setPageEls] = useState<DomPageSlice[]>([]);
+  const [currentPageIdx, setCurrentPageIdx] = useState<number>(0);
   const floating = useFloatingWindow({ id: 'docx-viewer', defaultWidth: 880, defaultHeight: 800 });
 
   // 워드 문서 렌더링
@@ -48,13 +53,20 @@ export const DocxViewerModal: React.FC<DocxViewerModalProps> = ({
     setIsLoading(true);
     setErrorMessage(null);
     setZoom(1.0);
+    setPageEls([]);
+    setCurrentPageIdx(0);
 
     const timer = setTimeout(() => {
       if (!containerRef.current) return;
 
       renderDocxToContainer(data, containerRef.current)
         .then(() => {
-          if (isMounted) setIsLoading(false);
+          if (!isMounted) return;
+          setIsLoading(false);
+          const secs = containerRef.current
+            ? Array.from(containerRef.current.querySelectorAll<HTMLElement>('section.docx-doc-page, section[class*="docx-doc"]'))
+            : [];
+          setPageEls(splitDomPages(secs));
         })
         .catch((err) => {
           console.error('워드 문서 렌더링 실패:', err);
@@ -114,6 +126,43 @@ export const DocxViewerModal: React.FC<DocxViewerModalProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+
+  // 스크롤 위치로 현재 쪽 추적 (썸네일 강조용)
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller || pageEls.length === 0) return;
+    let raf = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const top = scroller.getBoundingClientRect().top + scroller.clientHeight * 0.3;
+        let idx = 0;
+        for (let i = 0; i < pageEls.length; i++) {
+          const p = pageEls[i];
+          if (p.el.getBoundingClientRect().top + p.top * zoomRef.current <= top) idx = i;
+          else break;
+        }
+        setCurrentPageIdx(idx);
+      });
+    };
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      cancelAnimationFrame(raf);
+      scroller.removeEventListener('scroll', onScroll);
+    };
+  }, [pageEls]);
+
+  const goToPage = (i: number) => {
+    const p = pageEls[i];
+    const scroller = scrollRef.current;
+    if (!p || !scroller) return;
+    const delta = p.el.getBoundingClientRect().top + p.top * zoom - scroller.getBoundingClientRect().top;
+    scroller.scrollTo({ top: scroller.scrollTop + delta - 8, behavior: 'smooth' });
+    setCurrentPageIdx(i);
   };
 
   // Esc 키 모달 닫기
@@ -248,8 +297,20 @@ export const DocxViewerModal: React.FC<DocxViewerModalProps> = ({
           </div>
         </div>
 
+        {/* 본문: 왼쪽 쪽 썸네일 + 오른쪽 워드 용지 */}
+        <div className="flex-1 flex min-h-0">
+        {!isLoading && !errorMessage && pageEls.length > 0 && (
+          <PageThumbnailSidebar
+            storageKey="docx-viewer"
+            count={pageEls.length}
+            current={currentPageIdx}
+            onSelect={goToPage}
+            renderThumb={(i) => <DomCloneThumb source={pageEls[i].el} sliceTop={pageEls[i].top} sliceHeight={pageEls[i].height} />}
+            footnote="워드 쪽 나눔은 화면 기준 추정이라 실제 인쇄 쪽과 조금 다를 수 있습니다."
+          />
+        )}
         {/* 메인 뷰어 영역 (워드 용지 스타일) */}
-        <div className="flex-1 overflow-auto bg-slate-950 p-4 flex flex-col items-center">
+        <div ref={scrollRef} className="flex-1 min-w-0 overflow-auto bg-slate-950 p-4 flex flex-col items-center">
           {isLoading && (
             <div className="flex items-center justify-center gap-2 py-20 text-slate-400 text-xs">
               <Loader2 size={16} className="animate-spin text-blue-500" />
@@ -277,6 +338,7 @@ export const DocxViewerModal: React.FC<DocxViewerModalProps> = ({
               className="docx-render-wrapper w-full max-w-[850px] select-text flex flex-col items-center"
             ></div>
           </div>
+        </div>
         </div>
 
         {/* 하단 안내 바 */}

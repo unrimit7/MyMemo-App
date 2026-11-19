@@ -20,6 +20,7 @@ import { dataUrlToUniverWorkbook, univerSnapshotToDataUrl, type StructuralOperat
 import { invalidateExcelCache } from '../utils/excelViewer';
 import { detectExcelUnsupportedFeatures, type UnsupportedFeatureReport } from '../utils/excelLossDetector';
 import { chartRestoreBlockReason } from '../utils/excelChartRestore';
+import { PageThumbnailSidebar, SheetGridThumb } from './PageThumbnailSidebar';
 import { useFloatingWindow } from './useFloatingWindow';
 import {
   saveOfficeDraft,
@@ -310,6 +311,67 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
   useEffect(() => {
     currentDataRef.current = data;
   }, [data]);
+
+  // ── 왼쪽 시트 썸네일 ── (엑셀은 '쪽' 대신 시트 단위. 각 시트 왼쪽 위 일부 셀을 작게 보여준다)
+  const [sheetThumbs, setSheetThumbs] = useState<{ id: string; name: string; rows: string[][] }[]>([]);
+  const [activeSheetIdx, setActiveSheetIdx] = useState<number>(0);
+  useEffect(() => {
+    if (!isOpen) return;
+    let alive = true;
+    let lastSig = '';
+    const read = () => {
+      const api = univerAPIRef.current;
+      if (!api || !alive) return;
+      try {
+        const wb = api.getActiveWorkbook?.();
+        if (!wb) return;
+        const sheets: any[] = wb.getSheets?.() || [];
+        const activeId = wb.getActiveSheet?.()?.getSheetId?.();
+        const list = sheets.map((sh) => {
+          let rows: string[][] = [];
+          try {
+            const lastRow = Math.min(13, Math.max(0, sh.getLastRow?.() ?? 13));
+            const lastCol = Math.min(5, Math.max(0, sh.getLastColumn?.() ?? 5));
+            const range = sh.getRange(0, 0, lastRow + 1, lastCol + 1);
+            rows = (range.getDisplayValues?.() ?? range.getValues?.() ?? []).map((r: any[]) => r.map((v) => (v == null ? '' : String(v))));
+          } catch {
+            rows = [];
+          }
+          return { id: String(sh.getSheetId?.() ?? ''), name: String(sh.getSheetName?.() ?? ''), rows };
+        });
+        const idx = Math.max(0, list.findIndex((x) => x.id === activeId));
+        const sig = JSON.stringify(list);
+        if (sig !== lastSig) {
+          lastSig = sig;
+          setSheetThumbs(list);
+        }
+        setActiveSheetIdx(idx);
+      } catch {
+        // Univer 준비 전/종료 중
+      }
+    };
+    read();
+    const timer = setInterval(read, 1500);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      setSheetThumbs([]);
+    };
+  }, [isOpen, data]);
+
+  const goToSheet = (i: number) => {
+    const target = sheetThumbs[i];
+    const wb = univerAPIRef.current?.getActiveWorkbook?.();
+    if (!target || !wb) return;
+    try {
+      const sh = wb.getSheetBySheetId?.(target.id) ?? wb.getSheets?.()[i];
+      if (sh?.activate) sh.activate();
+      else wb.setActiveSheet?.(sh);
+      setActiveSheetIdx(i);
+    } catch (err) {
+      console.warn('시트 전환 실패:', err);
+    }
+  };
 
   // 원본 문서의 미보존 고급 요소(차트, 피벗 등) 사전 검사
   useEffect(() => {
@@ -1119,13 +1181,28 @@ export const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
           </div>
         </div>
 
-        {/* 바디: Univer 진짜 엑셀 스프레드시트 뷰어/편집기 */}
-        <div className="flex-1 min-h-0 relative w-full h-full bg-white overflow-hidden">
+        {/* 바디: 왼쪽 시트 썸네일 + Univer 진짜 엑셀 스프레드시트 뷰어/편집기 */}
+        <div className="flex-1 min-h-0 flex">
+        {sheetThumbs.length > 0 && (
+          <PageThumbnailSidebar
+            storageKey="excel-editor"
+            unit="시트"
+            count={sheetThumbs.length}
+            current={activeSheetIdx}
+            onSelect={goToSheet}
+            getLabel={(i) => sheetThumbs[i]?.name || `시트 ${i + 1}`}
+            placeholderAspect={4 / 3}
+            renderThumb={(i) => <SheetGridThumb rows={sheetThumbs[i]?.rows || []} />}
+            footnote="엑셀은 쪽 대신 시트 단위로 보여줍니다."
+          />
+        )}
+        <div className="flex-1 min-w-0 min-h-0 relative w-full h-full bg-white overflow-hidden">
           <div
             ref={containerRef}
             className="w-full h-full univer-container"
             style={{ width: '100%', height: '100%', position: 'relative' }}
           />
+        </div>
         </div>
 
         {/* 창 크기 조절 핸들 (플로팅 모드일 때) */}

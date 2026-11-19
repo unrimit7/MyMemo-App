@@ -29,6 +29,7 @@ import { extractDocxTextAndHtml, generateDocxDataUrl } from '../utils/docxViewer
 import { detectDocxUnsupportedFeatures, type DocxUnsupportedFeatureReport } from '../utils/docxLossDetector';
 import { marked } from 'marked';
 import { useFloatingWindow } from './useFloatingWindow';
+import { PageThumbnailSidebar, DomCloneThumb, findScrollParent, scrollElementIntoScroller } from './PageThumbnailSidebar';
 import {
   saveOfficeDraft,
   getOfficeDraft,
@@ -252,6 +253,102 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
   const superdocRef = useRef<SuperDoc | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const floating = useFloatingWindow({ id: 'docx-editor', defaultWidth: 1040, defaultHeight: 840 });
+
+  // ── 왼쪽 쪽 썸네일 (SuperDoc) ──
+  // SuperDoc은 모든 쪽 틀(.superdoc-page)을 만들어 두지만 내용은 화면 근처 쪽만 채운다.
+  // 그래서 내용이 채워진 순간의 쪽을 복제해 두고(snapshot) 썸네일로 쓴다. 아직 못 본 쪽은 번호만 보인다.
+  const [sdPages, setSdPages] = useState<HTMLElement[]>([]);
+  const [sdCurrent, setSdCurrent] = useState<number>(0);
+  const [, setSdSnapTick] = useState<number>(0);
+  const sdSnapsRef = useRef<Map<number, { el: HTMLElement; sig: string; w: number; h: number; pc: string }>>(new Map());
+  const sdScrollerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen || engine !== 'superdoc' || isLoading) return;
+    let alive = true;
+    sdSnapsRef.current = new Map();
+    let lastPages: HTMLElement[] = [];
+    let boundScroller: HTMLElement | null = null;
+
+    const onScroll = () => {
+      const sc = boundScroller;
+      if (!sc || lastPages.length === 0) return;
+      const line = sc.getBoundingClientRect().top + sc.clientHeight * 0.3;
+      let idx = 0;
+      for (let i = 0; i < lastPages.length; i++) {
+        if (lastPages[i].getBoundingClientRect().top <= line) idx = i;
+        else break;
+      }
+      setSdCurrent(idx);
+    };
+
+    const scan = () => {
+      const root = containerRef.current;
+      if (!root || !alive) return;
+      const byIndex = new Map<number, HTMLElement>();
+      root.querySelectorAll<HTMLElement>('.superdoc-page[data-page-index]').forEach((el) => {
+        const idx = Number(el.dataset.pageIndex);
+        if (Number.isFinite(idx) && !byIndex.has(idx)) byIndex.set(idx, el);
+      });
+      const pages = Array.from(byIndex.entries()).sort((a, b) => a[0] - b[0]).map(([, el]) => el);
+
+      let snapChanged = false;
+      pages.forEach((el, i) => {
+        const hydrated = (el.textContent || '').trim().length > 0 || !!el.querySelector('img,svg,canvas');
+        if (!hydrated) return;
+        const sig = `${(el.textContent || '').length}:${el.getElementsByTagName('*').length}:${el.offsetHeight}`;
+        const prev = sdSnapsRef.current.get(i);
+        if (prev && prev.sig === sig) return;
+        sdSnapsRef.current.set(i, {
+          el: el.cloneNode(true) as HTMLElement,
+          sig,
+          w: el.offsetWidth,
+          h: el.offsetHeight,
+          pc: typeof el.parentElement?.className === 'string' ? el.parentElement.className : '',
+        });
+        snapChanged = true;
+      });
+      for (const k of Array.from(sdSnapsRef.current.keys())) {
+        if (k >= pages.length) {
+          sdSnapsRef.current.delete(k);
+          snapChanged = true;
+        }
+      }
+
+      const pagesChanged = pages.length !== lastPages.length || pages.some((p, i) => p !== lastPages[i]);
+      if (pagesChanged) {
+        lastPages = pages;
+        setSdPages(pages);
+      }
+      if (snapChanged) setSdSnapTick((t) => t + 1);
+
+      const sc = pages[0] ? findScrollParent(pages[0], root.parentElement) : null;
+      if (sc && sc !== boundScroller) {
+        boundScroller?.removeEventListener('scroll', onScroll);
+        boundScroller = sc;
+        sdScrollerRef.current = sc;
+        sc.addEventListener('scroll', onScroll, { passive: true });
+      }
+      onScroll();
+    };
+
+    scan();
+    const timer = setInterval(scan, 1200);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      boundScroller?.removeEventListener('scroll', onScroll);
+      setSdPages([]);
+    };
+  }, [isOpen, engine, isLoading]);
+
+  const goToSdPage = (i: number) => {
+    const el = sdPages[i];
+    const sc = sdScrollerRef.current || (el ? findScrollParent(el, containerRef.current?.parentElement) : null);
+    if (!el || !sc) return;
+    scrollElementIntoScroller(sc, el);
+    setSdCurrent(i);
+  };
 
   // 문서 사전 검사 (매크로, OLE 등)
   useEffect(() => {
@@ -905,8 +1002,29 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
           </div>
         )}
 
+        {/* 바디: 왼쪽 쪽 썸네일(SuperDoc) + 편집기 */}
+        <div className="flex-1 flex min-h-0">
+        {engine === 'superdoc' && !isLoading && sdPages.length > 0 && (
+          <PageThumbnailSidebar
+            storageKey="docx-editor"
+            count={sdPages.length}
+            current={sdCurrent}
+            onSelect={goToSdPage}
+            renderThumb={(i) => {
+              const snap = sdSnapsRef.current.get(i);
+              return snap ? (
+                <DomCloneThumb source={snap.el} sourceWidth={snap.w} sourceHeight={snap.h} parentClassName={snap.pc} />
+              ) : (
+                <div className="w-full aspect-[1/1.414] flex items-center justify-center text-[10px] text-slate-400 bg-slate-50">
+                  스크롤하면 표시
+                </div>
+              );
+            }}
+            footnote="워드 편집기는 한 번 화면에 나온 쪽부터 썸네일이 채워집니다."
+          />
+        )}
         {/* 바디 컨테이너 */}
-        <div className="flex-1 relative overflow-hidden bg-slate-950 flex flex-col">
+        <div className="flex-1 min-w-0 relative overflow-hidden bg-slate-950 flex flex-col">
           {isLoading && (
             <div className="absolute inset-0 z-30 bg-slate-900/80 backdrop-blur-xs flex flex-col items-center justify-center gap-3 text-slate-300">
               <Loader2 size={32} className="animate-spin text-blue-400" />
@@ -957,6 +1075,7 @@ export const DocxEditorModal: React.FC<DocxEditorModalProps> = ({
               )}
             </div>
           )}
+        </div>
         </div>
 
         {/* 1. 닫기 전 변경사항 경고 모달 */}

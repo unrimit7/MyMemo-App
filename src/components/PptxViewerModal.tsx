@@ -22,7 +22,7 @@ import {
   type PptxSlideElement,
 } from '../utils/pptxViewer';
 import { useFloatingWindow } from './useFloatingWindow';
-import { renderPptxSlideElement } from './PptxSlideRenderer';
+import { renderPptxSlideElement, PptxSlideThumbnail } from './PptxSlideRenderer';
 
 interface PptxViewerModalProps {
   isOpen: boolean;
@@ -408,6 +408,7 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                   <div
                     key={s.slideNumber}
                     data-testid={`slide-thumb-${idx}`}
+                    ref={isActive ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
                     onClick={() => setCurrentSlideIndex(idx)}
                     className={`p-2 rounded-xl border transition-all cursor-pointer flex flex-col gap-1 ${
                       isActive
@@ -432,12 +433,18 @@ export const PptxViewerModal: React.FC<PptxViewerModalProps> = ({
                         </span>
                       )}
                     </div>
-                    {/* 미니 16:9 썸네일 카드 */}
-                    <div className="w-full aspect-video bg-slate-950 rounded border border-slate-800/80 p-1.5 flex flex-col justify-center overflow-hidden">
-                      <span className="text-[10px] font-semibold text-slate-200 line-clamp-2 leading-tight">
-                        {s.title}
-                      </span>
-                    </div>
+                    {/* 실제 슬라이드 모양 미니 썸네일 (요소가 없으면 제목 카드) */}
+                    {s.elements && s.elements.length > 0 ? (
+                      <div className="w-full flex justify-center rounded overflow-hidden border border-slate-800/80 bg-white">
+                        <PptxSlideThumbnail slide={s} aspect={slideAspect} width={150} isDark={isDarkMode} />
+                      </div>
+                    ) : (
+                      <div className="w-full aspect-video bg-slate-950 rounded border border-slate-800/80 p-1.5 flex flex-col justify-center overflow-hidden">
+                        <span className="text-[10px] font-semibold text-slate-200 line-clamp-2 leading-tight">
+                          {s.title}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 );
               })}

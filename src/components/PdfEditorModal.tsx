@@ -28,6 +28,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { ColorEditModal } from './ColorEditModal';
 import { useFloatingWindow } from './useFloatingWindow';
 import { useWheelPageNavigation } from '../hooks/useWheelPageNavigation';
+import { PageThumbnailSidebar, PdfPageThumb } from './PageThumbnailSidebar';
 
 interface Stroke {
   id: string;
@@ -2039,11 +2040,30 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
         </div>
       </div>
 
+      {/* 본문: 왼쪽 쪽 썸네일 + 오른쪽 주석 캔버스 */}
+      <div className="flex-1 flex min-h-0">
+      {pdfDoc && !isLoading && totalPages > 0 && (
+        <PageThumbnailSidebar
+          storageKey="pdf-editor"
+          count={totalPages}
+          current={currentPage - 1}
+          onSelect={(i) => {
+            setSelectionRect(null);
+            setCurrentPage(i + 1);
+          }}
+          getLabel={(i) => {
+            const a = annotations[i + 1];
+            return a && (a.strokes?.length || a.texts?.length || a.stamps?.length) ? `${i + 1} ✎` : String(i + 1);
+          }}
+          renderThumb={(i) => <PdfPageThumb pdfDoc={pdfDoc} pageNumber={i + 1} />}
+          footnote="✎ 표시는 아직 저장 전인 주석이 있는 쪽입니다."
+        />
+      )}
       {/* 메인 뷰어 및 주석 캔버스 영역 (화면 팬 드래그 & 아이템 이동 지원) */}
       <div 
         ref={containerRef}
         onMouseDown={handleContainerMouseDown}
-        className={`flex-1 overflow-auto bg-slate-950 p-2 sm:p-4 relative select-none ${
+        className={`flex-1 min-w-0 overflow-auto bg-slate-950 p-2 sm:p-4 relative select-none ${
           isPanDragging
             ? 'cursor-grabbing'
             : activeTool === 'pan'
@@ -2138,6 +2158,7 @@ export const PdfEditorModal: React.FC<PdfEditorModalProps> = ({
             )}
           </div>
         </div>
+      </div>
       </div>
 
       {/* 텍스트 및 사각형 박스 삽입 모달 */}
